@@ -76,8 +76,32 @@ class RunnerManager {
     this.activeRunner = runner;
   }
 
+  getActive(): ScriptRunner | null {
+    return this.activeRunner;
+  }
+
   stopActive(): void {
     this.activeRunner?.stop();
+  }
+
+  resumeActive(): void {
+    this.activeRunner?.resume?.();
+  }
+
+  stepNextActive(): void {
+    this.activeRunner?.stepNext?.();
+  }
+
+  pauseActive(): void {
+    this.activeRunner?.pause?.();
+  }
+
+  updateActiveBreakpoints(breakpoints: string[]): void {
+    this.activeRunner?.updateBreakpoints?.(breakpoints);
+  }
+
+  updateActiveStepDelay(stepDelayMs: number): void {
+    this.activeRunner?.updateStepDelay?.(stepDelayMs);
   }
 
   disposeAll(): void {

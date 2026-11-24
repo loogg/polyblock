@@ -192,6 +192,157 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
     },
   },
   {
+    id: 'step_debug_demo',
+    name: '延时执行与断点单步演示',
+    fileName: 'step_debug_demo.polyblock.json',
+    description: '带「等待 350 毫秒」延时积木，适合直观观察逐块高亮、打断点暂停与单步监视变量变化。',
+    recommendedLang: 'lua',
+    workspace: {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'dbg_start',
+            x: 36,
+            y: 28,
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'variables_set',
+                  id: 'dbg_set_sum',
+                  fields: { VAR: { id: 'var_sum' } },
+                  inputs: {
+                    VALUE: {
+                      block: {
+                        type: 'math_number',
+                        id: 'dbg_zero',
+                        fields: { NUM: 0 },
+                      },
+                    },
+                  },
+                  next: {
+                    block: {
+                      type: 'poly_log',
+                      id: 'dbg_log_begin',
+                      fields: { LEVEL: 'INFO' },
+                      inputs: {
+                        MESSAGE: {
+                          block: {
+                            type: 'text',
+                            id: 'dbg_txt_begin',
+                            fields: { TEXT: '开始演示：每轮等待 350ms 并累加 sum' },
+                          },
+                        },
+                      },
+                      next: {
+                        block: {
+                          type: 'poly_for_range',
+                          id: 'dbg_loop',
+                          fields: { VAR: { id: 'var_step' } },
+                          inputs: {
+                            FROM: {
+                              shadow: {
+                                type: 'math_number',
+                                id: 'dbg_from',
+                                fields: { NUM: 1 },
+                              },
+                            },
+                            TO: {
+                              shadow: {
+                                type: 'math_number',
+                                id: 'dbg_to',
+                                fields: { NUM: 4 },
+                              },
+                            },
+                            BY: {
+                              shadow: {
+                                type: 'math_number',
+                                id: 'dbg_by',
+                                fields: { NUM: 1 },
+                              },
+                            },
+                            DO: {
+                              block: {
+                                type: 'poly_wait_ms',
+                                id: 'dbg_wait',
+                                inputs: {
+                                  MS: {
+                                    shadow: {
+                                      type: 'math_number',
+                                      id: 'dbg_ms',
+                                      fields: { NUM: 350 },
+                                    },
+                                  },
+                                },
+                                next: {
+                                  block: {
+                                    type: 'math_change',
+                                    id: 'dbg_add_sum',
+                                    fields: { VAR: { id: 'var_sum' } },
+                                    inputs: {
+                                      DELTA: {
+                                        block: {
+                                          type: 'variables_get',
+                                          id: 'dbg_get_step',
+                                          fields: { VAR: { id: 'var_step' } },
+                                        },
+                                      },
+                                    },
+                                    next: {
+                                      block: {
+                                        type: 'poly_print_kv',
+                                        id: 'dbg_print_sum',
+                                        fields: { LABEL: '当前累计 sum' },
+                                        inputs: {
+                                          VALUE: {
+                                            block: {
+                                              type: 'variables_get',
+                                              id: 'dbg_get_sum',
+                                              fields: { VAR: { id: 'var_sum' } },
+                                            },
+                                          },
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                          next: {
+                            block: {
+                              type: 'poly_log',
+                              id: 'dbg_log_end',
+                              fields: { LEVEL: 'OK' },
+                              inputs: {
+                                MESSAGE: {
+                                  block: {
+                                    type: 'text',
+                                    id: 'dbg_txt_end',
+                                    fields: { TEXT: '延时累加演示完成！' },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [
+        { name: 'sum', id: 'var_sum' },
+        { name: 'step', id: 'var_step' },
+      ],
+    },
+  },
+  {
     id: 'threshold_alarm',
     name: '随机采样与阈值告警',
     fileName: 'threshold_alarm.polyblock.json',

@@ -5,6 +5,7 @@ import { registerPolyBlocks } from '../blocks/definitions';
 import { PROJECT_TEMPLATES } from '../blocks/templates';
 import { highlightCodeLine } from '../highlight';
 import { extractErrorLine, parseStdoutLine } from '../runners/logParser';
+import { WorkerDebugSession } from '../../workers/debugSession';
 
 function createLoadedWorkspace(json: Record<string, unknown>): Blockly.Workspace {
   const ws = new Blockly.Workspace();
@@ -77,7 +78,7 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
       ws.dispose();
     }
 
-    const listWs = createLoadedWorkspace(PROJECT_TEMPLATES[2].workspace);
+    const listWs = createLoadedWorkspace(PROJECT_TEMPLATES[3].workspace);
     expect(backendRegistry.get('lua').generate(listWs).code).toContain(
       'table.insert(items, 40)',
     );
@@ -85,6 +86,80 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
       'items.append(40)',
     );
     listWs.dispose();
+  });
+
+  it('generates clean delay code and separate async debugCode for step_debug_demo', () => {
+    const stepTpl = PROJECT_TEMPLATES.find((t) => t.id === 'step_debug_demo')!;
+    const ws = createLoadedWorkspace(stepTpl.workspace);
+
+    const luaRes = backendRegistry.get('lua').generate(ws);
+    expect(luaRes.code).toContain('poly_wait_ms(350)');
+    expect(luaRes.code).not.toContain('__poly_step');
+    expect(luaRes.code).not.toContain('__poly_sleep');
+    expect(luaRes.debugCode).toContain('__poly_step(');
+    expect(luaRes.debugCode).toContain('__poly_sleep(350):await()');
+    expect(luaRes.debugCode).toContain('["sum"] = sum');
+    expect(luaRes.sourceMap['dbg_wait'].startLine).toBe(
+      luaRes.sourceMap['dbg_wait'].endLine,
+    );
+    expect(luaRes.sourceMap['dbg_add_sum'].startLine).toBe(
+      luaRes.sourceMap['dbg_add_sum'].endLine,
+    );
+    expect(luaRes.variableNames).toContain('sum');
+
+    const pyRes = backendRegistry.get('python').generate(ws);
+    expect(pyRes.code).toContain('import time');
+    expect(pyRes.code).toContain('time.sleep(0.35)');
+    expect(pyRes.code).not.toContain('_poly.step');
+    expect(pyRes.code).not.toContain('_poly.sleep');
+    expect(pyRes.debugCode).toContain('await _poly.step(');
+    expect(pyRes.debugCode).toContain('await _poly.sleep(350)');
+    expect(pyRes.debugCode).toContain('["sum","sum2"]');
+    expect(pyRes.variableNames).toContain('sum');
+
+    ws.dispose();
+  });
+
+  it('pauses on breakpoints and advances with stepNext / resume in WorkerDebugSession', async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const session = new WorkerDebugSession(
+      {
+        runId: 'test-1',
+        breakpoints: ['b2'],
+        stepDelayMs: 0,
+        startInStepMode: false,
+      },
+      (msg) => events.push(msg),
+    );
+
+    await session.onStep('b1', JSON.stringify({ total: '0' }));
+    expect(events[0]).toMatchObject({ type: 'STEP', blockId: 'b1' });
+
+    // b2 hits breakpoint -> suspends promise until stepNext()
+    let b2Resolved = false;
+    const p2 = session.onStep('b2', JSON.stringify({ total: '10' })).then(() => {
+      b2Resolved = true;
+    });
+    await Promise.resolve();
+    expect(b2Resolved).toBe(false);
+    expect(events.some((e) => e.type === 'PAUSED' && e.blockId === 'b2' && e.reason === 'breakpoint')).toBe(true);
+
+    session.stepNext();
+    await p2;
+    expect(b2Resolved).toBe(true);
+
+    // Next block b3 must also pause because we used stepNext()
+    let b3Resolved = false;
+    const p3 = session.onStep('b3', JSON.stringify({ total: '20' })).then(() => {
+      b3Resolved = true;
+    });
+    await Promise.resolve();
+    expect(b3Resolved).toBe(false);
+    expect(events.some((e) => e.type === 'PAUSED' && e.blockId === 'b3' && e.reason === 'step')).toBe(true);
+
+    session.resume();
+    await p3;
+    expect(b3Resolved).toBe(true);
   });
 
   it('reports static diagnostics for empty start block and floating blocks', () => {

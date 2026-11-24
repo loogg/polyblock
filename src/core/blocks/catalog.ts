@@ -98,6 +98,12 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
       },
       {
         kind: 'block',
+        type: 'poly_wait_ms',
+        keywords: '等待 延时 暂停 睡眠 wait sleep delay ms 毫秒',
+        inputs: { MS: numShadow(500) },
+      },
+      {
+        kind: 'block',
         type: 'controls_if',
         keywords: '如果 那么 否则 if else elif 条件 分支',
       },

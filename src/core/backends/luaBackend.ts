@@ -9,6 +9,7 @@ import {
 import type { GeneratedCodeResult, ScriptBackendAdapter } from './types';
 
 let luaGeneratorsRegistered = false;
+let luaDebugPass = false;
 
 function registerLuaBlockGenerators(): void {
   if (luaGeneratorsRegistered) return;
@@ -16,6 +17,9 @@ function registerLuaBlockGenerators(): void {
   luaGenerator.forBlock['poly_on_start'] = (block, generator) => {
     const body = generator.statementToCode(block, 'BODY');
     const dedented = body.replace(/^  /gm, '');
+    if (luaDebugPass) {
+      return `-- 当程序启动\n${dedented}`;
+    }
     return (
       `${SENTINEL_START_PREFIX}'${block.id}'__\n` +
       `-- 当程序启动\n` +
@@ -62,6 +66,20 @@ function registerLuaBlockGenerators(): void {
     return `for ${variableName} = ${from}, ${to}${stepPart} do\n${branch}end\n`;
   };
 
+  luaGenerator.forBlock['poly_wait_ms'] = (block, generator) => {
+    const ms = generator.valueToCode(block, 'MS', Order.NONE) || '0';
+    if (luaDebugPass) {
+      return `__poly_sleep(${ms}):await()\n`;
+    }
+    const helper = generator.provideFunction_('poly_wait_ms', [
+      `local function ${generator.FUNCTION_NAME_PLACEHOLDER_}(ms)`,
+      `  local t0 = os.clock()`,
+      `  while (os.clock() - t0) * 1000 < ms do end`,
+      `end`,
+    ]);
+    return `${helper}(${ms})\n`;
+  };
+
   luaGenerator.forBlock['poly_comment'] = (block) => {
     const text = (block.getFieldValue('TEXT') || '').replace(/\r?\n/g, ' ');
     return `-- ${text}\n`;
@@ -81,6 +99,16 @@ function registerLuaBlockGenerators(): void {
   luaGeneratorsRegistered = true;
 }
 
+function buildLuaSnapshotExpr(
+  entries: Array<{ label: string; ident: string }>,
+): string {
+  if (entries.length === 0) return '{}';
+  const pairs = entries.map(
+    ({ label, ident }) => `[${JSON.stringify(label)}] = ${ident}`,
+  );
+  return `{ ${pairs.join(', ')} }`;
+}
+
 export class LuaBackendAdapter implements ScriptBackendAdapter {
   readonly id = 'lua' as const;
   readonly name = 'Lua';
@@ -88,7 +116,8 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
   readonly extension = 'lua';
   readonly fileName = 'main.lua';
   readonly accentColor = '#3b82f6';
-  readonly description = '标准 Lua 5.4 脚本生成器，支持表操作、字符串拼接与结构化日志输出。';
+  readonly description =
+    '标准 Lua 5.4 脚本生成器，支持干净导出与沙箱逐块高亮、延时及断点单步调试。';
 
   generate(workspace: Blockly.Workspace): GeneratedCodeResult {
     registerLuaBlockGenerators();
@@ -96,28 +125,62 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
     const prevPrefix = luaGenerator.STATEMENT_PREFIX;
     const prevSuffix = luaGenerator.STATEMENT_SUFFIX;
 
+    // --- Pass 1: Clean display/export/board-download code + SourceMap ---
+    luaDebugPass = false;
     luaGenerator.STATEMENT_PREFIX = `${SENTINEL_START_PREFIX}%1__\n`;
     luaGenerator.STATEMENT_SUFFIX = `${SENTINEL_END_PREFIX}%1__\n`;
 
-    let rawBody = '';
+    let rawClean = '';
+    const varEntries: Array<{ label: string; ident: string }> = [];
     try {
-      rawBody = luaGenerator.workspaceToCode(workspace);
+      luaGenerator.init(workspace);
+      for (const v of workspace.getVariableMap().getAllVariables()) {
+        varEntries.push({
+          label: v.getName(),
+          ident: luaGenerator.getVariableName(v.getId()),
+        });
+      }
+      rawClean = luaGenerator.workspaceToCode(workspace);
     } finally {
       luaGenerator.STATEMENT_PREFIX = prevPrefix;
       luaGenerator.STATEMENT_SUFFIX = prevSuffix;
     }
 
     const header = `-- 由 PolyBlock 自动生成 (Target: Lua 5.4)\n`;
-    const combined = rawBody.trim() ? `${header}${rawBody}` : `${header}-- 请从左侧拖入积木开始编排`;
-    const { code, sourceMap, lineToBlock } = extractSourceMap(combined);
+    const combinedClean = rawClean.trim()
+      ? `${header}${rawClean}`
+      : `${header}-- 请从左侧拖入积木开始编排`;
+    const { code, sourceMap, lineToBlock } = extractSourceMap(combinedClean);
+
+    // --- Pass 2: Instrumented async sandbox debug code ---
+    const snapExpr = buildLuaSnapshotExpr(varEntries);
+    let debugBody = '';
+    try {
+      luaDebugPass = true;
+      luaGenerator.STATEMENT_PREFIX = `__poly_step(%1, __poly_snap(${snapExpr})):await()\n`;
+      luaGenerator.STATEMENT_SUFFIX = null;
+      debugBody = luaGenerator.workspaceToCode(workspace);
+    } finally {
+      luaDebugPass = false;
+      luaGenerator.STATEMENT_PREFIX = prevPrefix;
+      luaGenerator.STATEMENT_SUFFIX = prevSuffix;
+    }
+
+    const debugCode = debugBody.trim()
+      ? `${debugBody}\n__poly_final_snap(__poly_snap(${snapExpr}))\n`
+      : '';
 
     return {
       language: this.id,
       code,
+      debugCode,
       sourceMap,
       lineToBlock,
       diagnostics: analyzeWorkspaceDiagnostics(workspace),
-      blockCount: workspace.getAllBlocks(false).filter((b) => !b.isShadow()).length,
+      blockCount: workspace
+        .getAllBlocks(false)
+        .filter((b) => !b.isShadow()).length,
+      variableNames: varEntries.map((v) => v.label),
     };
   }
 }

@@ -47,14 +47,13 @@ export function extractSourceMap(rawCode: string): StrippedCodeResult {
     const lineNum = cleanLines.length;
 
     if (trimmed.length > 0 && openStack.length > 0) {
-      lineToBlock[lineNum] = openStack[openStack.length - 1];
-      for (const blockId of openStack) {
-        const existing = sourceMap[blockId];
-        if (!existing) {
-          sourceMap[blockId] = { startLine: lineNum, endLine: lineNum };
-        } else {
-          existing.endLine = Math.max(existing.endLine, lineNum);
-        }
+      const ownerId = openStack[openStack.length - 1];
+      lineToBlock[lineNum] = ownerId;
+      const existing = sourceMap[ownerId];
+      if (!existing) {
+        sourceMap[ownerId] = { startLine: lineNum, endLine: lineNum };
+      } else {
+        existing.endLine = Math.max(existing.endLine, lineNum);
       }
     }
   }

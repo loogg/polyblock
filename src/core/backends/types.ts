@@ -7,11 +7,15 @@ import type {
 
 export interface GeneratedCodeResult {
   language: ScriptLanguageId;
+  /** Clean runnable script for preview, export, and future device download (zero instrumentation). */
   code: string;
+  /** Instrumented async runtime script used only by browser sandbox runners for stepping & breakpoints. */
+  debugCode: string;
   sourceMap: Record<string, SourceLineRange>;
   lineToBlock: Record<number, string>;
   diagnostics: DiagnosticItem[];
   blockCount: number;
+  variableNames: string[];
 }
 
 /**

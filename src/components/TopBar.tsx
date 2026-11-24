@@ -2,14 +2,22 @@ import {
   Code2,
   Download,
   Moon,
+  Pause,
   Play,
   Square,
+  StepForward,
   Sun,
   Terminal,
 } from 'lucide-react';
 import { backendRegistry } from '../core/backends/registry';
 import { PROJECT_TEMPLATES } from '../core/blocks/templates';
-import type { PageId, ScriptLanguageId, ThemeMode } from '../types/project';
+import type { RunnerStatus } from '../core/runners/types';
+import type {
+  ExecutionSpeedId,
+  PageId,
+  ScriptLanguageId,
+  ThemeMode,
+} from '../types/project';
 
 interface TopBarProps {
   projectName: string;
@@ -17,12 +25,19 @@ interface TopBarProps {
   activePage: PageId;
   language: ScriptLanguageId;
   theme: ThemeMode;
-  running: boolean;
+  runnerStatus: RunnerStatus;
+  executionSpeed: ExecutionSpeedId;
   showCode: boolean;
   showConsole: boolean;
   activeTemplateId: string;
   onSelectLanguage: (lang: ScriptLanguageId) => void;
-  onRunOrStop: () => void;
+  onSelectSpeed: (speed: ExecutionSpeedId) => void;
+  onRun: () => void;
+  onStartStepMode: () => void;
+  onResume: () => void;
+  onStepNext: () => void;
+  onPause: () => void;
+  onStop: () => void;
   onExportScript: () => void;
   onToggleCode: () => void;
   onToggleConsole: () => void;
@@ -36,12 +51,19 @@ export function TopBar({
   activePage,
   language,
   theme,
-  running,
+  runnerStatus,
+  executionSpeed,
   showCode,
   showConsole,
   activeTemplateId,
   onSelectLanguage,
-  onRunOrStop,
+  onSelectSpeed,
+  onRun,
+  onStartStepMode,
+  onResume,
+  onStepNext,
+  onPause,
+  onStop,
   onExportScript,
   onToggleCode,
   onToggleConsole,
@@ -50,6 +72,8 @@ export function TopBar({
 }: TopBarProps) {
   const backends = backendRegistry.list();
   const activeBackend = backendRegistry.get(language);
+  const isRunning = runnerStatus === 'running';
+  const isPaused = runnerStatus === 'paused';
 
   return (
     <header className="app-topbar">
@@ -95,6 +119,12 @@ export function TopBar({
               aria-selected={language === b.id}
               className={`seg-btn ${language === b.id ? 'active' : ''}`}
               onClick={() => onSelectLanguage(b.id)}
+              disabled={isRunning || isPaused}
+              title={
+                isRunning || isPaused
+                  ? '请先停止当前运行再切换语言'
+                  : `切换到 ${b.name} ${b.version}`
+              }
             >
               <span
                 className="lang-dot"
@@ -107,21 +137,102 @@ export function TopBar({
           ))}
         </div>
 
-        <button
-          type="button"
-          className={`btn-run ${running ? 'running' : ''}`}
-          onClick={onRunOrStop}
-          title={running ? '停止当前脚本执行' : `运行生成的 ${activeBackend.name} 脚本`}
+        <select
+          className="speed-select"
+          aria-label="执行速度档位"
+          title="调节沙箱逐块高亮节奏（极速仍会在断点处暂停）"
+          value={executionSpeed}
+          onChange={(e) => onSelectSpeed(e.target.value as ExecutionSpeedId)}
         >
-          {running ? <Square size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
-          <span>{running ? '停止' : '运行'}</span>
-        </button>
+          <option value="normal">正常</option>
+          <option value="slow">慢放</option>
+          <option value="fast">极速</option>
+        </select>
+
+        {!isRunning && !isPaused && (
+          <>
+            <button
+              type="button"
+              className="btn-run"
+              onClick={onRun}
+              title={`在沙箱中逐块运行 ${activeBackend.name} 脚本`}
+            >
+              <Play size={12} fill="currentColor" />
+              <span>运行</span>
+            </button>
+            <button
+              type="button"
+              className="btn-outline"
+              onClick={onStartStepMode}
+              title="从第 1 块积木开始单步调试"
+            >
+              <StepForward size={13} />
+              <span>单步</span>
+            </button>
+          </>
+        )}
+
+        {isRunning && (
+          <>
+            <button
+              type="button"
+              className="btn-pause"
+              onClick={onPause}
+              title="在下一块积木处暂停"
+            >
+              <Pause size={12} />
+              <span>暂停</span>
+            </button>
+            <button
+              type="button"
+              className="btn-run running"
+              onClick={onStop}
+              title="立即停止脚本执行"
+            >
+              <Square size={12} fill="currentColor" />
+              <span>停止</span>
+            </button>
+          </>
+        )}
+
+        {isPaused && (
+          <>
+            <button
+              type="button"
+              className="btn-run"
+              onClick={onResume}
+              title="继续执行直到下一个断点或结束"
+            >
+              <Play size={12} fill="currentColor" />
+              <span>继续</span>
+            </button>
+            <button
+              type="button"
+              className="btn-step"
+              onClick={onStepNext}
+              title="执行当前积木并停在下一块"
+            >
+              <StepForward size={13} />
+              <span>单步</span>
+            </button>
+            <button
+              type="button"
+              className="btn-outline"
+              onClick={onStop}
+              title="停止调试"
+              style={{ color: 'var(--danger)' }}
+            >
+              <Square size={12} fill="currentColor" />
+              <span>停止</span>
+            </button>
+          </>
+        )}
 
         <button
           type="button"
           className="btn-outline"
           onClick={onExportScript}
-          title={`导出标准 ${activeBackend.fileName} 文件`}
+          title={`导出干净标准 ${activeBackend.fileName} 文件（无调试插桩）`}
         >
           <Download size={14} />
           <span>导出 .{activeBackend.extension}</span>

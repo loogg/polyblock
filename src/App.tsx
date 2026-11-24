@@ -20,6 +20,7 @@ import { runnerManager } from './core/runners/manager';
 import type { RunnerStatus } from './core/runners/types';
 import type {
   AppSettings,
+  ExecutionSpeedId,
   LogEntry,
   LogLevel,
   PageId,
@@ -29,6 +30,12 @@ import type {
 
 const STORAGE_PROJECT_KEY = 'polyblock.workspace.v1';
 const STORAGE_SETTINGS_KEY = 'polyblock.settings.v1';
+
+const SPEED_DELAY_MS: Record<ExecutionSpeedId, number> = {
+  fast: 0,
+  normal: 180,
+  slow: 450,
+};
 
 const VALID_PAGES: PageId[] = [
   'blocks',
@@ -52,6 +59,12 @@ function loadSavedSettings(): AppSettings {
     const raw = localStorage.getItem(STORAGE_SETTINGS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<AppSettings>;
+      const speed =
+        parsed.executionSpeed === 'fast' ||
+        parsed.executionSpeed === 'normal' ||
+        parsed.executionSpeed === 'slow'
+          ? parsed.executionSpeed
+          : 'normal';
       return {
         theme: parsed.theme === 'dark' ? 'dark' : 'light',
         timeoutMs:
@@ -59,6 +72,7 @@ function loadSavedSettings(): AppSettings {
             ? parsed.timeoutMs
             : 5000,
         autoOpenConsoleOnRun: parsed.autoOpenConsoleOnRun ?? true,
+        executionSpeed: speed,
       };
     }
   } catch {
@@ -68,6 +82,7 @@ function loadSavedSettings(): AppSettings {
     theme: 'light',
     timeoutMs: 5000,
     autoOpenConsoleOnRun: true,
+    executionSpeed: 'normal',
   };
 }
 
@@ -137,6 +152,9 @@ export function App() {
   const [showCode, setShowCode] = useState<boolean>(true);
   const [showConsole, setShowConsole] = useState<boolean>(true);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [executingBlockId, setExecutingBlockId] = useState<string | null>(null);
+  const [breakpoints, setBreakpoints] = useState<string[]>([]);
+  const [liveVariables, setLiveVariables] = useState<Record<string, string>>({});
   const [errorLine, setErrorLine] = useState<number | null>(null);
 
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus>('ready');
@@ -147,17 +165,19 @@ export function App() {
       timestamp: formatNowTime(),
       level: 'system',
       message:
-        'PolyBlock 纯前端工作台就绪：内置 Lua 5.4 (Wasmoon) 与 Python 3 (MicroPython WASM) 沙箱，点击「▶ 运行」查看实时打印日志。',
+        'PolyBlock 调试沙箱就绪：支持逐块高亮联动、延时积木，以及点击代码行号左侧设置断点与单步调试。',
     },
   ]);
 
   const [generated, setGenerated] = useState<GeneratedCodeResult>({
     language: initialProjectRef.current.language,
     code: '',
+    debugCode: '',
     sourceMap: {},
     lineToBlock: {},
     diagnostics: [],
     blockCount: 0,
+    variableNames: [],
   });
 
   const [toastMsg, setToastMsg] = useState<string>('');
@@ -165,10 +185,12 @@ export function App() {
   const languageRef = useRef<ScriptLanguageId>(language);
   const projectNameRef = useRef<string>(projectName);
   const templateIdRef = useRef<string>(activeTemplateId);
+  const breakpointsRef = useRef<string[]>(breakpoints);
 
   languageRef.current = language;
   projectNameRef.current = projectName;
   templateIdRef.current = activeTemplateId;
+  breakpointsRef.current = breakpoints;
 
   const notify = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -238,6 +260,16 @@ export function App() {
       setGenerated(result);
       setErrorLine(null);
 
+      // Prune breakpoints whose blocks were deleted from workspace
+      setBreakpoints((prev) => {
+        const filtered = prev.filter((id) => Boolean(ws.getBlockById(id)));
+        if (filtered.length !== prev.length) {
+          runnerManager.updateActiveBreakpoints(filtered);
+          return filtered;
+        }
+        return prev;
+      });
+
       if (persist) {
         try {
           const snapshot = workbenchRef.current?.saveWorkspaceJson();
@@ -271,8 +303,34 @@ export function App() {
     [regenerate],
   );
 
+  const handleToggleBreakpoint = useCallback(
+    (blockId: string) => {
+      setBreakpoints((prev) => {
+        const exists = prev.includes(blockId);
+        const next = exists
+          ? prev.filter((id) => id !== blockId)
+          : [...prev, blockId];
+        runnerManager.updateActiveBreakpoints(next);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleClearBreakpoints = useCallback(() => {
+    setBreakpoints([]);
+    runnerManager.updateActiveBreakpoints([]);
+    notify('已清除全部断点');
+  }, [notify]);
+
+  const handleSelectSpeed = useCallback((speed: ExecutionSpeedId) => {
+    setSettings((prev) => ({ ...prev, executionSpeed: speed }));
+    runnerManager.updateActiveStepDelay(SPEED_DELAY_MS[speed]);
+  }, []);
+
   const handleSelectLanguage = useCallback(
     (nextLang: ScriptLanguageId) => {
+      if (runnerStatus === 'running' || runnerStatus === 'paused') return;
       setLanguage(nextLang);
       const ws = workbenchRef.current?.getWorkspace();
       if (ws) {
@@ -281,89 +339,130 @@ export function App() {
       const backend = backendRegistry.get(nextLang);
       notify(`已切换目标后端为 ${backend.name} ${backend.version}`);
     },
-    [regenerate, notify],
+    [runnerStatus, regenerate, notify],
   );
 
-  const handleRunOrStop = useCallback(async () => {
-    if (runnerStatus === 'running') {
-      runnerManager.stopActive();
-      return;
-    }
-
-    if (activePage !== 'blocks') {
-      navigateTo('blocks');
-    }
-    if (settings.autoOpenConsoleOnRun) {
-      setShowConsole(true);
-    }
-
-    const ws = workbenchRef.current?.getWorkspace();
-    const adapter = backendRegistry.get(language);
-    const latest = ws ? adapter.generate(ws) : generated;
-    setGenerated(latest);
-    setErrorLine(null);
-
-    const runner = runnerManager.getForLanguage(language);
-    runnerManager.setActive(runner);
-
-    setLogs([
-      {
-        id: `start-${Date.now()}`,
-        timestamp: formatNowTime(),
-        level: 'system',
-        message: `启动 ${runner.name} ...`,
-      },
-    ]);
-
-    const result = await runner.run(
-      {
-        language,
-        code: latest.code,
-        timeoutMs: settings.timeoutMs,
-      },
-      {
-        onClear: () => setLogs([]),
-        onLog: (level, message, line) => {
-          const mappedBlock = line ? latest.lineToBlock[line] : undefined;
-          appendLog(level, message, line, mappedBlock);
-        },
-        onStatusChange: (status) => setRunnerStatus(status),
-      },
-    );
-
-    setLastDurationMs(result.durationMs);
-    runnerManager.setActive(null);
-
-    if (result.ok) {
-      appendLog(
-        'system',
-        `执行完成，耗时 ${result.durationMs}ms（可随时点击右上角导出 ${adapter.fileName}）。`,
-      );
-    } else if (result.errorLine) {
-      setErrorLine(result.errorLine);
-      const mappedBlock = latest.lineToBlock[result.errorLine];
-      if (mappedBlock) {
-        workbenchRef.current?.focusBlock(mappedBlock);
+  const launchExecution = useCallback(
+    async (startInStepMode: boolean) => {
+      if (activePage !== 'blocks') {
+        navigateTo('blocks');
       }
-    }
-  }, [
-    runnerStatus,
-    activePage,
-    navigateTo,
-    settings.autoOpenConsoleOnRun,
-    settings.timeoutMs,
-    language,
-    generated,
-    appendLog,
-  ]);
+      if (settings.autoOpenConsoleOnRun) {
+        setShowConsole(true);
+      }
+
+      const ws = workbenchRef.current?.getWorkspace();
+      const adapter = backendRegistry.get(language);
+      const latest = ws ? adapter.generate(ws) : generated;
+      setGenerated(latest);
+      setErrorLine(null);
+      setExecutingBlockId(null);
+      setLiveVariables({});
+
+      const runner = runnerManager.getForLanguage(language);
+      runnerManager.setActive(runner);
+
+      const speedDelay = SPEED_DELAY_MS[settings.executionSpeed];
+      setLogs([
+        {
+          id: `start-${Date.now()}`,
+          timestamp: formatNowTime(),
+          level: 'system',
+          message: startInStepMode
+            ? `启动单步调试：${runner.name}`
+            : `启动 ${runner.name}（步进间隔 ${speedDelay}ms${
+                breakpointsRef.current.length > 0
+                  ? ` · ${breakpointsRef.current.length} 个断点`
+                  : ''
+              }）...`,
+        },
+      ]);
+
+      const result = await runner.run(
+        {
+          language,
+          code: latest.code,
+          debugCode: latest.debugCode || latest.code,
+          timeoutMs: settings.timeoutMs,
+          breakpoints: breakpointsRef.current,
+          stepDelayMs: speedDelay,
+          startInStepMode,
+        },
+        {
+          onClear: () => setLogs([]),
+          onLog: (level, message, line) => {
+            const mappedBlock = line ? latest.lineToBlock[line] : undefined;
+            appendLog(level, message, line, mappedBlock);
+          },
+          onStep: (blockId, vars) => {
+            setExecutingBlockId(blockId);
+            setLiveVariables(vars);
+          },
+          onPaused: (blockId, vars, reason) => {
+            setExecutingBlockId(blockId);
+            setLiveVariables(vars);
+            const range = latest.sourceMap[blockId];
+            if (reason === 'breakpoint') {
+              appendLog(
+                'warn',
+                `命中断点并暂停${range ? `（第 ${range.startLine} 行）` : ''}，可查看变量或点击「继续 / 单步」。`,
+                range?.startLine,
+                blockId,
+              );
+            }
+          },
+          onStatusChange: (status) => setRunnerStatus(status),
+        },
+      );
+
+      setLastDurationMs(result.durationMs);
+      setExecutingBlockId(null);
+      if (result.finalVars) {
+        setLiveVariables(result.finalVars);
+      }
+      runnerManager.setActive(null);
+
+      if (result.ok) {
+        appendLog(
+          'system',
+          `执行完成，总耗时 ${result.durationMs}ms（右上角导出的是干净无插桩的 ${adapter.fileName}）。`,
+        );
+      } else if (result.errorLine) {
+        setErrorLine(result.errorLine);
+        const mappedBlock = latest.lineToBlock[result.errorLine];
+        if (mappedBlock) {
+          workbenchRef.current?.focusBlock(mappedBlock);
+        }
+      }
+    },
+    [
+      activePage,
+      navigateTo,
+      settings.autoOpenConsoleOnRun,
+      settings.executionSpeed,
+      settings.timeoutMs,
+      language,
+      generated,
+      appendLog,
+    ],
+  );
+
+  const handleStop = useCallback(() => {
+    runnerManager.stopActive();
+    setExecutingBlockId(null);
+  }, []);
 
   const handleExportScript = useCallback(() => {
     const adapter = backendRegistry.get(language);
     const baseName = projectName.replace(/\.polyblock\.json$|\.json$/i, '');
     const outFile = `${baseName || 'main'}.${adapter.extension}`;
-    triggerFileDownload(outFile, generated.code + '\n', 'text/plain;charset=utf-8');
+    triggerFileDownload(
+      outFile,
+      generated.code + '\n',
+      'text/plain;charset=utf-8',
+    );
     setIsDirty(false);
-    notify(`已导出 ${outFile}`);
+    notify(`已导出干净脚本 ${outFile}`);
   }, [language, projectName, generated.code, notify]);
 
   const handleCopyCode = useCallback(async () => {
@@ -378,11 +477,17 @@ export function App() {
 
   const handleLoadTemplate = useCallback(
     (templateId: string) => {
+      if (runnerStatus === 'running' || runnerStatus === 'paused') {
+        runnerManager.stopActive();
+      }
       const tpl = PROJECT_TEMPLATES.find((t) => t.id === templateId);
       if (!tpl) return;
       setProjectName(tpl.fileName);
       setActiveTemplateId(tpl.id);
       setLanguage(tpl.recommendedLang);
+      setBreakpoints([]);
+      setLiveVariables({});
+      setExecutingBlockId(null);
       languageRef.current = tpl.recommendedLang;
       projectNameRef.current = tpl.fileName;
       templateIdRef.current = tpl.id;
@@ -390,10 +495,13 @@ export function App() {
       setIsDirty(false);
       notify(`已载入示例模板：${tpl.name}`);
     },
-    [notify],
+    [runnerStatus, notify],
   );
 
   const handleCreateBlank = useCallback(() => {
+    if (runnerStatus === 'running' || runnerStatus === 'paused') {
+      runnerManager.stopActive();
+    }
     const blank = {
       blocks: {
         languageVersion: 0,
@@ -402,13 +510,16 @@ export function App() {
     };
     setProjectName('untitled.polyblock.json');
     setActiveTemplateId('');
+    setBreakpoints([]);
+    setLiveVariables({});
+    setExecutingBlockId(null);
     projectNameRef.current = 'untitled.polyblock.json';
     templateIdRef.current = '';
     workbenchRef.current?.loadWorkspaceJson(blank);
     setIsDirty(false);
     navigateTo('blocks');
     notify('已创建空白积木项目');
-  }, [navigateTo, notify]);
+  }, [runnerStatus, navigateTo, notify]);
 
   const handleSaveProjectFile = useCallback(() => {
     const wsJson = workbenchRef.current?.saveWorkspaceJson() ?? {};
@@ -421,7 +532,9 @@ export function App() {
       workspace: wsJson,
     };
     triggerFileDownload(
-      projectName.endsWith('.json') ? projectName : `${projectName}.polyblock.json`,
+      projectName.endsWith('.json')
+        ? projectName
+        : `${projectName}.polyblock.json`,
       JSON.stringify(payload, null, 2),
       'application/json;charset=utf-8',
     );
@@ -431,9 +544,15 @@ export function App() {
 
   const handleImportProjectFile = useCallback(
     (data: ProjectFileData) => {
+      if (runnerStatus === 'running' || runnerStatus === 'paused') {
+        runnerManager.stopActive();
+      }
       setProjectName(data.name);
       setActiveTemplateId('');
       setLanguage(data.language);
+      setBreakpoints([]);
+      setLiveVariables({});
+      setExecutingBlockId(null);
       languageRef.current = data.language;
       projectNameRef.current = data.name;
       templateIdRef.current = '';
@@ -442,7 +561,7 @@ export function App() {
       navigateTo('blocks');
       notify(`已导入工程：${data.name}`);
     },
-    [navigateTo, notify],
+    [runnerStatus, navigateTo, notify],
   );
 
   const handleResetWorkspace = useCallback(() => {
@@ -463,12 +582,19 @@ export function App() {
         activePage={activePage}
         language={language}
         theme={settings.theme}
-        running={runnerStatus === 'running'}
+        runnerStatus={runnerStatus}
+        executionSpeed={settings.executionSpeed}
         showCode={showCode}
         showConsole={showConsole}
         activeTemplateId={activeTemplateId}
         onSelectLanguage={handleSelectLanguage}
-        onRunOrStop={handleRunOrStop}
+        onSelectSpeed={handleSelectSpeed}
+        onRun={() => launchExecution(false)}
+        onStartStepMode={() => launchExecution(true)}
+        onResume={() => runnerManager.resumeActive()}
+        onStepNext={() => runnerManager.stepNextActive()}
+        onPause={() => runnerManager.pauseActive()}
+        onStop={handleStop}
         onExportScript={handleExportScript}
         onToggleCode={() => setShowCode((v) => !v)}
         onToggleConsole={() => setShowConsole((v) => !v)}
@@ -485,7 +611,6 @@ export function App() {
         <ActivityRail activePage={activePage} onSelectPage={navigateTo} />
 
         <main className="workspace-host">
-          {/* Keep Blockly workbench persistently mounted for instant page switching & undo history */}
           <div
             className={`workbench-center-col ${
               activePage !== 'blocks' ? 'hidden-pane' : ''
@@ -497,8 +622,12 @@ export function App() {
                 theme={settings.theme}
                 initialWorkspace={initialProjectRef.current.workspace}
                 visible={activePage === 'blocks'}
+                executingBlockId={executingBlockId}
+                isPaused={runnerStatus === 'paused'}
+                breakpoints={breakpoints}
                 onWorkspaceChange={handleWorkspaceChange}
                 onSelectBlock={setSelectedBlockId}
+                onToggleBreakpoint={handleToggleBreakpoint}
               />
 
               {showCode && (
@@ -506,8 +635,14 @@ export function App() {
                   language={language}
                   generated={generated}
                   selectedBlockId={selectedBlockId}
+                  executingBlockId={executingBlockId}
+                  isPaused={runnerStatus === 'paused'}
+                  breakpoints={breakpoints}
+                  variables={liveVariables}
                   errorLine={errorLine}
                   onSelectBlockFromLine={handleFocusBlock}
+                  onToggleBreakpoint={handleToggleBreakpoint}
+                  onClearBreakpoints={handleClearBreakpoints}
                   onCopyCode={handleCopyCode}
                 />
               )}
@@ -566,6 +701,7 @@ export function App() {
         runnerStatus={runnerStatus}
         blockCount={generated.blockCount}
         diagnosticCount={generated.diagnostics.length}
+        breakpointCount={breakpoints.length}
         selectedBlockId={selectedBlockId}
       />
 

@@ -57,6 +57,28 @@ export function SettingsPage({
 
         <div className="setting-row">
           <div>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>默认执行高亮速度</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              控制沙箱逐块联动高亮的节奏（选择「极速」时不额外停顿，但仍会在断点处暂停）
+            </div>
+          </div>
+          <select
+            className="template-select"
+            value={settings.executionSpeed}
+            onChange={(e) =>
+              onUpdateSettings({
+                executionSpeed: e.target.value as AppSettings['executionSpeed'],
+              })
+            }
+          >
+            <option value="normal">正常（每步 180ms）</option>
+            <option value="slow">慢放（每步 450ms）</option>
+            <option value="fast">极速（0ms 无停顿）</option>
+          </select>
+        </div>
+
+        <div className="setting-row">
+          <div>
             <div style={{ fontWeight: 600, marginBottom: 2 }}>沙箱执行超时保护</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
               遇到死循环时自动终止 Web Worker 并恢复沙箱，避免页面卡死

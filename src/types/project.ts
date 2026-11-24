@@ -37,8 +37,16 @@ export interface ProjectFileData {
   workspace: Record<string, unknown>;
 }
 
+export type ExecutionSpeedId = 'fast' | 'normal' | 'slow';
+
+export interface VariableSnapshotItem {
+  name: string;
+  value: string;
+}
+
 export interface AppSettings {
   theme: ThemeMode;
   timeoutMs: number;
   autoOpenConsoleOnRun: boolean;
+  executionSpeed: ExecutionSpeedId;
 }

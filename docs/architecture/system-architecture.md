@@ -75,3 +75,29 @@
 3. 路由使用状态 + `window.location.hash`（`#/blocks`、`#/projects`、`#/devices`、`#/extensions`、`#/settings`），刷新不出现 404。
 4. 不使用 `SharedArrayBuffer`，完全兼容 GitHub Pages 默认 HTTP 响应头。
 5. 提供 `.github/workflows/deploy.yml` 自动化构建与发布 GitHub Pages。
+
+## 5. Phase 2 扩展：双代码产线与异步沙箱调试架构
+
+为同时兼顾“浏览器沙箱强调试”与“未来真机板子下发纯净脚本”，后端代码生成与沙箱执行升级为双产线设计：
+
+```text
+[Blockly Workspace]
+   ├──> cleanCode (100% 纯净标准 Lua / Python)
+   │       ├── 右侧代码区展示 & 一键导出 (.lua / .py)
+   │       └── 未来直接下载至目标硬件板子（零调试插桩）
+   │
+   └──> debugCode (仅沙箱运行态，含异步追踪桩 + 非阻塞延时)
+           ├── Lua 5.4: __poly_step(blockId, snap):await() / __poly_sleep(ms):await()
+           └── Python 3: await _poly.step(blockId, snap) / await _poly.sleep(ms)
+                               │
+                               ▼ (Web Worker 双向消息，零 SharedArrayBuffer)
+                    STEP / PAUSED / WAITING / RESUME / STEP_NEXT / SET_BREAKPOINTS
+                               │
+                               ▼
+              [画布执行块发光] + [代码行同步高亮 & 断点槽] + [实时变量监视]
+```
+
+### 关键保障
+- **延时积木（`poly_wait_ms`）**：干净导出时生成标准等待代码（Python `time.sleep(...)`、Lua 独立 `poly_wait_ms` 辅助函数）；沙箱运行时走非阻塞 `setTimeout` Promise。
+- **超时保护不误杀**：Worker 处于断点暂停（`PAUSED`）或显式等待（`WAITING`）期间自动暂停看门狗计时，仅对真实计算死循环触发超时强杀；点击「停止」仍可随时立即终止 Worker。
+

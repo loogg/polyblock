@@ -103,6 +103,16 @@ export function registerPolyBlocks(): void {
       tooltip: '使用循环变量按起止值与步长（包含结束值）迭代执行。',
     },
     {
+      type: 'poly_wait_ms',
+      message0: '等待 %1 毫秒',
+      args0: [{ type: 'input_value', name: 'MS', check: 'Number' }],
+      inputsInline: true,
+      previousStatement: null,
+      nextStatement: null,
+      style: 'control_blocks',
+      tooltip: '非阻塞延时指定毫秒数后再继续执行后续积木（沙箱中支持随时停止）。',
+    },
+    {
       type: 'poly_comment',
       message0: '注释 %1',
       args0: [{ type: 'field_input', name: 'TEXT', text: '记录逻辑说明' }],

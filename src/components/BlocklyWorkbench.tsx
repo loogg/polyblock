@@ -43,15 +43,69 @@ interface BlocklyWorkbenchProps {
   theme: ThemeMode;
   initialWorkspace: Record<string, unknown>;
   visible: boolean;
+  executingBlockId: string | null;
+  isPaused: boolean;
+  breakpoints: string[];
   onWorkspaceChange: (workspace: Blockly.WorkspaceSvg) => void;
   onSelectBlock: (blockId: string | null) => void;
+  onToggleBreakpoint: (blockId: string) => void;
+}
+
+// Singleton hook bridge so Blockly's global ContextMenuRegistry invokes current React callbacks
+let breakpointMenuRegistered = false;
+let currentToggleBpHandler: ((blockId: string) => void) | null = null;
+let currentBreakpointsSet = new Set<string>();
+
+function registerBreakpointContextMenu(): void {
+  if (breakpointMenuRegistered) return;
+
+  const menuItem: Blockly.ContextMenuRegistry.RegistryItem = {
+    id: 'polyblock_toggle_breakpoint',
+    scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+    weight: -5,
+    displayText: (scope) => {
+      const id = scope.block?.id;
+      return id && currentBreakpointsSet.has(id)
+        ? '取消此积木断点'
+        : '在此积木设置断点';
+    },
+    preconditionFn: (scope) => {
+      const blk = scope.block;
+      if (!blk || blk.isInFlyout || !blk.previousConnection) {
+        return 'hidden';
+      }
+      return 'enabled';
+    },
+    callback: (scope) => {
+      if (scope.block?.id) {
+        currentToggleBpHandler?.(scope.block.id);
+      }
+    },
+  };
+
+  try {
+    Blockly.ContextMenuRegistry.registry.register(menuItem);
+  } catch {
+    // Already registered in HMR
+  }
+  breakpointMenuRegistered = true;
 }
 
 export const BlocklyWorkbench = forwardRef<
   BlocklyWorkbenchHandle,
   BlocklyWorkbenchProps
 >(function BlocklyWorkbench(
-  { theme, initialWorkspace, visible, onWorkspaceChange, onSelectBlock },
+  {
+    theme,
+    initialWorkspace,
+    visible,
+    executingBlockId,
+    isPaused,
+    breakpoints,
+    onWorkspaceChange,
+    onSelectBlock,
+    onToggleBreakpoint,
+  },
   ref,
 ) {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -66,16 +120,15 @@ export const BlocklyWorkbench = forwardRef<
 
   onChangeRef.current = onWorkspaceChange;
   onSelectRef.current = onSelectBlock;
+  currentToggleBpHandler = onToggleBreakpoint;
+  currentBreakpointsSet = new Set(breakpoints);
 
-  const refreshFlyout = useCallback(
-    (catId: string, query: string) => {
-      const ws = workspaceRef.current;
-      if (!ws) return;
-      const toolboxDef = buildFlyoutToolbox(ws, catId, query);
-      ws.updateToolbox(toolboxDef);
-    },
-    [],
-  );
+  const refreshFlyout = useCallback((catId: string, query: string) => {
+    const ws = workspaceRef.current;
+    if (!ws) return;
+    const toolboxDef = buildFlyoutToolbox(ws, catId, query);
+    ws.updateToolbox(toolboxDef);
+  }, []);
 
   // Initialize Blockly workspace once
   useEffect(() => {
@@ -84,6 +137,7 @@ export const BlocklyWorkbench = forwardRef<
 
     registerMicroZelosRenderer();
     registerPolyBlocks();
+    registerBreakpointContextMenu();
 
     const ws = Blockly.inject(el, {
       renderer: MICRO_ZELOS_RENDERER_NAME,
@@ -124,7 +178,6 @@ export const BlocklyWorkbench = forwardRef<
       );
     });
 
-    // Load initial workspace state safely
     try {
       Blockly.serialization.workspaces.load(initialDataRef.current, ws);
     } catch {
@@ -155,7 +208,6 @@ export const BlocklyWorkbench = forwardRef<
         event.type === Blockly.Events.VAR_DELETE ||
         event.type === Blockly.Events.VAR_RENAME
       ) {
-        // Keep variable flyout fresh if open
         setActiveCat((curr) => {
           if (curr === 'variables') {
             setTimeout(() => refreshFlyout('variables', ''), 0);
@@ -211,6 +263,53 @@ export const BlocklyWorkbench = forwardRef<
     return () => cancelAnimationFrame(id);
   }, [visible]);
 
+  // Apply live execution glow / paused ring directly on Blockly SVG block root
+  useEffect(() => {
+    const ws = workspaceRef.current;
+    if (!ws) return;
+
+    const allBlocks = ws.getAllBlocks(false);
+    for (const block of allBlocks) {
+      const root = (block as Blockly.BlockSvg).getSvgRoot?.();
+      if (!root) continue;
+      root.classList.remove('pb-block-executing', 'pb-block-paused');
+    }
+
+    if (executingBlockId) {
+      const target = ws.getBlockById(executingBlockId) as Blockly.BlockSvg | null;
+      const root = target?.getSvgRoot?.();
+      if (root) {
+        root.classList.add(isPaused ? 'pb-block-paused' : 'pb-block-executing');
+      }
+    }
+  }, [executingBlockId, isPaused]);
+
+  // Render crisp crimson breakpoint dots directly on blocks that have breakpoints
+  useEffect(() => {
+    const ws = workspaceRef.current;
+    if (!ws) return;
+    const bpSet = new Set(breakpoints);
+    const allBlocks = ws.getAllBlocks(false);
+
+    for (const block of allBlocks) {
+      const root = (block as Blockly.BlockSvg).getSvgRoot?.();
+      if (!root) continue;
+      const existing = root.querySelector(':scope > circle.pb-bp-dot');
+      const hasBp = bpSet.has(block.id);
+
+      if (hasBp && !existing) {
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        dot.setAttribute('class', 'pb-bp-dot');
+        dot.setAttribute('cx', '1');
+        dot.setAttribute('cy', '15');
+        dot.setAttribute('r', '5.5');
+        root.appendChild(dot);
+      } else if (!hasBp && existing) {
+        existing.remove();
+      }
+    }
+  }, [breakpoints, executingBlockId]);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -220,7 +319,7 @@ export const BlocklyWorkbench = forwardRef<
         if (!ws) return;
         ws.clear();
         Blockly.serialization.workspaces.load(state, ws);
-        ws.scrollCenter();
+        ws.scroll(0, 0);
         onChangeRef.current(ws);
       },
       saveWorkspaceJson: () => {
@@ -270,7 +369,6 @@ export const BlocklyWorkbench = forwardRef<
 
   return (
     <div className="blockly-area">
-      {/* MicroBlocks-style Category Dot Strip */}
       <nav className="cat-strip" aria-label="积木分类">
         {BLOCK_CATEGORIES.map((cat) => (
           <button
@@ -292,14 +390,13 @@ export const BlocklyWorkbench = forwardRef<
         ))}
       </nav>
 
-      {/* Main Dot-Grid Blockly Workspace + Docked Flyout Search + Zoom Bar */}
       <div className="canvas-container">
         <div className="flyout-search-dock">
           <Search size={13} />
           <input
             type="text"
             aria-label="搜索积木"
-            placeholder="搜索积木 (打印 / 循环 / 列表)"
+            placeholder="搜索积木 (打印 / 等待 / 循环)"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
