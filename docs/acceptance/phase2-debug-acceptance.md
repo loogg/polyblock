@@ -1,7 +1,7 @@
 # PolyBlock Phase 2 验收标准与审查记录（延时积木、逐块联动与断点单步调试）
 
 - **架构依据**：[system-architecture.md](../architecture/system-architecture.md)（第 5 节：双代码产线与异步沙箱调试架构）
-- **当前状态**：本地单元测试、构建与浏览器双语言实测全部通过，已进入 GitHub Pages 发布
+- **当前状态**：Phase 2 交付完成（双语言单元测试、生产构建、浏览器端到端实测及 GitHub Pages 线上发布全部通过）
 
 ## 1. 验收清单与实测结果
 
@@ -14,7 +14,7 @@
 | D5 | 业务链路 | Python 3（MicroPython WASM）断点 → 暂停查变量 → 单步 → 清断点继续 | `main.py` 展示干净 `import time` + `time.sleep(0.35)`；命中断点准确暂停并展示 `sum = 1, step = 1`；单步输出日志并继续跑完至 `sum = 10` | 内置浏览器实测 | **通过**（0 控制台报错） |
 | D6 | 交互覆盖 | 「控制」分类「等待 500 毫秒」积木、顶栏速度切换、运行/单步/暂停/继续/停止、积木右键断点菜单 | 积木分类展示完整；顶栏状态按钮切换清晰，停止与恢复正常 | 内置浏览器实测 | **通过**（右键断点菜单已实现并注册，主路径由代码槽点击实测验证） |
 | D7 | 视觉审查 | 1440×900 浅色调试态 + 1280×720 深色顶栏 + 右侧面板页签单行对齐 | 顶栏与右侧检查器页签单行对齐无换行重叠，单行高亮精确，暗黑主题清晰可读 | 内置浏览器截图并目视确认 | **通过**（已修正有断点时页签换行与 SourceMap 多行涂抹问题并复验通过） |
-| D8 | 发布交付 | `npm run build` + Git 推送 + GitHub Pages 自动部署绿灯 | 构建与 Actions 部署成功 | `npm run build` + `gh run watch` | 执行中 |
+| D8 | 发布交付 | `npm run build` + Git 推送 + GitHub Pages 自动部署绿灯 | 构建与 Actions 部署成功 | `npm run build` + `gh run watch` | **通过**（提交 `17e721a`，Actions Run `45415613850` 成功部署至 https://loogg.github.io/polyblock/ ） |
 
 ## 2. 本轮审查闭环修复记录
 1. **变量标识映射修复**：在 `LuaBackendAdapter` / `PythonBackendAdapter` 收集变量名映射前先调用 `generator.init(workspace)`，彻底消除 Blockly `nameDB_` 弃用警告并确保 Python 保留字变量（如 `sum` → `sum2`）正确映射回原中文/英文名显示。
