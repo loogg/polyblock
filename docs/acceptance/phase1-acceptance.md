@@ -3,7 +3,7 @@
 - **需求依据**：[phase1-requirements.md](../requirement/phase1-requirements.md)
 - **架构依据**：[system-architecture.md](../architecture/system-architecture.md)
 - **界面原型**：[layout-showcase.html](../ui-prototype/layout-showcase.html)（方案一 · MicroBlocks 工作台）
-- **当前状态**：已完成本地单元、生产构建与内置浏览器全链路验收，正在推送并发布 GitHub Pages
+- **当前状态**：Phase 1 交付完成（本地单元/构建/浏览器实测通过，已发布至 GitHub 仓库并部署 GitHub Pages）
 
 ## 1. 验收清单与实测结果
 
@@ -18,7 +18,10 @@
 | A7 | 交互覆盖 | 9 个积木分类切换（含变量/函数）、关键词搜索、代码/日志面板折叠 | 切换无崩溃、搜索过滤准确且不遮挡、面板折叠后 SVG 正确重绘 | 内置浏览器逐项操作 | **通过**（修复「变量」分类 JSON 构造后 9 分类全部零报错；搜索「打印」正常；折叠重绘正常） |
 | A8 | 交互覆盖 | 多页面侧边栏（编程/项目/设备/扩展/设置）+ 明暗双主题切换 | 5 页正常展示且切回画布不偏移；深色主题对比度良好 | 内置浏览器逐页操作并截图目视 | **通过**（修复 `hidden-pane` 布局保留后切回画布无偏移；深色主题与金色太阳图标清晰可读） |
 | A9 | 视觉审查 | 1440×900、1280×720 及 960×720 画面、MicroBlocks 块形、favicon/Logo、零外部资源 | 无遮挡/重叠/外部请求，favicon 与 Logo 清晰 | 内置浏览器截图并目视审查 | **通过**（所有尺寸 0 重叠；`./favicon.svg` 与 `./blockly-media/sprites.svg` 全本地 200 加载） |
-| A10 | 发布交付 | 创建 GitHub 仓库 `loogg/polyblock`、推送与 GitHub Pages 部署 | 仓库推送成功，Actions 构建部署绿灯且线上可访问 | `gh` CLI + GitHub Actions 状态核验 | 执行中（发布后更新） |
+| A10 | 发布交付 | 创建 GitHub 仓库 `loogg/polyblock`、推送与 GitHub Pages 部署 | 仓库推送成功，Actions 构建部署绿灯且线上可访问 | `gh` CLI + GitHub Actions 状态核验 | **通过**（仓库 https://github.com/loogg/polyblock ，Actions Run `45378698294` 绿灯，线上地址 https://loogg.github.io/polyblock/ ） |
+
+## 3. 未覆盖项说明
+- **A5（死循环超时强杀）**：代码已实现 `WasmoonLuaRunner` / `MicroPythonWasmRunner` 的可配置超时与 `worker.terminate()` 强杀重置，暂未在真实界面中构造死循环积木现场触发，列为后续复核项。
 
 ## 2. 本轮修复记录（审查闭环）
 1. **变量分类崩溃修复**：将 `buildFlyoutToolbox` 中 `VARIABLE` / `PROCEDURE` 分类改为纯 Blockly v13 JSON 定义，避免混入 XML DOM 节点触发 `toLowerCase` 异常。
