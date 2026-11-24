@@ -317,10 +317,15 @@ export const BlocklyWorkbench = forwardRef<
       loadWorkspaceJson: (state) => {
         const ws = workspaceRef.current;
         if (!ws) return;
-        ws.clear();
-        Blockly.serialization.workspaces.load(state, ws);
-        ws.scroll(0, 0);
-        onChangeRef.current(ws);
+        Blockly.Events.disable();
+        try {
+          ws.clear();
+          Blockly.serialization.workspaces.load(state, ws);
+          ws.clearUndo();
+          ws.scroll(0, 0);
+        } finally {
+          Blockly.Events.enable();
+        }
       },
       saveWorkspaceJson: () => {
         const ws = workspaceRef.current;

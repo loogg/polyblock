@@ -1,35 +1,48 @@
 import {
+  Check,
+  ChevronDown,
   Code2,
   Download,
+  FolderGit2,
+  FolderKanban,
   Moon,
   Pause,
+  Pencil,
   Play,
+  Plus,
+  Save,
   Square,
   StepForward,
   Sun,
   Terminal,
 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
-import { PROJECT_TEMPLATES } from '../core/blocks/templates';
 import type { RunnerStatus } from '../core/runners/types';
 import type {
   ExecutionSpeedId,
   PageId,
+  ProjectModel,
   ScriptLanguageId,
   ThemeMode,
 } from '../types/project';
 
 interface TopBarProps {
-  projectName: string;
+  projects: ProjectModel[];
+  activeProject: ProjectModel;
+  activeScriptName: string;
   isDirty: boolean;
   activePage: PageId;
-  language: ScriptLanguageId;
   theme: ThemeMode;
   runnerStatus: RunnerStatus;
   executionSpeed: ExecutionSpeedId;
   showCode: boolean;
   showConsole: boolean;
-  activeTemplateId: string;
+  onSelectProject: (projectId: string) => void;
+  onCreateBlankProject: () => void;
+  onRenameCurrentProject: (nextName: string) => void;
+  onSaveProjectFile: () => void;
+  onOpenProjectsPage: () => void;
   onSelectLanguage: (lang: ScriptLanguageId) => void;
   onSelectSpeed: (speed: ExecutionSpeedId) => void;
   onRun: () => void;
@@ -38,24 +51,28 @@ interface TopBarProps {
   onStepNext: () => void;
   onPause: () => void;
   onStop: () => void;
-  onExportScript: () => void;
+  onExportActiveScript: () => void;
   onToggleCode: () => void;
   onToggleConsole: () => void;
   onToggleTheme: () => void;
-  onSelectTemplate: (templateId: string) => void;
 }
 
 export function TopBar({
-  projectName,
+  projects,
+  activeProject,
+  activeScriptName,
   isDirty,
   activePage,
-  language,
   theme,
   runnerStatus,
   executionSpeed,
   showCode,
   showConsole,
-  activeTemplateId,
+  onSelectProject,
+  onCreateBlankProject,
+  onRenameCurrentProject,
+  onSaveProjectFile,
+  onOpenProjectsPage,
   onSelectLanguage,
   onSelectSpeed,
   onRun,
@@ -64,16 +81,43 @@ export function TopBar({
   onStepNext,
   onPause,
   onStop,
-  onExportScript,
+  onExportActiveScript,
   onToggleCode,
   onToggleConsole,
   onToggleTheme,
-  onSelectTemplate,
 }: TopBarProps) {
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [renamingProject, setRenamingProject] = useState(false);
+  const [draftProjectName, setDraftProjectName] = useState(activeProject.name);
+  const projectMenuRef = useRef<HTMLDivElement | null>(null);
+
   const backends = backendRegistry.list();
-  const activeBackend = backendRegistry.get(language);
+  const activeBackend = backendRegistry.get(activeProject.language);
   const isRunning = runnerStatus === 'running';
   const isPaused = runnerStatus === 'paused';
+  const activeFileName = `${activeScriptName}.${activeBackend.extension}`;
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (
+        projectMenuRef.current &&
+        !projectMenuRef.current.contains(e.target as Node)
+      ) {
+        setProjectMenuOpen(false);
+        setRenamingProject(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const commitProjectRename = () => {
+    if (draftProjectName.trim()) {
+      onRenameCurrentProject(draftProjectName.trim());
+    }
+    setRenamingProject(false);
+    setProjectMenuOpen(false);
+  };
 
   return (
     <header className="app-topbar">
@@ -87,43 +131,160 @@ export function TopBar({
           <span>PolyBlock</span>
         </div>
 
-        <div className="project-pill" title={projectName}>
-          {isDirty && <span className="dirty-dot" title="有未导出修改" />}
-          <span>{projectName}</span>
-        </div>
+        {/* Project-as-Root Switcher */}
+        <div className="popover-anchor" ref={projectMenuRef}>
+          <button
+            type="button"
+            className="project-switcher-btn"
+            onClick={() => {
+              setDraftProjectName(activeProject.name);
+              setRenamingProject(false);
+              setProjectMenuOpen((v) => !v);
+            }}
+            aria-expanded={projectMenuOpen}
+            aria-label="切换或管理当前项目"
+            title={`当前项目：${activeProject.name}（共 ${activeProject.scripts.length} 个脚本）`}
+          >
+            <FolderGit2 size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+            {isDirty && <span className="dirty-dot" title="有未导出修改" />}
+            <span className="project-switcher-name">{activeProject.name}</span>
+            <span className="project-script-count">
+              {activeProject.scripts.length} 脚本
+            </span>
+            <ChevronDown size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+          </button>
 
-        <select
-          className="template-select"
-          aria-label="切换示例模板"
-          value={activeTemplateId}
-          onChange={(e) => {
-            if (e.target.value) onSelectTemplate(e.target.value);
-          }}
-        >
-          <option value="">示例模板...</option>
-          {PROJECT_TEMPLATES.map((tpl) => (
-            <option key={tpl.id} value={tpl.id}>
-              {tpl.name}
-            </option>
-          ))}
-        </select>
+          {projectMenuOpen && (
+            <div className="dropdown-menu" style={{ left: 0, minWidth: 264 }}>
+              <div className="dropdown-section-label">
+                切换项目 ({projects.length})
+              </div>
+              <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                {projects.map((p) => {
+                  const isCurrent = p.id === activeProject.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={`dropdown-item ${isCurrent ? 'active' : ''}`}
+                      disabled={(isRunning || isPaused) && !isCurrent}
+                      onClick={() => {
+                        onSelectProject(p.id);
+                        setProjectMenuOpen(false);
+                      }}
+                    >
+                      <span style={{ width: 14, display: 'inline-flex' }}>
+                        {isCurrent && <Check size={13} />}
+                      </span>
+                      <span className="dropdown-item-label">{p.name}</span>
+                      <span className="count-badge">
+                        {p.language === 'lua' ? 'Lua' : 'Py'} · {p.scripts.length}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="dropdown-divider" />
+
+              {renamingProject ? (
+                <div className="dropdown-rename-row">
+                  <input
+                    type="text"
+                    className="dropdown-rename-input"
+                    value={draftProjectName}
+                    autoFocus
+                    onChange={(e) => setDraftProjectName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitProjectRename();
+                      if (e.key === 'Escape') setRenamingProject(false);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{ padding: '4px 8px', fontSize: 11.5 }}
+                    onClick={commitProjectRename}
+                  >
+                    确定
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="dropdown-item"
+                  onClick={() => {
+                    setDraftProjectName(activeProject.name);
+                    setRenamingProject(true);
+                  }}
+                >
+                  <Pencil size={13} />
+                  <span>重命名当前项目</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                className="dropdown-item"
+                disabled={isRunning || isPaused}
+                onClick={() => {
+                  setProjectMenuOpen(false);
+                  onCreateBlankProject();
+                }}
+              >
+                <Plus size={13} />
+                <span>新建空白项目</span>
+              </button>
+
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => {
+                  setProjectMenuOpen(false);
+                  onSaveProjectFile();
+                }}
+              >
+                <Save size={13} />
+                <span>保存整项目工程 (.polyblock.json)</span>
+              </button>
+
+              <div className="dropdown-divider" />
+
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => {
+                  setProjectMenuOpen(false);
+                  onOpenProjectsPage();
+                }}
+              >
+                <FolderKanban size={13} />
+                <span>打开项目管理与模板页 →</span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="topbar-group">
-        <div className="seg-control" role="tablist" aria-label="目标脚本后端">
+        <div
+          className="seg-control"
+          role="tablist"
+          aria-label="项目统一目标脚本后端"
+        >
           {backends.map((b) => (
             <button
               key={b.id}
               type="button"
               role="tab"
-              aria-selected={language === b.id}
-              className={`seg-btn ${language === b.id ? 'active' : ''}`}
+              aria-selected={activeProject.language === b.id}
+              className={`seg-btn ${activeProject.language === b.id ? 'active' : ''}`}
               onClick={() => onSelectLanguage(b.id)}
               disabled={isRunning || isPaused}
               title={
                 isRunning || isPaused
                   ? '请先停止当前运行再切换语言'
-                  : `切换到 ${b.name} ${b.version}`
+                  : `将整个项目切换为 ${b.name} ${b.version}`
               }
             >
               <span
@@ -155,7 +316,7 @@ export function TopBar({
               type="button"
               className="btn-run"
               onClick={onRun}
-              title={`在沙箱中逐块运行 ${activeBackend.name} 脚本`}
+              title={`运行当前脚本 ${activeFileName}`}
             >
               <Play size={12} fill="currentColor" />
               <span>运行</span>
@@ -164,7 +325,7 @@ export function TopBar({
               type="button"
               className="btn-outline"
               onClick={onStartStepMode}
-              title="从第 1 块积木开始单步调试"
+              title={`从第 1 块积木单步调试 ${activeFileName}`}
             >
               <StepForward size={13} />
               <span>单步</span>
@@ -231,8 +392,8 @@ export function TopBar({
         <button
           type="button"
           className="btn-outline"
-          onClick={onExportScript}
-          title={`导出干净标准 ${activeBackend.fileName} 文件（无调试插桩）`}
+          onClick={onExportActiveScript}
+          title={`导出当前脚本 ${activeFileName}（干净无插桩）`}
         >
           <Download size={14} />
           <span>导出 .{activeBackend.extension}</span>

@@ -11,11 +11,27 @@ import { DevicesPage } from './components/pages/DevicesPage';
 import { ExtensionsPage } from './components/pages/ExtensionsPage';
 import { ProjectsPage } from './components/pages/ProjectsPage';
 import { SettingsPage } from './components/pages/SettingsPage';
+import { ScriptTabBar } from './components/ScriptTabBar';
 import { StatusBar } from './components/StatusBar';
 import { TopBar } from './components/TopBar';
 import { backendRegistry } from './core/backends/registry';
 import type { GeneratedCodeResult } from './core/backends/types';
-import { PROJECT_TEMPLATES } from './core/blocks/templates';
+import {
+  addScriptToProject,
+  deleteProjectFromStore,
+  deleteScriptFromProject,
+  duplicateProjectInStore,
+  duplicateScriptInProject,
+  getActiveProject,
+  getActiveScript,
+  instantiateProjectFromTemplate,
+  loadWorkspaceStore,
+  makeUniqueProjectName,
+  renameScriptInProject,
+  saveWorkspaceStore,
+  STORAGE_STORE_V2_KEY,
+  updateProjectById,
+} from './core/projects/store';
 import { runnerManager } from './core/runners/manager';
 import type { RunnerStatus } from './core/runners/types';
 import type {
@@ -24,11 +40,11 @@ import type {
   LogEntry,
   LogLevel,
   PageId,
-  ProjectFileData,
+  ProjectModel,
   ScriptLanguageId,
+  WorkspaceStoreState,
 } from './types/project';
 
-const STORAGE_PROJECT_KEY = 'polyblock.workspace.v1';
 const STORAGE_SETTINGS_KEY = 'polyblock.settings.v1';
 
 const SPEED_DELAY_MS: Record<ExecutionSpeedId, number> = {
@@ -86,40 +102,6 @@ function loadSavedSettings(): AppSettings {
   };
 }
 
-function loadInitialProject(): {
-  name: string;
-  language: ScriptLanguageId;
-  templateId: string;
-  workspace: Record<string, unknown>;
-} {
-  try {
-    const raw = localStorage.getItem(STORAGE_PROJECT_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<ProjectFileData> & {
-        templateId?: string;
-      };
-      if (parsed && parsed.workspace && typeof parsed.workspace === 'object') {
-        return {
-          name: parsed.name || 'demo_logger.polyblock.json',
-          language: parsed.language === 'python' ? 'python' : 'lua',
-          templateId: parsed.templateId ?? '',
-          workspace: parsed.workspace,
-        };
-      }
-    }
-  } catch {
-    // fallback to default template
-  }
-
-  const def = PROJECT_TEMPLATES[0];
-  return {
-    name: def.fileName,
-    language: def.recommendedLang,
-    templateId: def.id,
-    workspace: def.workspace,
-  };
-}
-
 function triggerFileDownload(filename: string, content: string, mime: string) {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -133,27 +115,18 @@ function triggerFileDownload(filename: string, content: string, mime: string) {
 }
 
 export function App() {
-  const initialProjectRef = useRef(loadInitialProject());
+  const initialStoreRef = useRef<WorkspaceStoreState>(loadWorkspaceStore());
   const workbenchRef = useRef<BlocklyWorkbenchHandle | null>(null);
 
+  const [store, setStore] = useState<WorkspaceStoreState>(initialStoreRef.current);
   const [settings, setSettings] = useState<AppSettings>(loadSavedSettings);
   const [activePage, setActivePage] = useState<PageId>(readPageFromHash);
-  const [projectName, setProjectName] = useState<string>(
-    initialProjectRef.current.name,
-  );
-  const [activeTemplateId, setActiveTemplateId] = useState<string>(
-    initialProjectRef.current.templateId,
-  );
   const [isDirty, setIsDirty] = useState<boolean>(false);
-  const [language, setLanguage] = useState<ScriptLanguageId>(
-    initialProjectRef.current.language,
-  );
 
   const [showCode, setShowCode] = useState<boolean>(true);
   const [showConsole, setShowConsole] = useState<boolean>(true);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [executingBlockId, setExecutingBlockId] = useState<string | null>(null);
-  const [breakpoints, setBreakpoints] = useState<string[]>([]);
   const [liveVariables, setLiveVariables] = useState<Record<string, string>>({});
   const [errorLine, setErrorLine] = useState<number | null>(null);
 
@@ -165,12 +138,18 @@ export function App() {
       timestamp: formatNowTime(),
       level: 'system',
       message:
-        'PolyBlock 调试沙箱就绪：支持逐块高亮联动、延时积木，以及点击代码行号左侧设置断点与单步调试。',
+        'PolyBlock 多脚本工程工作台就绪：顶部可切换项目，画布标签栏可自由管理多个积木脚本并独立试跑与调试。',
     },
   ]);
 
+  const activeProject = getActiveProject(store);
+  const activeScript = getActiveScript(activeProject);
+  const language = activeProject.language;
+  const breakpoints = activeScript.breakpoints;
+  const activeBackend = backendRegistry.get(language);
+
   const [generated, setGenerated] = useState<GeneratedCodeResult>({
-    language: initialProjectRef.current.language,
+    language,
     code: '',
     debugCode: '',
     sourceMap: {},
@@ -182,14 +161,18 @@ export function App() {
 
   const [toastMsg, setToastMsg] = useState<string>('');
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const storeRef = useRef<WorkspaceStoreState>(store);
+  storeRef.current = store;
+
+  // Keep refs synchronized for async callbacks without stale closures
+  const activeProjectIdRef = useRef<string>(activeProject.id);
+  const activeScriptIdRef = useRef<string>(activeScript.id);
   const languageRef = useRef<ScriptLanguageId>(language);
-  const projectNameRef = useRef<string>(projectName);
-  const templateIdRef = useRef<string>(activeTemplateId);
   const breakpointsRef = useRef<string[]>(breakpoints);
 
+  activeProjectIdRef.current = activeProject.id;
+  activeScriptIdRef.current = activeScript.id;
   languageRef.current = language;
-  projectNameRef.current = projectName;
-  templateIdRef.current = activeTemplateId;
   breakpointsRef.current = breakpoints;
 
   const notify = useCallback((msg: string) => {
@@ -215,7 +198,12 @@ export function App() {
     [],
   );
 
-  // Sync HTML theme attribute & persist settings
+  // Persist WorkspaceStore v2 on every update
+  useEffect(() => {
+    saveWorkspaceStore(store);
+  }, [store]);
+
+  // Sync theme attribute & persist settings
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', settings.theme);
     try {
@@ -247,100 +235,423 @@ export function App() {
     };
   }, []);
 
-  // Trigger Blockly SVG resize when panels toggle
+  // Resize Blockly SVG cleanly when panels toggle
   useEffect(() => {
     const id = requestAnimationFrame(() => workbenchRef.current?.resize());
     return () => cancelAnimationFrame(id);
   }, [showCode, showConsole, activePage]);
 
-  const regenerate = useCallback(
-    (ws: Blockly.WorkspaceSvg, lang: ScriptLanguageId, persist: boolean) => {
+  const regenerateFromWorkspace = useCallback(
+    (ws: Blockly.WorkspaceSvg, lang: ScriptLanguageId) => {
       const adapter = backendRegistry.get(lang);
       const result = adapter.generate(ws);
       setGenerated(result);
       setErrorLine(null);
-
-      // Prune breakpoints whose blocks were deleted from workspace
-      setBreakpoints((prev) => {
-        const filtered = prev.filter((id) => Boolean(ws.getBlockById(id)));
-        if (filtered.length !== prev.length) {
-          runnerManager.updateActiveBreakpoints(filtered);
-          return filtered;
-        }
-        return prev;
-      });
-
-      if (persist) {
-        try {
-          const snapshot = workbenchRef.current?.saveWorkspaceJson();
-          if (snapshot) {
-            localStorage.setItem(
-              STORAGE_PROJECT_KEY,
-              JSON.stringify({
-                format: 'polyblock-project',
-                version: 1,
-                name: projectNameRef.current,
-                language: lang,
-                templateId: templateIdRef.current,
-                updatedAt: new Date().toISOString(),
-                workspace: snapshot,
-              }),
-            );
-          }
-        } catch {
-          // ignore storage quota errors
-        }
-      }
+      return result;
     },
     [],
   );
+
+  /** Snapshot current Blockly canvas into a given store before switching script/project. */
+  const flushActiveCanvasIntoStore = useCallback(
+    (baseStore: WorkspaceStoreState): WorkspaceStoreState => {
+      const ws = workbenchRef.current?.getWorkspace();
+      if (!ws) return baseStore;
+      const snapshot = workbenchRef.current?.saveWorkspaceJson();
+      if (!snapshot) return baseStore;
+      const projId = activeProjectIdRef.current;
+      const scrId = activeScriptIdRef.current;
+      const now = new Date().toISOString();
+
+      return updateProjectById(baseStore, projId, (proj) => ({
+        ...proj,
+        scripts: proj.scripts.map((s) =>
+          s.id === scrId
+            ? {
+                ...s,
+                workspace: snapshot,
+                breakpoints: s.breakpoints.filter((bid) =>
+                  Boolean(ws.getBlockById(bid)),
+                ),
+                updatedAt: now,
+              }
+            : s,
+        ),
+        updatedAt: now,
+      }));
+    },
+    [],
+  );
+
+  /** Load target project+script workspace into Blockly and refresh code inspector cleanly. */
+  const mountScriptIntoCanvas = useCallback(
+    (nextStore: WorkspaceStoreState) => {
+      const nextProj = getActiveProject(nextStore);
+      const nextScript = getActiveScript(nextProj);
+      activeProjectIdRef.current = nextProj.id;
+      activeScriptIdRef.current = nextScript.id;
+      languageRef.current = nextProj.language;
+      breakpointsRef.current = nextScript.breakpoints;
+
+      setSelectedBlockId(null);
+      setExecutingBlockId(null);
+      setLiveVariables({});
+      setErrorLine(null);
+
+      workbenchRef.current?.loadWorkspaceJson(nextScript.workspace);
+      const ws = workbenchRef.current?.getWorkspace();
+      if (ws) {
+        regenerateFromWorkspace(ws, nextProj.language);
+      }
+    },
+    [regenerateFromWorkspace],
+  );
+
+  const stopIfRunning = useCallback(() => {
+    if (runnerStatus === 'running' || runnerStatus === 'paused') {
+      runnerManager.stopActive();
+      setExecutingBlockId(null);
+    }
+  }, [runnerStatus]);
 
   const handleWorkspaceChange = useCallback(
     (ws: Blockly.WorkspaceSvg) => {
-      regenerate(ws, languageRef.current, true);
+      regenerateFromWorkspace(ws, languageRef.current);
       setIsDirty(true);
+
+      const snapshot = workbenchRef.current?.saveWorkspaceJson();
+      if (!snapshot) return;
+      const projId = activeProjectIdRef.current;
+      const scrId = activeScriptIdRef.current;
+      const now = new Date().toISOString();
+
+      setStore((prev) =>
+        updateProjectById(prev, projId, (proj) => ({
+          ...proj,
+          scripts: proj.scripts.map((s) => {
+            if (s.id !== scrId) return s;
+            const pruned = s.breakpoints.filter((bid) =>
+              Boolean(ws.getBlockById(bid)),
+            );
+            if (pruned.length !== s.breakpoints.length) {
+              runnerManager.updateActiveBreakpoints(pruned);
+            }
+            return {
+              ...s,
+              workspace: snapshot,
+              breakpoints: pruned,
+              updatedAt: now,
+            };
+          }),
+          updatedAt: now,
+        })),
+      );
     },
-    [regenerate],
+    [regenerateFromWorkspace],
   );
 
-  const handleToggleBreakpoint = useCallback(
-    (blockId: string) => {
-      setBreakpoints((prev) => {
-        const exists = prev.includes(blockId);
-        const next = exists
-          ? prev.filter((id) => id !== blockId)
-          : [...prev, blockId];
-        runnerManager.updateActiveBreakpoints(next);
-        return next;
+  /* ========================================================================
+     Multi-Script Tab Operations
+     ======================================================================== */
+  const handleSelectScript = useCallback(
+    (scriptId: string) => {
+      if (scriptId === activeScriptIdRef.current) return;
+      stopIfRunning();
+      const flushed = flushActiveCanvasIntoStore(storeRef.current);
+      const nextStore = updateProjectById(flushed, activeProjectIdRef.current, (p) => ({
+        ...p,
+        activeScriptId: scriptId,
+      }));
+      setStore(nextStore);
+      mountScriptIntoCanvas(nextStore);
+    },
+    [stopIfRunning, flushActiveCanvasIntoStore, mountScriptIntoCanvas],
+  );
+
+  const handleAddScript = useCallback(() => {
+    stopIfRunning();
+    const flushed = flushActiveCanvasIntoStore(storeRef.current);
+    const nextStore = updateProjectById(flushed, activeProjectIdRef.current, (p) =>
+      addScriptToProject(p),
+    );
+    setStore(nextStore);
+    mountScriptIntoCanvas(nextStore);
+    const added = getActiveScript(getActiveProject(nextStore));
+    notify(`已新建脚本 ${added.name}.${backendRegistry.get(languageRef.current).extension}`);
+  }, [stopIfRunning, flushActiveCanvasIntoStore, mountScriptIntoCanvas, notify]);
+
+  const handleRenameScript = useCallback(
+    (scriptId: string, nextName: string) => {
+      setStore((prev) =>
+        updateProjectById(prev, activeProjectIdRef.current, (p) =>
+          renameScriptInProject(p, scriptId, nextName),
+        ),
+      );
+    },
+    [],
+  );
+
+  const handleDuplicateScript = useCallback(
+    (scriptId: string) => {
+      stopIfRunning();
+      const flushed = flushActiveCanvasIntoStore(storeRef.current);
+      const nextStore = updateProjectById(flushed, activeProjectIdRef.current, (p) =>
+        duplicateScriptInProject(p, scriptId),
+      );
+      setStore(nextStore);
+      mountScriptIntoCanvas(nextStore);
+      const copied = getActiveScript(getActiveProject(nextStore));
+      notify(`已复制脚本为 ${copied.name}`);
+    },
+    [stopIfRunning, flushActiveCanvasIntoStore, mountScriptIntoCanvas, notify],
+  );
+
+  const handleSetEntryScript = useCallback(
+    (scriptId: string) => {
+      setStore((prev) =>
+        updateProjectById(prev, activeProjectIdRef.current, (p) => ({
+          ...p,
+          entryScriptId: scriptId,
+          updatedAt: new Date().toISOString(),
+        })),
+      );
+      notify('已设为项目入口脚本 (★)');
+    },
+    [notify],
+  );
+
+  const handleDeleteScript = useCallback(
+    (scriptId: string) => {
+      const currentProj = getActiveProject(storeRef.current);
+      if (currentProj.scripts.length <= 1) {
+        notify('项目内至少需要保留 1 个脚本');
+        return;
+      }
+      stopIfRunning();
+      const flushed = flushActiveCanvasIntoStore(storeRef.current);
+      const wasActive = scriptId === activeScriptIdRef.current;
+      const nextStore = updateProjectById(flushed, activeProjectIdRef.current, (p) =>
+        deleteScriptFromProject(p, scriptId),
+      );
+      setStore(nextStore);
+      if (wasActive) {
+        mountScriptIntoCanvas(nextStore);
+      }
+      notify('已删除脚本');
+    },
+    [stopIfRunning, flushActiveCanvasIntoStore, mountScriptIntoCanvas, notify],
+  );
+
+  /* ========================================================================
+     Multi-Project Operations (Project as Root)
+     ======================================================================== */
+  const handleSelectProject = useCallback(
+    (projectId: string) => {
+      if (projectId === activeProjectIdRef.current) return;
+      stopIfRunning();
+      const flushed = flushActiveCanvasIntoStore(storeRef.current);
+      const nextStore: WorkspaceStoreState = {
+        ...flushed,
+        activeProjectId: projectId,
+      };
+      setStore(nextStore);
+      mountScriptIntoCanvas(nextStore);
+      const nextProj = getActiveProject(nextStore);
+      notify(`已切换至项目：${nextProj.name}`);
+    },
+    [stopIfRunning, flushActiveCanvasIntoStore, mountScriptIntoCanvas, notify],
+  );
+
+  const handleCreateFromTemplate = useCallback(
+    (templateId: string) => {
+      stopIfRunning();
+      const flushed = flushActiveCanvasIntoStore(storeRef.current);
+      const created = instantiateProjectFromTemplate(
+        templateId,
+        flushed.projects.map((p) => p.name),
+      );
+      const nextStore: WorkspaceStoreState = {
+        version: 2,
+        activeProjectId: created.id,
+        projects: [created, ...flushed.projects],
+      };
+      setStore(nextStore);
+      mountScriptIntoCanvas(nextStore);
+      setIsDirty(false);
+      navigateTo('blocks');
+      notify(`已创建项目：${created.name}`);
+    },
+    [stopIfRunning, flushActiveCanvasIntoStore, mountScriptIntoCanvas, navigateTo, notify],
+  );
+
+  const handleCreateBlankProject = useCallback(() => {
+    handleCreateFromTemplate('blank_project');
+  }, [handleCreateFromTemplate]);
+
+  const handleRenameProject = useCallback(
+    (projectId: string, nextName: string) => {
+      setStore((prev) => {
+        const target = prev.projects.find((p) => p.id === projectId);
+        if (!target) return prev;
+        const unique = makeUniqueProjectName(
+          nextName,
+          prev.projects.map((p) => p.name),
+          target.name,
+        );
+        return updateProjectById(prev, projectId, (p) => ({
+          ...p,
+          name: unique,
+          updatedAt: new Date().toISOString(),
+        }));
       });
     },
     [],
   );
 
+  const handleDuplicateProject = useCallback(
+    (projectId: string) => {
+      stopIfRunning();
+      const flushed = flushActiveCanvasIntoStore(storeRef.current);
+      const nextStore = duplicateProjectInStore(flushed, projectId);
+      setStore(nextStore);
+      mountScriptIntoCanvas(nextStore);
+      notify(`已复制项目：${getActiveProject(nextStore).name}`);
+    },
+    [stopIfRunning, flushActiveCanvasIntoStore, mountScriptIntoCanvas, notify],
+  );
+
+  const handleDeleteProject = useCallback(
+    (projectId: string) => {
+      if (storeRef.current.projects.length <= 1) {
+        notify('至少需要保留 1 个项目');
+        return;
+      }
+      stopIfRunning();
+      const flushed = flushActiveCanvasIntoStore(storeRef.current);
+      const wasActive = projectId === activeProjectIdRef.current;
+      const nextStore = deleteProjectFromStore(flushed, projectId);
+      setStore(nextStore);
+      if (wasActive) {
+        mountScriptIntoCanvas(nextStore);
+      }
+      notify('已删除项目');
+    },
+    [stopIfRunning, flushActiveCanvasIntoStore, mountScriptIntoCanvas, notify],
+  );
+
+  const handleSaveProjectFile = useCallback(
+    (projectId?: string) => {
+      const flushed = flushActiveCanvasIntoStore(storeRef.current);
+      setStore(flushed);
+      const target =
+        flushed.projects.find((p) => p.id === (projectId ?? activeProjectIdRef.current)) ??
+        getActiveProject(flushed);
+      const safeName = target.name.replace(/[\\/:*?"<>|]+/g, '_');
+      const fileName = `${safeName || 'project'}.polyblock.json`;
+      triggerFileDownload(
+        fileName,
+        JSON.stringify(target, null, 2),
+        'application/json;charset=utf-8',
+      );
+      setIsDirty(false);
+      notify(`已保存整项目工程 ${fileName}（含 ${target.scripts.length} 个脚本）`);
+    },
+    [flushActiveCanvasIntoStore, notify],
+  );
+
+  const handleImportProject = useCallback(
+    (imported: ProjectModel) => {
+      stopIfRunning();
+      const flushed = flushActiveCanvasIntoStore(storeRef.current);
+      const nextStore: WorkspaceStoreState = {
+        version: 2,
+        activeProjectId: imported.id,
+        projects: [imported, ...flushed.projects],
+      };
+      setStore(nextStore);
+      mountScriptIntoCanvas(nextStore);
+      setIsDirty(false);
+      navigateTo('blocks');
+      notify(`已导入项目：${imported.name}（${imported.scripts.length} 个脚本）`);
+    },
+    [stopIfRunning, flushActiveCanvasIntoStore, mountScriptIntoCanvas, navigateTo, notify],
+  );
+
+  const handleResetWorkspace = useCallback(() => {
+    stopIfRunning();
+    localStorage.removeItem(STORAGE_STORE_V2_KEY);
+    const starter = instantiateProjectFromTemplate('starter_suite');
+    const freshStore: WorkspaceStoreState = {
+      version: 2,
+      activeProjectId: starter.id,
+      projects: [starter],
+    };
+    setStore(freshStore);
+    mountScriptIntoCanvas(freshStore);
+    setIsDirty(false);
+    navigateTo('blocks');
+    notify('已恢复默认多脚本示例项目');
+  }, [stopIfRunning, mountScriptIntoCanvas, navigateTo, notify]);
+
+  /* ========================================================================
+     Language, Breakpoints & Execution (1A Project Language + 2A Active Script)
+     ======================================================================== */
+  const handleSelectLanguage = useCallback(
+    (nextLang: ScriptLanguageId) => {
+      if (runnerStatus === 'running' || runnerStatus === 'paused') return;
+      languageRef.current = nextLang;
+      setStore((prev) =>
+        updateProjectById(prev, activeProjectIdRef.current, (p) => ({
+          ...p,
+          language: nextLang,
+          updatedAt: new Date().toISOString(),
+        })),
+      );
+      const ws = workbenchRef.current?.getWorkspace();
+      if (ws) {
+        regenerateFromWorkspace(ws, nextLang);
+      }
+      const backend = backendRegistry.get(nextLang);
+      notify(`已将整个项目切换为 ${backend.name} ${backend.version}`);
+    },
+    [runnerStatus, regenerateFromWorkspace, notify],
+  );
+
+  const handleToggleBreakpoint = useCallback((blockId: string) => {
+    setStore((prev) => {
+      const proj = getActiveProject(prev);
+      const scr = getActiveScript(proj);
+      const exists = scr.breakpoints.includes(blockId);
+      const nextBps = exists
+        ? scr.breakpoints.filter((id) => id !== blockId)
+        : [...scr.breakpoints, blockId];
+      runnerManager.updateActiveBreakpoints(nextBps);
+      return updateProjectById(prev, proj.id, (p) => ({
+        ...p,
+        scripts: p.scripts.map((s) =>
+          s.id === scr.id ? { ...s, breakpoints: nextBps } : s,
+        ),
+      }));
+    });
+  }, []);
+
   const handleClearBreakpoints = useCallback(() => {
-    setBreakpoints([]);
+    setStore((prev) =>
+      updateProjectById(prev, activeProjectIdRef.current, (p) => ({
+        ...p,
+        scripts: p.scripts.map((s) =>
+          s.id === activeScriptIdRef.current ? { ...s, breakpoints: [] } : s,
+        ),
+      })),
+    );
     runnerManager.updateActiveBreakpoints([]);
-    notify('已清除全部断点');
+    notify('已清除当前脚本的全部断点');
   }, [notify]);
 
   const handleSelectSpeed = useCallback((speed: ExecutionSpeedId) => {
     setSettings((prev) => ({ ...prev, executionSpeed: speed }));
     runnerManager.updateActiveStepDelay(SPEED_DELAY_MS[speed]);
   }, []);
-
-  const handleSelectLanguage = useCallback(
-    (nextLang: ScriptLanguageId) => {
-      if (runnerStatus === 'running' || runnerStatus === 'paused') return;
-      setLanguage(nextLang);
-      const ws = workbenchRef.current?.getWorkspace();
-      if (ws) {
-        regenerate(ws, nextLang, true);
-      }
-      const backend = backendRegistry.get(nextLang);
-      notify(`已切换目标后端为 ${backend.name} ${backend.version}`);
-    },
-    [runnerStatus, regenerate, notify],
-  );
 
   const launchExecution = useCallback(
     async (startInStepMode: boolean) => {
@@ -354,6 +665,7 @@ export function App() {
       const ws = workbenchRef.current?.getWorkspace();
       const adapter = backendRegistry.get(language);
       const latest = ws ? adapter.generate(ws) : generated;
+      const scriptFileLabel = `${activeScript.name}.${adapter.extension}`;
       setGenerated(latest);
       setErrorLine(null);
       setExecutingBlockId(null);
@@ -369,10 +681,10 @@ export function App() {
           timestamp: formatNowTime(),
           level: 'system',
           message: startInStepMode
-            ? `启动单步调试：${runner.name}`
-            : `启动 ${runner.name}（步进间隔 ${speedDelay}ms${
+            ? `启动单步调试 [${scriptFileLabel}] · ${runner.shortLabel}`
+            : `运行 [${scriptFileLabel}] · ${runner.shortLabel}（步进 ${speedDelay}ms${
                 breakpointsRef.current.length > 0
-                  ? ` · ${breakpointsRef.current.length} 个断点`
+                  ? ` · ${breakpointsRef.current.length} 断点`
                   : ''
               }）...`,
         },
@@ -405,7 +717,9 @@ export function App() {
             if (reason === 'breakpoint') {
               appendLog(
                 'warn',
-                `命中断点并暂停${range ? `（第 ${range.startLine} 行）` : ''}，可查看变量或点击「继续 / 单步」。`,
+                `[${scriptFileLabel}] 命中断点并暂停${
+                  range ? `（第 ${range.startLine} 行）` : ''
+                }，可查看变量或点击「继续 / 单步」。`,
                 range?.startLine,
                 blockId,
               );
@@ -425,7 +739,7 @@ export function App() {
       if (result.ok) {
         appendLog(
           'system',
-          `执行完成，总耗时 ${result.durationMs}ms（右上角导出的是干净无插桩的 ${adapter.fileName}）。`,
+          `[${scriptFileLabel}] 执行完成，总耗时 ${result.durationMs}ms（导出文件干净无插桩）。`,
         );
       } else if (result.errorLine) {
         setErrorLine(result.errorLine);
@@ -442,6 +756,7 @@ export function App() {
       settings.executionSpeed,
       settings.timeoutMs,
       language,
+      activeScript.name,
       generated,
       appendLog,
     ],
@@ -452,10 +767,9 @@ export function App() {
     setExecutingBlockId(null);
   }, []);
 
-  const handleExportScript = useCallback(() => {
+  const handleExportActiveScript = useCallback(() => {
     const adapter = backendRegistry.get(language);
-    const baseName = projectName.replace(/\.polyblock\.json$|\.json$/i, '');
-    const outFile = `${baseName || 'main'}.${adapter.extension}`;
+    const outFile = `${activeScript.name}.${adapter.extension}`;
     triggerFileDownload(
       outFile,
       generated.code + '\n',
@@ -463,130 +777,45 @@ export function App() {
     );
     setIsDirty(false);
     notify(`已导出干净脚本 ${outFile}`);
-  }, [language, projectName, generated.code, notify]);
+  }, [language, activeScript.name, generated.code, notify]);
 
   const handleCopyCode = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(generated.code);
-      const adapter = backendRegistry.get(language);
-      notify(`已复制 ${adapter.fileName} 到剪贴板`);
+      notify(`已复制 ${activeScript.name}.${activeBackend.extension} 到剪贴板`);
     } catch {
       notify('复制失败，请手动选中代码复制');
     }
-  }, [generated.code, language, notify]);
-
-  const handleLoadTemplate = useCallback(
-    (templateId: string) => {
-      if (runnerStatus === 'running' || runnerStatus === 'paused') {
-        runnerManager.stopActive();
-      }
-      const tpl = PROJECT_TEMPLATES.find((t) => t.id === templateId);
-      if (!tpl) return;
-      setProjectName(tpl.fileName);
-      setActiveTemplateId(tpl.id);
-      setLanguage(tpl.recommendedLang);
-      setBreakpoints([]);
-      setLiveVariables({});
-      setExecutingBlockId(null);
-      languageRef.current = tpl.recommendedLang;
-      projectNameRef.current = tpl.fileName;
-      templateIdRef.current = tpl.id;
-      workbenchRef.current?.loadWorkspaceJson(tpl.workspace);
-      setIsDirty(false);
-      notify(`已载入示例模板：${tpl.name}`);
-    },
-    [runnerStatus, notify],
-  );
-
-  const handleCreateBlank = useCallback(() => {
-    if (runnerStatus === 'running' || runnerStatus === 'paused') {
-      runnerManager.stopActive();
-    }
-    const blank = {
-      blocks: {
-        languageVersion: 0,
-        blocks: [{ type: 'poly_on_start', id: 'start_blank', x: 36, y: 28 }],
-      },
-    };
-    setProjectName('untitled.polyblock.json');
-    setActiveTemplateId('');
-    setBreakpoints([]);
-    setLiveVariables({});
-    setExecutingBlockId(null);
-    projectNameRef.current = 'untitled.polyblock.json';
-    templateIdRef.current = '';
-    workbenchRef.current?.loadWorkspaceJson(blank);
-    setIsDirty(false);
-    navigateTo('blocks');
-    notify('已创建空白积木项目');
-  }, [runnerStatus, navigateTo, notify]);
-
-  const handleSaveProjectFile = useCallback(() => {
-    const wsJson = workbenchRef.current?.saveWorkspaceJson() ?? {};
-    const payload: ProjectFileData = {
-      format: 'polyblock-project',
-      version: 1,
-      name: projectName,
-      language,
-      updatedAt: new Date().toISOString(),
-      workspace: wsJson,
-    };
-    triggerFileDownload(
-      projectName.endsWith('.json')
-        ? projectName
-        : `${projectName}.polyblock.json`,
-      JSON.stringify(payload, null, 2),
-      'application/json;charset=utf-8',
-    );
-    setIsDirty(false);
-    notify(`已保存工程文件 ${projectName}`);
-  }, [projectName, language, notify]);
-
-  const handleImportProjectFile = useCallback(
-    (data: ProjectFileData) => {
-      if (runnerStatus === 'running' || runnerStatus === 'paused') {
-        runnerManager.stopActive();
-      }
-      setProjectName(data.name);
-      setActiveTemplateId('');
-      setLanguage(data.language);
-      setBreakpoints([]);
-      setLiveVariables({});
-      setExecutingBlockId(null);
-      languageRef.current = data.language;
-      projectNameRef.current = data.name;
-      templateIdRef.current = '';
-      workbenchRef.current?.loadWorkspaceJson(data.workspace);
-      setIsDirty(false);
-      navigateTo('blocks');
-      notify(`已导入工程：${data.name}`);
-    },
-    [runnerStatus, navigateTo, notify],
-  );
-
-  const handleResetWorkspace = useCallback(() => {
-    localStorage.removeItem(STORAGE_PROJECT_KEY);
-    handleLoadTemplate(PROJECT_TEMPLATES[0].id);
-    navigateTo('blocks');
-  }, [handleLoadTemplate, navigateTo]);
+  }, [generated.code, activeScript.name, activeBackend.extension, notify]);
 
   const handleFocusBlock = useCallback((blockId: string) => {
     workbenchRef.current?.focusBlock(blockId);
   }, []);
 
+  const initialScriptWorkspace = getActiveScript(
+    getActiveProject(initialStoreRef.current),
+  ).workspace;
+
   return (
     <div className="app-shell">
       <TopBar
-        projectName={projectName}
+        projects={store.projects}
+        activeProject={activeProject}
+        activeScriptName={activeScript.name}
         isDirty={isDirty}
         activePage={activePage}
-        language={language}
         theme={settings.theme}
         runnerStatus={runnerStatus}
         executionSpeed={settings.executionSpeed}
         showCode={showCode}
         showConsole={showConsole}
-        activeTemplateId={activeTemplateId}
+        onSelectProject={handleSelectProject}
+        onCreateBlankProject={handleCreateBlankProject}
+        onRenameCurrentProject={(name) =>
+          handleRenameProject(activeProject.id, name)
+        }
+        onSaveProjectFile={() => handleSaveProjectFile(activeProject.id)}
+        onOpenProjectsPage={() => navigateTo('projects')}
         onSelectLanguage={handleSelectLanguage}
         onSelectSpeed={handleSelectSpeed}
         onRun={() => launchExecution(false)}
@@ -595,7 +824,7 @@ export function App() {
         onStepNext={() => runnerManager.stepNextActive()}
         onPause={() => runnerManager.pauseActive()}
         onStop={handleStop}
-        onExportScript={handleExportScript}
+        onExportActiveScript={handleExportActiveScript}
         onToggleCode={() => setShowCode((v) => !v)}
         onToggleConsole={() => setShowConsole((v) => !v)}
         onToggleTheme={() =>
@@ -604,7 +833,6 @@ export function App() {
             theme: prev.theme === 'light' ? 'dark' : 'light',
           }))
         }
-        onSelectTemplate={handleLoadTemplate}
       />
 
       <div className="app-body">
@@ -617,22 +845,39 @@ export function App() {
             }`}
           >
             <div className="workbench-split-row">
-              <BlocklyWorkbench
-                ref={workbenchRef}
-                theme={settings.theme}
-                initialWorkspace={initialProjectRef.current.workspace}
-                visible={activePage === 'blocks'}
-                executingBlockId={executingBlockId}
-                isPaused={runnerStatus === 'paused'}
-                breakpoints={breakpoints}
-                onWorkspaceChange={handleWorkspaceChange}
-                onSelectBlock={setSelectedBlockId}
-                onToggleBreakpoint={handleToggleBreakpoint}
-              />
+              <div className="blocks-main-col">
+                <ScriptTabBar
+                  scripts={activeProject.scripts}
+                  activeScriptId={activeScript.id}
+                  entryScriptId={activeProject.entryScriptId}
+                  extension={activeBackend.extension}
+                  disabled={runnerStatus === 'running' || runnerStatus === 'paused'}
+                  onSelectScript={handleSelectScript}
+                  onAddScript={handleAddScript}
+                  onRenameScript={handleRenameScript}
+                  onDuplicateScript={handleDuplicateScript}
+                  onSetEntryScript={handleSetEntryScript}
+                  onDeleteScript={handleDeleteScript}
+                />
+
+                <BlocklyWorkbench
+                  ref={workbenchRef}
+                  theme={settings.theme}
+                  initialWorkspace={initialScriptWorkspace}
+                  visible={activePage === 'blocks'}
+                  executingBlockId={executingBlockId}
+                  isPaused={runnerStatus === 'paused'}
+                  breakpoints={breakpoints}
+                  onWorkspaceChange={handleWorkspaceChange}
+                  onSelectBlock={setSelectedBlockId}
+                  onToggleBreakpoint={handleToggleBreakpoint}
+                />
+              </div>
 
               {showCode && (
                 <CodeInspector
                   language={language}
+                  scriptName={activeScript.name}
                   generated={generated}
                   selectedBlockId={selectedBlockId}
                   executingBlockId={executingBlockId}
@@ -661,12 +906,16 @@ export function App() {
 
           {activePage === 'projects' && (
             <ProjectsPage
-              currentProjectName={projectName}
-              activeTemplateId={activeTemplateId}
-              onLoadTemplate={handleLoadTemplate}
-              onCreateBlank={handleCreateBlank}
+              projects={store.projects}
+              activeProjectId={activeProject.id}
+              onSelectProject={handleSelectProject}
+              onCreateBlankProject={handleCreateBlankProject}
+              onCreateFromTemplate={handleCreateFromTemplate}
+              onRenameProject={handleRenameProject}
+              onDuplicateProject={handleDuplicateProject}
+              onDeleteProject={handleDeleteProject}
               onSaveProjectFile={handleSaveProjectFile}
-              onImportProjectFile={handleImportProjectFile}
+              onImportProject={handleImportProject}
               onReturnToBlocks={() => navigateTo('blocks')}
               onNotify={notify}
             />
@@ -697,6 +946,9 @@ export function App() {
       </div>
 
       <StatusBar
+        projectName={activeProject.name}
+        scriptCount={activeProject.scripts.length}
+        activeScriptName={activeScript.name}
         language={language}
         runnerStatus={runnerStatus}
         blockCount={generated.blockCount}

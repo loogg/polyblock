@@ -4,6 +4,9 @@ import type { RunnerStatus } from '../core/runners/types';
 import type { ScriptLanguageId } from '../types/project';
 
 interface StatusBarProps {
+  projectName: string;
+  scriptCount: number;
+  activeScriptName: string;
   language: ScriptLanguageId;
   runnerStatus: RunnerStatus;
   blockCount: number;
@@ -13,6 +16,9 @@ interface StatusBarProps {
 }
 
 export function StatusBar({
+  projectName,
+  scriptCount,
+  activeScriptName,
   language,
   runnerStatus,
   blockCount,
@@ -50,7 +56,10 @@ export function StatusBar({
           {statusText}
         </span>
         <span>
-          目标后端: {backend.name} {backend.version}
+          项目: {projectName} ({scriptCount} 脚本)
+        </span>
+        <span>
+          当前: {activeScriptName}.{backend.extension}
         </span>
         <span>积木数: {blockCount}</span>
         {breakpointCount > 0 && (

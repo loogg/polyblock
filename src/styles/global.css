@@ -205,6 +205,319 @@ select {
   white-space: nowrap;
 }
 
+/* Project Root Switcher + Shared Dropdown Popovers */
+.popover-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.project-switcher-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  max-width: 245px;
+  transition: border-color 0.14s, background 0.14s;
+}
+
+.project-switcher-btn:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.project-switcher-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-script-count {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-chrome);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 80;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 5px;
+  box-shadow: var(--shadow-float);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dropdown-section-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 5px 8px 3px;
+}
+
+.dropdown-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+
+.dropdown-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.dropdown-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.dropdown-item.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.dropdown-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.dropdown-item-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 2px;
+}
+
+.dropdown-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+}
+
+.dropdown-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  font-size: 12px;
+  outline: none;
+}
+
+/* ============================================================================
+   Canvas Script Tab Bar (36px flush-aligned with Right CodeInspector header)
+   ============================================================================ */
+.blocks-main-col {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.script-tabbar {
+  height: 36px;
+  flex: 0 0 36px;
+  display: flex;
+  align-items: center;
+  background: var(--bg-panel-subtle);
+  border-bottom: 1px solid var(--border);
+  padding: 0 8px 0 6px;
+  gap: 4px;
+  z-index: 22;
+}
+
+.script-list-btn {
+  height: 26px;
+  padding: 0 7px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.script-list-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.script-tabs-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding-top: 4px;
+}
+
+.script-tabs-scroll::-webkit-scrollbar {
+  height: 3px;
+}
+
+.script-tab {
+  position: relative;
+  height: 32px;
+  padding: 0 8px 0 10px;
+  border-radius: 8px 8px 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  user-select: none;
+  transition: background 0.12s, color 0.12s;
+}
+
+.script-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.script-tab.active {
+  background: var(--bg-chrome);
+  color: var(--text-primary);
+  font-weight: 600;
+  border-color: var(--border);
+  box-shadow: 0 -1px 0 var(--accent) inset;
+}
+
+.entry-star {
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+.script-tab-name {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.script-tab-ext {
+  opacity: 0.65;
+  font-weight: 500;
+}
+
+.script-tab-bp {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+  flex-shrink: 0;
+}
+
+.script-tab-input {
+  width: 108px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  outline: none;
+}
+
+.script-tab-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 2px;
+  opacity: 0.55;
+  transition: opacity 0.12s;
+}
+
+.script-tab:hover .script-tab-actions,
+.script-tab.active .script-tab-actions {
+  opacity: 1;
+}
+
+.script-tab-icon-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.script-tab-icon-btn:hover:not(:disabled) {
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+
+.script-tab-icon-btn.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.script-add-btn {
+  width: 26px;
+  height: 26px;
+  margin-bottom: 3px;
+  margin-left: 2px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.script-add-btn:hover:not(:disabled) {
+  background: var(--bg-chrome);
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+
 .dirty-dot {
   width: 6px;
   height: 6px;
@@ -811,6 +1124,14 @@ select {
   gap: 2px;
   height: 100%;
   min-width: 0;
+  overflow: hidden;
+}
+
+.code-tab-filename {
+  max-width: 112px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pane-tab {

@@ -7,6 +7,7 @@ import type { ScriptLanguageId } from '../types/project';
 
 interface CodeInspectorProps {
   language: ScriptLanguageId;
+  scriptName: string;
   generated: GeneratedCodeResult;
   selectedBlockId: string | null;
   executingBlockId: string | null;
@@ -22,6 +23,7 @@ interface CodeInspectorProps {
 
 export function CodeInspector({
   language,
+  scriptName,
   generated,
   selectedBlockId,
   executingBlockId,
@@ -37,6 +39,7 @@ export function CodeInspector({
   const [activeTab, setActiveTab] = useState<'code' | 'vars' | 'diagnostics'>('code');
   const codeScrollRef = useRef<HTMLDivElement | null>(null);
   const backend = backendRegistry.get(language);
+  const displayFileName = `${scriptName}.${backend.extension}`;
   const breakpointSet = useMemo(() => new Set(breakpoints), [breakpoints]);
 
   const lines = useMemo(() => generated.code.split('\n'), [generated.code]);
@@ -109,8 +112,10 @@ export function CodeInspector({
             className={`pane-tab ${activeTab === 'code' ? 'active' : ''}`}
             onClick={() => setActiveTab('code')}
           >
-            <Code2 size={14} />
-            <span>{backend.fileName}</span>
+            <Code2 size={14} style={{ flexShrink: 0 }} />
+            <span className="code-tab-filename" title={displayFileName}>
+              {displayFileName}
+            </span>
             {breakpoints.length > 0 && (
               <span className="count-badge err" title={`当前已设 ${breakpoints.length} 个断点`}>
                 ● {breakpoints.length}

@@ -101,3 +101,26 @@
 - **延时积木（`poly_wait_ms`）**：干净导出时生成标准等待代码（Python `time.sleep(...)`、Lua 独立 `poly_wait_ms` 辅助函数）；沙箱运行时走非阻塞 `setTimeout` Promise。
 - **超时保护不误杀**：Worker 处于断点暂停（`PAUSED`）或显式等待（`WAITING`）期间自动暂停看门狗计时，仅对真实计算死循环触发超时强杀；点击「停止」仍可随时立即终止 Worker。
 
+## 6. Phase 3 升级：v2 以项目为根的多脚本工程模型
+
+将底层数据模型从“单项目 = 单画布”重构为三层项目树结构（1A 项目级统一目标语言 + 2A 运行当前激活标签脚本）：
+
+```text
+WorkspaceStore (localStorage: polyblock.store.v2，自动兼容迁移 v1 数据)
+ └── ProjectModel (项目根容器)
+      ├── id, name, description, language ('lua' | 'python')
+      ├── enabledExtensions: string[]   (项目级扩展挂载点)
+      ├── entryScriptId: string         (标星 ★ 入口脚本)
+      ├── activeScriptId: string        (当前激活画布标签)
+      └── scripts: ProjectScript[]      (1..N 个独立积木编程脚本)
+           ├── id, name                 (如 main / step_debug / threshold_alarm)
+           ├── workspace                (独立 Blockly JSON 状态)
+           └── breakpoints[]            (独立断点列表)
+```
+
+### 交互与隔离约束
+1. **顶栏以项目为根**：左上角提供项目切换器下拉菜单（切项目、新建、重命名、保存整项目工程）。
+2. **画布顶部 36px 脚本标签栏**：与右侧 `CodeInspector` 顶栏齐平，支持单击切换画布、`+` 新建脚本、双击行内重命名、复制、设为入口（★）、删除以及多脚本快速下拉跳转，不占用画布横向宽度。
+3. **严格状态隔离**：切换脚本标签前先立即快照保存当前画布，切换时禁用 Blockly 临时事件并清空撤销栈（`clearUndo`），确保不同脚本的积木、撤销历史、断点与生成代码互不串台。
+
+
