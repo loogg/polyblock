@@ -13,7 +13,7 @@
 | E4 | 交互覆盖 | 「扩展」页按项目启停 `virtual-board` / `dict-json` / `clock-timer` 并联动左侧分类条与搜索 | 左侧分类栏实时增删扩展分类，切换项目隔离保留 | 内置浏览器交互 | **未验证**（`chrome_devtools` 报错 `DevToolsActivePort ENOENT`，需开启 Chrome 远程调试或由用户在线复核） |
 | E5 | 业务链路 | 自定义 `.polyext.json` 导入校验、双语言代码生成与删除 | 导入 `my-robot-api` 生成标准 `robot.move` Lua/Python 并支持删除 | `npm test` (`extensions.test.ts`) | **通过**（核心导入/生成/删除已通过测试；文件选择弹窗 UI 待复核） |
 | E6 | 视觉审查 | 1440×900 浅色 & 1280×720 深色下虚拟外设「模拟」面板、新增分类圆点与扩展页布局 | 排版紧凑无重叠，LED/RGB/OLED 质感清晰 | 内置浏览器截图目视 | **未验证**（因 Chrome 远程调试连接阻塞，待恢复或用户于线上页面复核） |
-| E7 | 发布交付 | 推送至 `loogg/polyblock` 并通过 GitHub Pages Actions 部署 | Actions 全部 17 项测试及部署绿灯 | `gh run watch` | 执行中 |
+| E7 | 发布交付 | 推送至 `loogg/polyblock` 并通过 GitHub Pages Actions 部署 | Actions 全部 17 项测试及部署绿灯 | `gh run watch` | **通过**（提交 `85f7866`，Actions Run `45434316883` 绿灯部署至 https://loogg.github.io/polyblock/ ） |
 
 ## 2. 阻塞与恢复条件
 - **阻塞项**：本轮调用内置浏览器审查时 `chrome_devtools` 无法连接本机 Chrome（`C:\Users\mlw\AppData\Local\Google\Chrome\User Data\DevToolsActivePort` 不存在）。
