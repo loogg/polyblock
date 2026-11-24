@@ -1,0 +1,187 @@
+import * as Blockly from 'blockly';
+import '@blockly/block-plus-minus';
+import * as zhHans from 'blockly/msg/zh-hans';
+
+let blocksRegistered = false;
+
+export function registerPolyBlocks(): void {
+  if (blocksRegistered) return;
+
+  // Apply Chinese simplified localization for built-in Blockly blocks
+  Blockly.setLocale(zhHans as unknown as Record<string, string>);
+
+  const customBlockDefs = [
+    // --- 事件 (Event) ---
+    {
+      type: 'poly_on_start',
+      message0: '当程序启动',
+      message1: '%1',
+      args1: [{ type: 'input_statement', name: 'BODY' }],
+      style: 'event_blocks',
+      tooltip: '程序主入口，点击运行后从此处按顺序执行。',
+    },
+
+    // --- 打印与日志 (Print & Logging) ---
+    {
+      type: 'poly_print',
+      message0: '打印 %1',
+      args0: [{ type: 'input_value', name: 'VALUE' }],
+      previousStatement: null,
+      nextStatement: null,
+      style: 'print_blocks',
+      tooltip: '向打印日志控制台输出文本或表达式的值。',
+    },
+    {
+      type: 'poly_log',
+      message0: '日志 %1 %2',
+      args0: [
+        {
+          type: 'field_dropdown',
+          name: 'LEVEL',
+          options: [
+            ['INFO', 'INFO'],
+            ['WARN', 'WARN'],
+            ['ERROR', 'ERROR'],
+            ['OK', 'OK'],
+          ],
+        },
+        { type: 'input_value', name: 'MESSAGE' },
+      ],
+      previousStatement: null,
+      nextStatement: null,
+      style: 'print_blocks',
+      tooltip: '输出带级别标签的结构化日志，便于筛选与排查。',
+    },
+    {
+      type: 'poly_print_kv',
+      message0: '打印标签 %1 值 %2',
+      args0: [
+        { type: 'field_input', name: 'LABEL', text: 'result' },
+        { type: 'input_value', name: 'VALUE' },
+      ],
+      previousStatement: null,
+      nextStatement: null,
+      style: 'print_blocks',
+      tooltip: '以 "标签 = 值" 格式快速打印调试信息。',
+    },
+    {
+      type: 'poly_clear_log',
+      message0: '清空日志控制台',
+      previousStatement: null,
+      nextStatement: null,
+      style: 'print_blocks',
+      tooltip: '发送清空标记，清理当前日志控制台显示。',
+    },
+
+    // --- 控制 (Control) ---
+    {
+      type: 'poly_repeat_times',
+      message0: '重复执行 %1 次',
+      args0: [{ type: 'input_value', name: 'TIMES', check: 'Number' }],
+      message1: '%1',
+      args1: [{ type: 'input_statement', name: 'DO' }],
+      previousStatement: null,
+      nextStatement: null,
+      style: 'control_blocks',
+      tooltip: '将内部积木按指定次数循环执行。',
+    },
+    {
+      type: 'poly_for_range',
+      message0: '计次循环 %1 从 %2 到 %3 步长 %4',
+      args0: [
+        { type: 'field_variable', name: 'VAR', variable: 'i' },
+        { type: 'input_value', name: 'FROM', check: 'Number' },
+        { type: 'input_value', name: 'TO', check: 'Number' },
+        { type: 'input_value', name: 'BY', check: 'Number' },
+      ],
+      message1: '%1',
+      args1: [{ type: 'input_statement', name: 'DO' }],
+      inputsInline: true,
+      previousStatement: null,
+      nextStatement: null,
+      style: 'control_blocks',
+      tooltip: '使用循环变量按起止值与步长（包含结束值）迭代执行。',
+    },
+    {
+      type: 'poly_comment',
+      message0: '注释 %1',
+      args0: [{ type: 'field_input', name: 'TEXT', text: '记录逻辑说明' }],
+      previousStatement: null,
+      nextStatement: null,
+      style: 'control_blocks',
+      tooltip: '在生成的 Lua / Python 代码中保留对应注释行。',
+    },
+
+    // --- 文本辅助 ---
+    {
+      type: 'poly_to_string',
+      message0: '转为文本 %1',
+      args0: [{ type: 'input_value', name: 'VALUE' }],
+      output: 'String',
+      style: 'text_blocks',
+      tooltip: '将数字、布尔或变量安全转换为字符串，方便拼接。',
+    },
+
+    // --- 列表辅助 ---
+    {
+      type: 'poly_list_append',
+      message0: '向列表 %1 追加 %2',
+      args0: [
+        { type: 'field_variable', name: 'LIST', variable: 'items' },
+        { type: 'input_value', name: 'ITEM' },
+      ],
+      inputsInline: true,
+      previousStatement: null,
+      nextStatement: null,
+      style: 'list_blocks',
+      tooltip: '向指定列表变量末尾追加一个元素。',
+    },
+  ];
+
+  Blockly.defineBlocksWithJsonArray(customBlockDefs);
+
+  // Align selected built-in block styles with our MicroBlocks palette
+  const styleOverrides: Record<string, string> = {
+    controls_if: 'control_blocks',
+    controls_whileUntil: 'control_blocks',
+    controls_flow_statements: 'control_blocks',
+    variables_get: 'variable_blocks',
+    variables_set: 'variable_blocks',
+    math_change: 'variable_blocks',
+    math_number: 'math_blocks',
+    math_arithmetic: 'math_blocks',
+    math_single: 'math_blocks',
+    math_modulo: 'math_blocks',
+    math_round: 'math_blocks',
+    math_random_int: 'math_blocks',
+    logic_compare: 'logic_blocks',
+    logic_operation: 'logic_blocks',
+    logic_negate: 'logic_blocks',
+    logic_boolean: 'logic_blocks',
+    logic_null: 'logic_blocks',
+    text: 'text_blocks',
+    text_join: 'text_blocks',
+    text_length: 'text_blocks',
+    lists_create_with: 'list_blocks',
+    lists_length: 'list_blocks',
+    lists_getIndex: 'list_blocks',
+    lists_setIndex: 'list_blocks',
+    procedures_defnoreturn: 'procedure_blocks',
+    procedures_defreturn: 'procedure_blocks',
+    procedures_callnoreturn: 'procedure_blocks',
+    procedures_callreturn: 'procedure_blocks',
+    procedures_ifreturn: 'procedure_blocks',
+  };
+
+  for (const [blockType, styleName] of Object.entries(styleOverrides)) {
+    const def = Blockly.Blocks[blockType];
+    if (!def) continue;
+    const originalInit = def.init;
+    def.init = function (this: Blockly.Block) {
+      originalInit.call(this);
+      this.setStyle(styleName);
+    };
+  }
+
+  blocksRegistered = true;
+}

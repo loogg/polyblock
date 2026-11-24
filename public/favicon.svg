@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="pb-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4F46E5" />
+      <stop offset="100%" stop-color="#06B6D4" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#pb-bg)" />
+  <!-- Top interlocking block -->
+  <path d="M14 20a5 5 0 0 1 5-5h7l3 4h6l3-4h7a5 5 0 0 1 5 5v9a4 4 0 0 1-4 4H39l-2.5 3.5h-9L25 33h-7a4 4 0 0 1-4-4v-9z" fill="#ffffff" />
+  <!-- Bottom interlocking block -->
+  <path d="M14 39a4 4 0 0 1 4-4h7l2.5 3.5h9L39 35h7a4 4 0 0 1 4 4v6a5 5 0 0 1-5 5H19a5 5 0 0 1-5-5v-6z" fill="#A5F3FC" fill-opacity="0.92" />
+  <circle cx="24" cy="24" r="2.6" fill="#4F46E5" />
+  <rect x="31" y="21.5" width="11" height="5" rx="2.5" fill="#10B981" />
+</svg>

@@ -1,0 +1,2519 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JimuCoding · 积木编程软件前端布局与视觉风格选型原型</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234F46E5'/%3E%3Cpath d='M7 12a3 3 0 0 1 3-3h3l1.5 2h3L19 9h3a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H10a3 3 0 0 1-3-3v-8z' fill='%23fff'/%3E%3Ccircle cx='13' cy='16' r='2' fill='%234F46E5'/%3E%3Crect x='17' y='14.5' width='5' height='3' rx='1.5' fill='%2310B981'/%3E%3C/svg%3E" />
+  <style>
+    /* =====================================================================
+       Design Tokens (Light & Dark themes) — MicroBlocks Crisp Aesthetic
+       ===================================================================== */
+    :root {
+      --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, -apple-system, sans-serif;
+      --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+
+      /* Shell & Surfaces */
+      --bg-app: #eef1f6;
+      --bg-chrome: #ffffff;
+      --bg-rail: #1e2433;
+      --bg-rail-hover: rgba(255, 255, 255, 0.10);
+      --bg-rail-active: rgba(99, 102, 241, 0.28);
+      --text-rail: #94a3b8;
+      --text-rail-active: #ffffff;
+      --bg-sidebar: #f8fafc;
+      --bg-panel: #ffffff;
+      --bg-panel-subtle: #f4f6fa;
+      --bg-canvas: #f5f7fb;
+      --canvas-dot: #cfd6e3;
+      --bg-code: #fafbfd;
+      --bg-code-highlight: rgba(79, 70, 229, 0.12);
+      --bg-console: #ffffff;
+      --bg-input: #f1f5f9;
+      --bg-hover: #eef2f7;
+      --border: #e2e8f0;
+      --border-strong: #cbd5e1;
+
+      /* Text */
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #64748b;
+
+      /* Accent & Status */
+      --accent: #4f46e5;
+      --accent-soft: rgba(79, 70, 229, 0.11);
+      --accent-hover: #4338ca;
+      --success: #10b981;
+      --success-soft: rgba(16, 185, 129, 0.13);
+      --warning: #f59e0b;
+      --warning-soft: rgba(245, 158, 11, 0.15);
+      --danger: #ef4444;
+      --danger-soft: rgba(239, 68, 68, 0.13);
+
+      /* MicroBlocks-inspired Modern Block Palette */
+      --blk-event: #e0911f;
+      --blk-event-b: #b97310;
+      --blk-ctrl: #d97706;
+      --blk-ctrl-b: #b45309;
+      --blk-print: #0d9488;
+      --blk-print-b: #0f766e;
+      --blk-var: #db2777;
+      --blk-var-b: #be185d;
+      --blk-math: #16a34a;
+      --blk-math-b: #15803d;
+      --blk-logic: #2563eb;
+      --blk-logic-b: #1d4ed8;
+      --blk-text: #0891b2;
+      --blk-text-b: #0e7490;
+      --blk-list: #7c3aed;
+      --blk-list-b: #6d28d9;
+      --blk-func: #4f46e5;
+      --blk-func-b: #4338ca;
+
+      /* Syntax */
+      --syn-kw: #7c3aed;
+      --syn-fn: #2563eb;
+      --syn-str: #0d9488;
+      --syn-num: #d97706;
+      --syn-cmt: #94a3b8;
+      --syn-var: #0f172a;
+
+      /* Shadows */
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+      --shadow-md: 0 6px 20px rgba(15, 23, 42, 0.09);
+      --shadow-float: 0 10px 30px rgba(15, 23, 42, 0.12);
+    }
+
+    html[data-theme="dark"] {
+      --bg-app: #0d1017;
+      --bg-chrome: #151923;
+      --bg-rail: #0f131c;
+      --bg-rail-hover: rgba(255, 255, 255, 0.08);
+      --bg-rail-active: rgba(99, 102, 241, 0.30);
+      --text-rail: #64748b;
+      --text-rail-active: #f8fafc;
+      --bg-sidebar: #161b26;
+      --bg-panel: #151923;
+      --bg-panel-subtle: #1c2230;
+      --bg-canvas: #11151e;
+      --canvas-dot: #262f42;
+      --bg-code: #121620;
+      --bg-code-highlight: rgba(99, 102, 241, 0.22);
+      --bg-console: #131722;
+      --bg-input: #1e2536;
+      --bg-hover: #21293b;
+      --border: #263044;
+      --border-strong: #36435e;
+
+      --text-primary: #f1f5f9;
+      --text-secondary: #cbd5e1;
+      --text-muted: #9aaac4;
+
+      --accent: #6366f1;
+      --accent-soft: rgba(99, 102, 241, 0.20);
+      --accent-hover: #818cf8;
+
+      --syn-kw: #c084fc;
+      --syn-fn: #60a5fa;
+      --syn-str: #2dd4bf;
+      --syn-num: #fbbf24;
+      --syn-cmt: #64748b;
+      --syn-var: #e2e8f0;
+
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+      --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+      --shadow-float: 0 14px 36px rgba(0, 0, 0, 0.55);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+      font-family: var(--font-sans);
+      background: var(--bg-app);
+      color: var(--text-primary);
+      font-size: 13px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button {
+      font-family: inherit;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: inherit;
+    }
+
+    input { font-family: inherit; color: inherit; }
+
+    /* =====================================================================
+       Top Prototype Switcher Banner (Selection Meta Bar)
+       ===================================================================== */
+    .showcase-root {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    .meta-bar {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 16px;
+      background: linear-gradient(90deg, #111827 0%, #1e1b4b 55%, #172554 100%);
+      color: #f8fafc;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      z-index: 50;
+      flex-wrap: wrap;
+    }
+
+    .meta-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .meta-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(99, 102, 241, 0.28);
+      border: 1px solid rgba(165, 180, 252, 0.35);
+      color: #e0e7ff;
+      white-space: nowrap;
+    }
+
+    .meta-heading {
+      font-size: 13px;
+      font-weight: 600;
+      color: #ffffff;
+      white-space: nowrap;
+    }
+
+    .layout-tabs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .layout-tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #cbd5e1;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      transition: all 0.16s ease;
+      white-space: nowrap;
+    }
+
+    .layout-tab:hover {
+      background: rgba(255, 255, 255, 0.13);
+      color: #ffffff;
+    }
+
+    .layout-tab.active {
+      background: #ffffff;
+      color: #111827;
+      border-color: #ffffff;
+      font-weight: 600;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+    }
+
+    .rec-pill {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: #10b981;
+      color: #ffffff;
+      letter-spacing: 0.2px;
+    }
+
+    .layout-tab.active .rec-pill {
+      background: #4f46e5;
+    }
+
+    .meta-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .meta-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      border-radius: 7px;
+      font-size: 12px;
+      color: #e2e8f0;
+      background: rgba(255, 255, 255, 0.09);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      transition: background 0.15s;
+    }
+    .meta-btn:hover { background: rgba(255, 255, 255, 0.18); }
+
+    /* Info Strip explaining current layout */
+    .layout-info-strip {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 7px 16px;
+      background: var(--bg-chrome);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+    }
+
+    .info-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .info-tag {
+      font-weight: 600;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    .info-desc {
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .info-pros {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .pro-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-muted);
+      font-size: 11.5px;
+    }
+
+    .pro-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    /* =====================================================================
+       App Viewport Container (Simulated Real Software Frame)
+       ===================================================================== */
+    .app-viewport {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+      background: var(--bg-app);
+    }
+
+    /* Common Top App Toolbar */
+    .app-topbar {
+      height: 44px;
+      flex: 0 0 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      background: var(--bg-chrome);
+      border-bottom: 1px solid var(--border);
+      gap: 10px;
+      z-index: 20;
+    }
+
+    .topbar-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 13.5px;
+      letter-spacing: -0.2px;
+      color: var(--text-primary);
+      padding-right: 6px;
+    }
+
+    .brand-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 7px;
+      background: linear-gradient(135deg, #4f46e5, #06b6d4);
+      display: grid;
+      place-items: center;
+      color: #fff;
+      box-shadow: 0 2px 6px rgba(79, 70, 229, 0.35);
+      flex-shrink: 0;
+    }
+
+    .project-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 7px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .dirty-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--warning);
+    }
+
+    /* Segmented Language Switcher */
+    .seg-control {
+      display: inline-flex;
+      align-items: center;
+      background: var(--bg-input);
+      padding: 3px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      gap: 2px;
+    }
+
+    .seg-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      transition: all 0.15s ease;
+    }
+
+    .seg-btn:hover { color: var(--text-primary); }
+
+    .seg-btn.active {
+      background: var(--bg-chrome);
+      color: var(--text-primary);
+      font-weight: 600;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .lang-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+    }
+    .lang-dot.lua { background: #3b82f6; }
+    .lang-dot.py { background: #f59e0b; }
+
+    /* Action Buttons */
+    .btn-run {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--success);
+      color: #ffffff;
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.28);
+      transition: transform 0.1s, filter 0.15s;
+    }
+    .btn-run:hover { filter: brightness(1.06); }
+    .btn-run:active { transform: scale(0.97); }
+    .btn-run.running { background: var(--danger); box-shadow: 0 2px 8px rgba(239, 68, 68, 0.28); }
+
+    .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 9px;
+      border-radius: 7px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      border: 1px solid transparent;
+      transition: all 0.14s;
+    }
+    .btn-ghost:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+    .btn-ghost.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: rgba(79, 70, 229, 0.22);
+    }
+
+    .btn-outline {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+      background: var(--bg-chrome);
+      border: 1px solid var(--border-strong);
+      transition: all 0.14s;
+    }
+    .btn-outline:hover { background: var(--bg-hover); }
+
+    /* =====================================================================
+       Left Primary Navigation Sidebar (Activity Rail & Wide Sidebar variants)
+       ===================================================================== */
+    .app-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .activity-rail {
+      width: 54px;
+      flex: 0 0 54px;
+      background: var(--bg-rail);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      z-index: 15;
+    }
+
+    .rail-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+    }
+
+    .rail-item {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      color: var(--text-rail);
+      position: relative;
+      transition: all 0.15s;
+    }
+
+    .rail-item:hover {
+      background: var(--bg-rail-hover);
+      color: #e2e8f0;
+    }
+
+    .rail-item.active {
+      background: var(--bg-rail-active);
+      color: var(--text-rail-active);
+    }
+
+    .rail-item.active::before {
+      content: "";
+      position: absolute;
+      left: -7px;
+      top: 9px;
+      bottom: 9px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: #818cf8;
+    }
+
+    .rail-label {
+      font-size: 9.5px;
+      line-height: 1;
+      font-weight: 500;
+    }
+
+    .rail-badge-dot {
+      position: absolute;
+      top: 6px;
+      right: 7px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #10b981;
+      border: 1.5px solid var(--bg-rail);
+    }
+
+    /* Wide Sidebar (Layout 3) */
+    .wide-sidebar {
+      width: 184px;
+      flex: 0 0 184px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 10px 8px;
+      transition: width 0.18s ease;
+    }
+
+    .wide-sidebar.collapsed {
+      width: 58px;
+      flex-basis: 58px;
+    }
+
+    .wide-sidebar.collapsed .wide-text,
+    .wide-sidebar.collapsed .wide-section-title,
+    .wide-sidebar.collapsed .wide-device-meta {
+      display: none;
+    }
+
+    .wide-section-title {
+      font-size: 10.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-muted);
+      padding: 8px 10px 4px;
+    }
+
+    .wide-nav-item {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      transition: all 0.14s;
+      margin-bottom: 2px;
+      text-align: left;
+    }
+
+    .wide-nav-item:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .wide-nav-item.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .wide-nav-pill {
+      margin-left: auto;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: var(--success-soft);
+      color: var(--success);
+      font-weight: 600;
+    }
+
+    .wide-device-card {
+      padding: 9px 10px;
+      border-radius: 9px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* =====================================================================
+       MicroBlocks-Style Toolbox (Category Column + Compact Flyout)
+       ===================================================================== */
+    .toolbox-wrap {
+      display: flex;
+      height: 100%;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .cat-strip {
+      width: 68px;
+      flex: 0 0 68px;
+      padding: 8px 5px;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      overflow-y: auto;
+      background: var(--bg-chrome);
+    }
+
+    .cat-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 7px 4px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      transition: all 0.14s;
+      position: relative;
+    }
+
+    .cat-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+    .cat-btn.active {
+      background: var(--bg-panel-subtle);
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    .cat-btn.active::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 7px;
+      bottom: 7px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: var(--cat-color, var(--accent));
+    }
+
+    .cat-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--cat-color);
+      box-shadow: inset 0 1px 1px rgba(255,255,255,0.45), 0 1px 2px rgba(0,0,0,0.12);
+    }
+
+    .flyout {
+      width: 214px;
+      flex: 0 0 214px;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-sidebar);
+      overflow: hidden;
+    }
+
+    .flyout-search {
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .search-box {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 7px;
+      background: var(--bg-chrome);
+      border: 1px solid var(--border);
+      font-size: 12px;
+    }
+
+    .search-box input {
+      width: 100%;
+      border: none;
+      outline: none;
+      background: transparent;
+      font-size: 12px;
+    }
+
+    .flyout-list {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 10px 10px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .flyout-section {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    /* =====================================================================
+       Authentic MicroBlocks-Style Visual Blocks (Compact, Crisp, Rounded)
+       ===================================================================== */
+    .mb-stack {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: flex-start;
+      position: relative;
+      user-select: none;
+    }
+
+    .mb-block {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 11px;
+      min-height: 30px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #ffffff;
+      background: var(--c, var(--blk-ctrl));
+      border: 1px solid var(--cb, var(--blk-ctrl-b));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 1px 2px rgba(15, 23, 42, 0.14);
+      cursor: pointer;
+      transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
+      white-space: nowrap;
+      margin-top: -1px;
+    }
+
+    .mb-block:hover {
+      filter: brightness(1.05);
+    }
+
+    .mb-block.selected {
+      box-shadow: 0 0 0 2.5px #ffffff, 0 0 0 4.5px var(--accent), 0 6px 16px rgba(79, 70, 229, 0.28);
+      z-index: 6;
+    }
+
+    .mb-block.executing {
+      box-shadow: 0 0 0 2.5px #fef08a, 0 0 18px rgba(250, 204, 21, 0.85);
+      z-index: 7;
+    }
+
+    /* Hat block (MicroBlocks rounded dome top) */
+    .mb-block.hat {
+      border-radius: 16px 16px 7px 7px;
+      padding: 8px 14px 6px;
+      margin-top: 0;
+    }
+
+    /* Interlocking jigsaw notch hint */
+    .mb-block.notch::after {
+      content: "";
+      position: absolute;
+      left: 16px;
+      bottom: -4px;
+      width: 14px;
+      height: 4px;
+      background: var(--c);
+      border-left: 1px solid var(--cb);
+      border-right: 1px solid var(--cb);
+      border-bottom: 1px solid var(--cb);
+      border-radius: 0 0 4px 4px;
+      z-index: 2;
+    }
+
+    /* Reporter / Pill block */
+    .mb-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      min-height: 21px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #ffffff;
+      background: var(--c, var(--blk-math));
+      border: 1px solid var(--cb, var(--blk-math-b));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    }
+
+    .mb-slot {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 7px;
+      min-height: 20px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.94);
+      color: #0f172a;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.12);
+    }
+
+    .mb-dropdown {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 7px;
+      min-height: 20px;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .mb-arrow {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 15px;
+      height: 15px;
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.2);
+      font-size: 9px;
+      line-height: 1;
+    }
+
+    /* C-Clamp Loop Container (Authentic MicroBlocks style) */
+    .mb-cwrap {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: flex-start;
+      position: relative;
+      margin-top: -1px;
+    }
+
+    .mb-chead {
+      border-radius: 7px 7px 7px 0;
+    }
+
+    .mb-cbody {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      padding: 2px 0 2px 14px;
+      border-left: 11px solid var(--c);
+      position: relative;
+    }
+
+    .mb-cbody::before {
+      content: "";
+      position: absolute;
+      left: -11px;
+      top: -2px;
+      bottom: -2px;
+      width: 1px;
+      background: var(--cb);
+    }
+
+    .mb-cfoot {
+      height: 14px;
+      min-width: 110px;
+      border-radius: 0 6px 7px 7px;
+      background: var(--c);
+      border: 1px solid var(--cb);
+      border-top: none;
+      margin-top: -1px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.14);
+      position: relative;
+    }
+
+    /* MicroBlocks-style Live Speech Bubble */
+    .mb-bubble {
+      position: absolute;
+      left: calc(100% + 14px);
+      top: 50%;
+      transform: translateY(-50%) scale(0.92);
+      opacity: 0;
+      pointer-events: none;
+      background: var(--bg-chrome);
+      color: var(--text-primary);
+      border: 1.5px solid var(--accent);
+      border-radius: 10px;
+      padding: 5px 10px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      font-weight: 600;
+      box-shadow: var(--shadow-md);
+      white-space: nowrap;
+      transition: all 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+      z-index: 12;
+    }
+
+    .mb-bubble::before {
+      content: "";
+      position: absolute;
+      left: -6px;
+      top: 50%;
+      width: 9px;
+      height: 9px;
+      background: var(--bg-chrome);
+      border-left: 1.5px solid var(--accent);
+      border-bottom: 1.5px solid var(--accent);
+      transform: translateY(-50%) rotate(45deg);
+    }
+
+    .mb-bubble.visible {
+      opacity: 1;
+      transform: translateY(-50%) scale(1);
+    }
+
+    /* =====================================================================
+       Workspace Canvas Area
+       ===================================================================== */
+    .canvas-stage {
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+      position: relative;
+      background-color: var(--bg-canvas);
+      background-image: radial-gradient(var(--canvas-dot) 1.15px, transparent 1.15px);
+      background-size: 18px 18px;
+      overflow: auto;
+      padding: 26px 30px;
+    }
+
+    .canvas-hint {
+      position: absolute;
+      top: 12px;
+      right: 14px;
+      font-size: 11px;
+      color: var(--text-muted);
+      background: var(--bg-chrome);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 999px;
+      box-shadow: var(--shadow-sm);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      z-index: 5;
+    }
+
+    .canvas-zoom-bar {
+      position: absolute;
+      right: 14px;
+      bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 6px;
+      border-radius: 9px;
+      background: var(--bg-chrome);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-sm);
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      z-index: 8;
+    }
+
+    .zoom-btn {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+      color: var(--text-secondary);
+    }
+    .zoom-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+    /* =====================================================================
+       Code Preview Panel & Log Console
+       ===================================================================== */
+    .inspector-pane {
+      width: 372px;
+      flex: 0 0 372px;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-panel);
+      border-left: 1px solid var(--border);
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .pane-header {
+      height: 36px;
+      flex: 0 0 36px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      background: var(--bg-panel-subtle);
+      border-bottom: 1px solid var(--border);
+      gap: 8px;
+    }
+
+    .pane-tabs {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      height: 100%;
+    }
+
+    .pane-tab {
+      height: 100%;
+      padding: 0 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+    }
+
+    .pane-tab.active {
+      color: var(--text-primary);
+      font-weight: 600;
+      border-bottom-color: var(--accent);
+    }
+
+    .count-badge {
+      font-size: 10.5px;
+      padding: 0 5px;
+      border-radius: 999px;
+      background: var(--bg-input);
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .code-body {
+      flex: 1 1 auto;
+      overflow: auto;
+      background: var(--bg-code);
+      padding: 10px 0;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      line-height: 1.65;
+    }
+
+    .code-line {
+      display: flex;
+      padding: 0 12px 0 0;
+      transition: background 0.14s;
+      cursor: pointer;
+    }
+
+    .code-line:hover { background: var(--bg-hover); }
+
+    .code-line.active-line {
+      background: var(--bg-code-highlight);
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+
+    .ln {
+      width: 36px;
+      flex: 0 0 36px;
+      text-align: right;
+      padding-right: 12px;
+      color: var(--text-muted);
+      user-select: none;
+      opacity: 0.65;
+    }
+
+    .lc { white-space: pre; color: var(--syn-var); }
+    .kw { color: var(--syn-kw); font-weight: 600; }
+    .fn { color: var(--syn-fn); }
+    .str { color: var(--syn-str); }
+    .num { color: var(--syn-num); }
+    .cmt { color: var(--syn-cmt); font-style: italic; }
+
+    /* Log Console */
+    .console-pane {
+      height: 152px;
+      flex: 0 0 152px;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-console);
+      border-top: 1px solid var(--border);
+      min-height: 0;
+    }
+
+    .console-body {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 8px 12px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      line-height: 1.6;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .log-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 2px 6px;
+      border-radius: 5px;
+    }
+
+    .log-row:hover { background: var(--bg-hover); }
+
+    .log-time { color: var(--text-muted); font-size: 10.5px; flex-shrink: 0; }
+    .log-lvl {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 0 5px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+    .log-lvl.print { background: rgba(13, 148, 136, 0.15); color: #0d9488; }
+    .log-lvl.info { background: var(--accent-soft); color: var(--accent); }
+    .log-lvl.warn { background: var(--warning-soft); color: #d97706; }
+    .log-lvl.ok { background: var(--success-soft); color: var(--success); }
+
+    /* Bottom Status Bar */
+    .status-bar {
+      height: 24px;
+      flex: 0 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      background: var(--bg-chrome);
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .status-group { display: flex; align-items: center; gap: 14px; }
+    .status-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      margin-right: 4px;
+    }
+
+    /* =====================================================================
+       Layout 2 Specific: Floating MicroBlocks Studio (Ultra Clean)
+       ===================================================================== */
+    .floating-shell {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      overflow: hidden;
+    }
+
+    .float-toolbox {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      bottom: 14px;
+      width: 284px;
+      border-radius: 14px;
+      background: var(--bg-chrome);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-float);
+      display: flex;
+      overflow: hidden;
+      z-index: 10;
+    }
+
+    .float-right-drawer {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      bottom: 14px;
+      width: 368px;
+      border-radius: 14px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-float);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      z-index: 10;
+    }
+
+    .float-canvas-pad {
+      padding: 28px 396px 28px 322px !important;
+    }
+
+    .float-canvas-pad .canvas-hint,
+    .float-canvas-pad .canvas-zoom-bar {
+      right: 396px;
+    }
+
+    .float-canvas-only {
+      padding: 28px 30px 28px 322px !important;
+    }
+
+    /* =====================================================================
+       Layout 4 Specific: Split View Compare
+       ===================================================================== */
+    .split-grid {
+      flex: 1 1 auto;
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .split-code-pane {
+      flex: 0 0 46%;
+      display: flex;
+      flex-direction: column;
+      border-left: 1px solid var(--border);
+      background: var(--bg-panel);
+      min-width: 0;
+    }
+
+    /* =====================================================================
+       Multi-Page Preview Views (Devices, Extensions, Projects, Settings)
+       ===================================================================== */
+    .subpage-wrap {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 24px 28px;
+      background: var(--bg-canvas);
+    }
+
+    .subpage-inner {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    .subpage-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .subpage-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .subpage-sub {
+      font-size: 12.5px;
+      color: var(--text-muted);
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+      gap: 14px;
+    }
+
+    .ui-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .card-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .status-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+    .status-pill.ok { background: var(--success-soft); color: var(--success); }
+    .status-pill.idle { background: var(--bg-input); color: var(--text-muted); }
+    .status-pill.accent { background: var(--accent-soft); color: var(--accent); }
+
+    .card-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      margin-top: auto;
+    }
+
+    .btn-primary-sm {
+      padding: 5px 11px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary-sm:hover { background: var(--accent-hover); }
+
+    /* Toast feedback */
+    .toast {
+      position: fixed;
+      bottom: 36px;
+      left: 50%;
+      transform: translateX(-50%) translateY(14px);
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      box-shadow: var(--shadow-float);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.22s ease;
+      z-index: 100;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* Utility */
+    .hidden { display: none !important; }
+    .col-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .row-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; overflow: hidden; }
+
+    /* Scrollbar refinement */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; }
+  </style>
+</head>
+<body>
+  <div class="showcase-root">
+    <!-- ================================================================
+         1. Prototype Layout Picker Bar (Meta Switcher)
+         ================================================================ -->
+    <header class="meta-bar">
+      <div class="meta-title">
+        <span class="meta-badge">布局原型</span>
+        <span class="meta-heading">JimuCoding 选型对比</span>
+      </div>
+
+      <nav class="layout-tabs" id="layoutTabs" aria-label="布局方案切换">
+        <button class="layout-tab active" data-layout="1">
+          <span>方案一 · MicroBlocks 工作台</span>
+          <span class="rec-pill">最推荐</span>
+        </button>
+        <button class="layout-tab" data-layout="2">
+          <span>方案二 · 悬浮沉浸画布</span>
+        </button>
+        <button class="layout-tab" data-layout="3">
+          <span>方案三 · 上位机宽侧栏</span>
+        </button>
+        <button class="layout-tab" data-layout="4">
+          <span>方案四 · 双栏对照台</span>
+        </button>
+      </nav>
+
+      <div class="meta-actions">
+        <button class="meta-btn" id="themeToggleBtn" title="切换明暗主题">
+          <span id="themeIcon">🌙</span>
+          <span id="themeLabel">深色主题</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Current Layout Summary Strip -->
+    <div class="layout-info-strip" id="layoutInfoStrip"></div>
+
+    <!-- ================================================================
+         2. Live Interactive Software Frame
+         ================================================================ -->
+    <main class="app-viewport" id="appViewport"></main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    /* =====================================================================
+       Shared Interactive State & SVG Icon Helpers
+       ===================================================================== */
+    const state = {
+      layout: 1,          // 1 | 2 | 3 | 4
+      page: 'blocks',     // 'blocks' | 'projects' | 'devices' | 'extensions' | 'settings'
+      lang: 'lua',        // 'lua' | 'python'
+      theme: 'light',     // 'light' | 'dark'
+      activeCat: 'print', // active toolbox category
+      selectedBlock: 'b3',
+      executingBlock: null,
+      running: false,
+      showCode: true,
+      showConsole: true,
+      showToolbox: true,
+      wideCollapsed: false,
+      splitMode: 'split', // Layout 4: 'blocks' | 'split' | 'code'
+      floatDrawerTab: 'code', // Layout 2: 'code' | 'console'
+      searchQuery: '',
+      zoom: 100,
+      bubbleVisible: false,
+      logs: [
+        { time: '15:28:01', lvl: 'info', text: '运行时就绪：Lua 5.4 (WASM Worker) · 零后端纯前端沙箱' },
+        { time: '15:28:02', lvl: 'print', text: '任务启动，准备打印 3 条传感器/计算日志...' },
+        { time: '15:28:02', lvl: 'print', text: '第 1 轮 => total = 10' },
+        { time: '15:28:02', lvl: 'print', text: '第 2 轮 => total = 20' },
+        { time: '15:28:02', lvl: 'print', text: '第 3 轮 => total = 30' },
+        { time: '15:28:02', lvl: 'ok', text: '执行完成 · 耗时 4ms · 可一键导出 .lua 脚本' }
+      ]
+    };
+
+    const LAYOUT_META = {
+      1: {
+        tag: '方案一 · 首选推荐',
+        desc: '极窄深色图标侧栏承接多页面（积木/设备下载/扩展库/项目），画布区完全延续 MicroBlocks 紧凑高颜值；右侧代码与底部打印日志可各自一键收起。',
+        pros: ['多页面扩展自然', '画布空间占比高', '兼顾高颜值与调试效率']
+      },
+      2: {
+        tag: '方案二 · 极简颜值派',
+        desc: '无重侧边栏，顶栏居中胶囊切换页面；点阵画布 100% 铺满底层，积木箱与代码/日志区以轻盈悬浮卡片呈现，视觉最贴近原版 MicroBlocks 的纯粹呼吸感。',
+        pros: ['第一眼最精致通透', '画布无边界沉浸感', '适合轻量模块结构']
+      },
+      3: {
+        tag: '方案三 · 上位机全高画布',
+        desc: '左侧带文字导航栏（可折叠），后续接入设备烧录/串口监视/工程管理一目了然；右侧上下分栏放代码与打印日志，中央积木画布拥有 100% 垂直通高。',
+        pros: ['多页面无需猜图标', '长积木链一眼看全', '最贴合硬件上位机']
+      },
+      4: {
+        tag: '方案四 · 积木/代码双栏对照',
+        desc: '极窄侧栏 + 顶栏「积木 / 双栏对照 / 纯代码」一键切换；双栏模式下左右近 1:1 并排审阅生成的 Lua / Python 脚本与打印日志，导出前核对最顺手。',
+        pros: ['对照生成代码最清晰', '一键切全屏积木', '适合偏开发者/脚本审查']
+      }
+    };
+
+    const CATEGORIES = [
+      { id: 'event', label: '事件', color: '#e0911f' },
+      { id: 'ctrl',  label: '控制', color: '#d97706' },
+      { id: 'print', label: '打印', color: '#0d9488' },
+      { id: 'var',   label: '变量', color: '#db2777' },
+      { id: 'math',  label: '运算', color: '#16a34a' },
+      { id: 'logic', label: '逻辑', color: '#2563eb' },
+      { id: 'text',  label: '文本', color: '#0891b2' },
+      { id: 'list',  label: '列表', color: '#7c3aed' },
+      { id: 'func',  label: '函数', color: '#4f46e5' }
+    ];
+
+    const TOOLBOX_ITEMS = {
+      event: [
+        { section: '程序入口', items: [
+          { html: `<div class="mb-block hat notch" style="--c:var(--blk-event);--cb:var(--blk-event-b)">当程序启动</div>`, kw: '启动 start main 入口' },
+          { html: `<div class="mb-block hat notch" style="--c:var(--blk-event);--cb:var(--blk-event-b)">当收到消息 <span class="mb-slot">"init"</span></div>`, kw: '事件 message 消息' }
+        ]}
+      ],
+      ctrl: [
+        { section: '循环与条件', items: [
+          { html: `<div class="mb-block notch" style="--c:var(--blk-ctrl);--cb:var(--blk-ctrl-b)">重复执行 <span class="mb-slot">3</span> 次</div>`, kw: '循环 for repeat 次数' },
+          { html: `<div class="mb-block notch" style="--c:var(--blk-ctrl);--cb:var(--blk-ctrl-b)">如果 <span class="mb-pill" style="--c:var(--blk-logic);--cb:var(--blk-logic-b)">条件</span> 那么 <span class="mb-arrow">▶</span></div>`, kw: '条件 if else 如果' },
+          { html: `<div class="mb-block notch" style="--c:var(--blk-ctrl);--cb:var(--blk-ctrl-b)">等待 <span class="mb-slot">100</span> 毫秒</div>`, kw: '等待 wait sleep 延时' }
+        ]}
+      ],
+      print: [
+        { section: '打印与日志输出', items: [
+          { html: `<div class="mb-block notch" style="--c:var(--blk-print);--cb:var(--blk-print-b)">打印 <span class="mb-slot">"Hello"</span> <span class="mb-arrow">◀</span><span class="mb-arrow">▶</span></div>`, kw: '打印 print 输出 log' },
+          { html: `<div class="mb-block notch" style="--c:var(--blk-print);--cb:var(--blk-print-b)">日志 <span class="mb-dropdown">INFO ▾</span> <span class="mb-slot">"状态正常"</span></div>`, kw: '日志 info warn error 调试' },
+          { html: `<div class="mb-block notch" style="--c:var(--blk-print);--cb:var(--blk-print-b)">打印变量 <span class="mb-dropdown">total ▾</span> 并带标签</div>`, kw: '打印变量 debug 变量' },
+          { html: `<div class="mb-block notch" style="--c:var(--blk-print);--cb:var(--blk-print-b)">清空日志控制台</div>`, kw: '清空 clear console' }
+        ]}
+      ],
+      var: [
+        { section: '变量管理', items: [
+          { html: `<div class="mb-block notch" style="--c:var(--blk-var);--cb:var(--blk-var-b)">设 <span class="mb-dropdown">total ▾</span> 为 <span class="mb-slot">0</span></div>`, kw: '变量 赋值 set var' },
+          { html: `<div class="mb-block notch" style="--c:var(--blk-var);--cb:var(--blk-var-b)">将 <span class="mb-dropdown">total ▾</span> 增加 <span class="mb-slot">10</span></div>`, kw: '增加 自增 add' },
+          { html: `<div class="mb-pill" style="--c:var(--blk-var);--cb:var(--blk-var-b)">total</div>`, kw: '获取 变量 value' }
+        ]}
+      ],
+      math: [
+        { section: '数值运算', items: [
+          { html: `<div class="mb-pill" style="--c:var(--blk-math);--cb:var(--blk-math-b)"><span class="mb-slot">1</span> + <span class="mb-slot">2</span></div>`, kw: '加法 运算 math +' },
+          { html: `<div class="mb-pill" style="--c:var(--blk-math);--cb:var(--blk-math-b)">随机数 <span class="mb-slot">1</span> ~ <span class="mb-slot">100</span></div>`, kw: '随机 random' }
+        ]}
+      ],
+      logic: [
+        { section: '比较与布尔', items: [
+          { html: `<div class="mb-pill" style="--c:var(--blk-logic);--cb:var(--blk-logic-b)"><span class="mb-slot">a</span> == <span class="mb-slot">b</span></div>`, kw: '等于 比较 ==' },
+          { html: `<div class="mb-pill" style="--c:var(--blk-logic);--cb:var(--blk-logic-b)">且 (and) <span class="mb-arrow">▶</span></div>`, kw: '逻辑 and or not' }
+        ]}
+      ],
+      text: [
+        { section: '文本拼接与格式化', items: [
+          { html: `<div class="mb-pill" style="--c:var(--blk-text);--cb:var(--blk-text-b)">拼接 <span class="mb-slot">"值="</span> <span class="mb-slot">x</span> <span class="mb-arrow">▶</span></div>`, kw: '拼接 concat 字符串' },
+          { html: `<div class="mb-pill" style="--c:var(--blk-text);--cb:var(--blk-text-b)">文本长度 <span class="mb-slot">"abc"</span></div>`, kw: '长度 len' }
+        ]}
+      ],
+      list: [
+        { section: '列表与字典', items: [
+          { html: `<div class="mb-pill" style="--c:var(--blk-list);--cb:var(--blk-list-b)">列表 [ <span class="mb-slot">10</span> , <span class="mb-slot">20</span> ] <span class="mb-arrow">▶</span></div>`, kw: '列表 array table list' },
+          { html: `<div class="mb-block notch" style="--c:var(--blk-list);--cb:var(--blk-list-b)">向 <span class="mb-dropdown">items ▾</span> 追加 <span class="mb-slot">30</span></div>`, kw: '追加 append push' }
+        ]}
+      ],
+      func: [
+        { section: '自定义函数', items: [
+          { html: `<div class="mb-block hat notch" style="--c:var(--blk-func);--cb:var(--blk-func-b)">定义函数 <span class="mb-slot">report</span> ( <span class="mb-slot">val</span> )</div>`, kw: '函数 def function' },
+          { html: `<div class="mb-block notch" style="--c:var(--blk-func);--cb:var(--blk-func-b)">返回 <span class="mb-slot">total</span></div>`, kw: '返回 return' }
+        ]}
+      ]
+    };
+
+    const CODE_SAMPLES = {
+      lua: [
+        { block: 'b1', text: `<span class="cmt">-- JimuCoding 生成 (Lua 5.4)</span>` },
+        { block: 'b1', text: `<span class="kw">local function</span> <span class="fn">main</span>()` },
+        { block: 'b2', text: `  <span class="kw">local</span> total = <span class="num">0</span>` },
+        { block: 'b3', text: `  <span class="fn">print</span>(<span class="str">"[INFO] 启动 3 轮日志..."</span>)` },
+        { block: 'b4', text: `  <span class="kw">for</span> i = <span class="num">1</span>, <span class="num">3</span> <span class="kw">do</span>` },
+        { block: 'b5', text: `    total = total + <span class="num">10</span>` },
+        { block: 'b6', text: `    <span class="fn">print</span>(<span class="str">"第"</span> .. i .. <span class="str">"轮 total="</span> .. total)` },
+        { block: 'b4', text: `  <span class="kw">end</span>` },
+        { block: 'b7', text: `  <span class="fn">print</span>(<span class="str">"[OK] 汇总结果:"</span>, total)` },
+        { block: 'b1', text: `<span class="kw">end</span>` },
+        { block: 'b1', text: `` },
+        { block: 'b1', text: `<span class="fn">main</span>()` }
+      ],
+      python: [
+        { block: 'b1', text: `<span class="cmt"># JimuCoding 生成 (Python 3.12)</span>` },
+        { block: 'b1', text: `<span class="kw">def</span> <span class="fn">main</span>():` },
+        { block: 'b2', text: `    total = <span class="num">0</span>` },
+        { block: 'b3', text: `    <span class="fn">print</span>(<span class="str">"[INFO] 启动 3 轮日志..."</span>)` },
+        { block: 'b4', text: `    <span class="kw">for</span> i <span class="kw">in</span> <span class="fn">range</span>(<span class="num">1</span>, <span class="num">4</span>):` },
+        { block: 'b5', text: `        total += <span class="num">10</span>` },
+        { block: 'b6', text: `        <span class="fn">print</span>(<span class="kw">f</span><span class="str">"第{i}轮 total={total}"</span>)` },
+        { block: 'b7', text: `    <span class="fn">print</span>(<span class="str">"[OK] 汇总结果:"</span>, total)` },
+        { block: 'b1', text: `` },
+        { block: 'b1', text: `<span class="kw">if</span> __name__ == <span class="str">"__main__"</span>:` },
+        { block: 'b1', text: `    <span class="fn">main</span>()` }
+      ]
+    };
+
+    const ICONS = {
+      blocks: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><path d="M17 13v8M13 17h8"/></svg>`,
+      projects: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
+      devices: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h4M1 15h4M19 9h4M19 15h4"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>`,
+      extensions: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>`,
+      settings: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1z"/></svg>`,
+      play: `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>`,
+      stop: `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>`,
+      download: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
+      code: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
+      terminal: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>`,
+      search: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+      copy: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+      sidebar: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>`
+    };
+
+    const NAV_PAGES = [
+      { id: 'blocks',     label: '编程', full: '积木编程', icon: ICONS.blocks },
+      { id: 'projects',   label: '项目', full: '项目管理', icon: ICONS.projects },
+      { id: 'devices',    label: '设备', full: '设备与下载', icon: ICONS.devices, badge: true },
+      { id: 'extensions', label: '扩展', full: '扩展积木库', icon: ICONS.extensions },
+      { id: 'settings',   label: '设置', full: '环境与设置', icon: ICONS.settings }
+    ];
+
+    function showToast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.add('show');
+      clearTimeout(el._t);
+      el._t = setTimeout(() => el.classList.remove('show'), 2200);
+    }
+
+    /* =====================================================================
+       Reusable Component Renderers
+       ===================================================================== */
+    function renderTopBar() {
+      const isL2 = state.layout === 2;
+      const isL4 = state.layout === 4;
+
+      const centerSlot = isL2
+        ? `<div class="seg-control">
+            ${NAV_PAGES.slice(0, 4).map(p => `
+              <button class="seg-btn ${state.page === p.id ? 'active' : ''}" data-nav="${p.id}">
+                ${p.full}
+              </button>
+            `).join('')}
+          </div>`
+        : isL4 && state.page === 'blocks'
+        ? `<div class="seg-control">
+            <button class="seg-btn ${state.splitMode === 'blocks' ? 'active' : ''}" data-split="blocks">纯积木</button>
+            <button class="seg-btn ${state.splitMode === 'split' ? 'active' : ''}" data-split="split">积木 / 代码对照</button>
+            <button class="seg-btn ${state.splitMode === 'code' ? 'active' : ''}" data-split="code">纯代码</button>
+          </div>`
+        : '';
+
+      return `
+        <div class="app-topbar">
+          <div class="topbar-group">
+            ${state.layout === 3 ? `
+              <button class="btn-ghost" data-action="toggle-wide" title="展开/收起侧边栏">
+                ${ICONS.sidebar}
+              </button>
+            ` : ''}
+            <div class="brand-mark">
+              <span class="brand-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M4 7a3 3 0 0 1 3-3h3l1.5 2h3L16 4h1a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V7z"/></svg>
+              </span>
+              <span>JimuCoding</span>
+            </div>
+            <div class="project-pill">
+              <span class="dirty-dot"></span>
+              <span>demo_logger.jimu</span>
+            </div>
+          </div>
+
+          <div class="topbar-group">
+            ${centerSlot}
+            <div class="seg-control" title="切换生成的目标脚本后端">
+              <button class="seg-btn ${state.lang === 'lua' ? 'active' : ''}" data-lang="lua">
+                <span class="lang-dot lua"></span> Lua 5.4
+              </button>
+              <button class="seg-btn ${state.lang === 'python' ? 'active' : ''}" data-lang="python">
+                <span class="lang-dot py"></span> Python 3
+              </button>
+            </div>
+            <button class="btn-run ${state.running ? 'running' : ''}" data-action="run">
+              ${state.running ? ICONS.stop : ICONS.play}
+              <span>${state.running ? '停止' : '运行'}</span>
+            </button>
+            <button class="btn-outline" data-action="export">
+              ${ICONS.download}
+              <span>导出 .${state.lang === 'lua' ? 'lua' : 'py'}</span>
+            </button>
+          </div>
+
+          <div class="topbar-group">
+            ${state.page === 'blocks' && (state.layout === 1 || state.layout === 2) ? `
+              <button class="btn-ghost ${state.showCode ? 'active' : ''}" data-action="toggle-code" title="显示/隐藏代码面板">
+                ${ICONS.code}<span>代码</span>
+              </button>
+            ` : ''}
+            ${state.page === 'blocks' && state.layout === 1 ? `
+              <button class="btn-ghost ${state.showConsole ? 'active' : ''}" data-action="toggle-console" title="显示/隐藏日志台">
+                ${ICONS.terminal}<span>日志</span>
+              </button>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderActivityRail() {
+      return `
+        <aside class="activity-rail" aria-label="主导航栏">
+          <div class="rail-group">
+            ${NAV_PAGES.slice(0, 4).map(p => `
+              <button class="rail-item ${state.page === p.id ? 'active' : ''}" data-nav="${p.id}" title="${p.full}">
+                ${p.icon}
+                <span class="rail-label">${p.label}</span>
+                ${p.badge ? '<span class="rail-badge-dot"></span>' : ''}
+              </button>
+            `).join('')}
+          </div>
+          <div class="rail-group">
+            <button class="rail-item ${state.page === 'settings' ? 'active' : ''}" data-nav="settings" title="环境与设置">
+              ${ICONS.settings}
+              <span class="rail-label">设置</span>
+            </button>
+          </div>
+        </aside>
+      `;
+    }
+
+    function renderWideSidebar() {
+      return `
+        <aside class="wide-sidebar ${state.wideCollapsed ? 'collapsed' : ''}" aria-label="展开式导航栏">
+          <div>
+            <div class="wide-section-title">工作空间</div>
+            ${NAV_PAGES.slice(0, 2).map(p => `
+              <button class="wide-nav-item ${state.page === p.id ? 'active' : ''}" data-nav="${p.id}" title="${p.full}">
+                ${p.icon}
+                <span class="wide-text">${p.full}</span>
+              </button>
+            `).join('')}
+
+            <div class="wide-section-title">硬件与扩展</div>
+            ${NAV_PAGES.slice(2, 4).map(p => `
+              <button class="wide-nav-item ${state.page === p.id ? 'active' : ''}" data-nav="${p.id}" title="${p.full}">
+                ${p.icon}
+                <span class="wide-text">${p.full}</span>
+                ${p.id === 'devices' ? '<span class="wide-nav-pill wide-text">预留</span>' : ''}
+              </button>
+            `).join('')}
+
+            <div class="wide-section-title">系统</div>
+            <button class="wide-nav-item ${state.page === 'settings' ? 'active' : ''}" data-nav="settings" title="环境与设置">
+              ${ICONS.settings}
+              <span class="wide-text">环境与设置</span>
+            </button>
+          </div>
+
+          <div class="wide-device-card" data-nav="devices" style="cursor:pointer" title="点击进入设备与下载页">
+            <span class="status-dot" style="margin:0;flex-shrink:0"></span>
+            <div class="wide-device-meta" style="min-width:0">
+              <div style="font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">浏览器本地沙箱</div>
+              <div style="font-size:10.5px;color:var(--text-muted)">${state.lang === 'lua' ? 'Lua 5.4 WASM' : 'Python WASM'} 就绪</div>
+            </div>
+          </div>
+        </aside>
+      `;
+    }
+
+    function renderToolbox(isFloating = false) {
+      const q = state.searchQuery.trim().toLowerCase();
+      let sectionsHtml = '';
+
+      if (q) {
+        const matched = [];
+        Object.values(TOOLBOX_ITEMS).forEach(groups => {
+          groups.forEach(g => g.items.forEach(it => {
+            if (it.kw.toLowerCase().includes(q) || it.html.toLowerCase().includes(q)) {
+              matched.push(it.html);
+            }
+          }));
+        });
+        sectionsHtml = matched.length
+          ? `<div class="flyout-section">搜索结果 (${matched.length})</div>` + matched.join('')
+          : `<div style="font-size:12px;color:var(--text-muted);padding:12px 4px">未找到包含 “${state.searchQuery}” 的积木</div>`;
+      } else {
+        const groups = TOOLBOX_ITEMS[state.activeCat] || TOOLBOX_ITEMS.print;
+        sectionsHtml = groups.map(g => `
+          <div class="flyout-section">${g.section}</div>
+          ${g.items.map(i => i.html).join('')}
+        `).join('');
+      }
+
+      return `
+        <div class="${isFloating ? 'float-toolbox' : 'toolbox-wrap'}">
+          <div class="cat-strip" aria-label="积木分类">
+            ${CATEGORIES.map(c => `
+              <button class="cat-btn ${state.activeCat === c.id ? 'active' : ''}" data-cat="${c.id}" style="--cat-color:${c.color}">
+                <span class="cat-dot"></span>
+                <span>${c.label}</span>
+              </button>
+            `).join('')}
+          </div>
+          <div class="flyout">
+            <div class="flyout-search">
+              <div class="search-box">
+                ${ICONS.search}
+                <input type="text" id="toolboxSearch" placeholder="搜索积木 (如 打印 / 循环)" value="${state.searchQuery}" />
+              </div>
+            </div>
+            <div class="flyout-list" id="flyoutList">
+              ${sectionsHtml}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function blockCls(id) {
+      return `${state.selectedBlock === id ? 'selected' : ''} ${state.executingBlock === id ? 'executing' : ''}`;
+    }
+
+    function renderCanvas(extraClass = '') {
+      return `
+        <section class="canvas-stage ${extraClass}" aria-label="积木主画布">
+          <div class="canvas-hint">
+            <span style="width:7px;height:7px;border-radius:50%;background:var(--accent)"></span>
+            <span>点击任意积木可联动高亮右侧 ${state.lang === 'lua' ? 'Lua' : 'Python'} 代码行</span>
+          </div>
+
+          <div style="transform:scale(${state.zoom / 100});transform-origin:top left;transition:transform 0.14s ease">
+            <div class="mb-stack">
+              <!-- b1: Hat Event -->
+              <div class="mb-block hat notch ${blockCls('b1')}" data-block="b1" style="--c:var(--blk-event);--cb:var(--blk-event-b)">
+                <span>当程序启动</span>
+              </div>
+
+              <!-- b2: Set Variable -->
+              <div class="mb-block notch ${blockCls('b2')}" data-block="b2" style="--c:var(--blk-var);--cb:var(--blk-var-b)">
+                <span>设</span>
+                <span class="mb-dropdown">total ▾</span>
+                <span>为</span>
+                <span class="mb-slot">0</span>
+              </div>
+
+              <!-- b3: Print Info Log -->
+              <div class="mb-block notch ${blockCls('b3')}" data-block="b3" style="--c:var(--blk-print);--cb:var(--blk-print-b)">
+                <span>日志</span>
+                <span class="mb-dropdown">INFO ▾</span>
+                <span class="mb-slot">"启动 3 轮日志..."</span>
+                <span class="mb-arrow" title="增加参数">▶</span>
+              </div>
+
+              <!-- b4: C-Clamp Loop -->
+              <div class="mb-cwrap" style="--c:var(--blk-ctrl);--cb:var(--blk-ctrl-b)">
+                <div class="mb-block mb-chead ${blockCls('b4')}" data-block="b4" style="--c:var(--blk-ctrl);--cb:var(--blk-ctrl-b)">
+                  <span>计次循环</span>
+                  <span class="mb-dropdown">i ▾</span>
+                  <span>从</span>
+                  <span class="mb-slot">1</span>
+                  <span>到</span>
+                  <span class="mb-slot">3</span>
+                </div>
+
+                <div class="mb-cbody">
+                  <!-- b5: Increment -->
+                  <div class="mb-block notch ${blockCls('b5')}" data-block="b5" style="--c:var(--blk-var);--cb:var(--blk-var-b)">
+                    <span>将</span>
+                    <span class="mb-dropdown">total ▾</span>
+                    <span>增加</span>
+                    <span class="mb-slot">10</span>
+                  </div>
+
+                  <!-- b6: Print Concat -->
+                  <div class="mb-block notch ${blockCls('b6')}" data-block="b6" style="--c:var(--blk-print);--cb:var(--blk-print-b)">
+                    <span>打印</span>
+                    <span class="mb-pill" style="--c:var(--blk-text);--cb:var(--blk-text-b)">
+                      <span>拼接</span>
+                      <span class="mb-slot">"第"</span>
+                      <span class="mb-pill" style="--c:var(--blk-var);--cb:var(--blk-var-b);min-height:17px;padding:0 6px">i</span>
+                      <span class="mb-slot">"轮 total="</span>
+                      <span class="mb-pill" style="--c:var(--blk-var);--cb:var(--blk-var-b);min-height:17px;padding:0 6px">total</span>
+                      <span class="mb-arrow">◀</span><span class="mb-arrow">▶</span>
+                    </span>
+                  </div>
+                </div>
+
+                <div class="mb-cfoot"></div>
+              </div>
+
+              <!-- b7: Final Print + Live Speech Bubble -->
+              <div class="mb-block ${blockCls('b7')}" data-block="b7" style="--c:var(--blk-print);--cb:var(--blk-print-b)">
+                <span>日志</span>
+                <span class="mb-dropdown">OK ▾</span>
+                <span class="mb-slot">"汇总结果:"</span>
+                <span class="mb-pill" style="--c:var(--blk-var);--cb:var(--blk-var-b)">total</span>
+                <span class="mb-bubble ${state.bubbleVisible ? 'visible' : ''}">total = 30</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="canvas-zoom-bar">
+            <button class="zoom-btn" data-action="zoom-out" title="缩小">−</button>
+            <span style="min-width:36px;text-align:center;font-family:var(--font-mono)">${state.zoom}%</span>
+            <button class="zoom-btn" data-action="zoom-in" title="放大">+</button>
+            <button class="zoom-btn" data-action="zoom-reset" title="重置缩放" style="width:auto;padding:0 6px;font-size:11px">居中</button>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderCodeContent() {
+      const lines = CODE_SAMPLES[state.lang];
+      return `
+        <div class="code-body">
+          ${lines.map((row, idx) => `
+            <div class="code-line ${row.block === state.selectedBlock ? 'active-line' : ''}" data-block="${row.block}">
+              <span class="ln">${idx + 1}</span>
+              <span class="lc">${row.text || '&nbsp;'}</span>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function renderConsoleContent() {
+      return `
+        <div class="console-body">
+          ${state.logs.map(l => `
+            <div class="log-row">
+              <span class="log-time">${l.time}</span>
+              <span class="log-lvl ${l.lvl}">${l.lvl.toUpperCase()}</span>
+              <span>${l.text}</span>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function renderCodeInspector(customStyle = '') {
+      return `
+        <aside class="inspector-pane" style="${customStyle}">
+          <div class="pane-header">
+            <div class="pane-tabs">
+              <button class="pane-tab active">
+                ${ICONS.code}
+                <span>${state.lang === 'lua' ? 'main.lua' : 'main.py'}</span>
+                <span class="count-badge">只读</span>
+              </button>
+              <button class="pane-tab" data-action="check-tip">
+                <span>校验</span>
+                <span class="count-badge" style="background:var(--success-soft);color:var(--success)">0 错误</span>
+              </button>
+            </div>
+            <button class="btn-ghost" data-action="copy-code" title="复制脚本" style="padding:3px 6px">
+              ${ICONS.copy}
+            </button>
+          </div>
+          ${renderCodeContent()}
+        </aside>
+      `;
+    }
+
+    function renderConsolePanel(customStyle = '') {
+      return `
+        <section class="console-pane" style="${customStyle}">
+          <div class="pane-header">
+            <div class="pane-tabs">
+              <button class="pane-tab active">
+                ${ICONS.terminal}
+                <span>打印日志控制台</span>
+                <span class="count-badge">${state.logs.length}</span>
+              </button>
+            </div>
+            <div style="display:flex;align-items:center;gap:4px">
+              <button class="btn-ghost" data-action="clear-log" style="padding:2px 8px;font-size:11.5px">清空</button>
+              ${state.layout === 1 ? `<button class="btn-ghost" data-action="toggle-console" style="padding:2px 6px;font-size:11.5px">收起</button>` : ''}
+            </div>
+          </div>
+          ${renderConsoleContent()}
+        </section>
+      `;
+    }
+
+    function renderStatusBar() {
+      return `
+        <footer class="status-bar">
+          <div class="status-group">
+            <span><span class="status-dot"></span>纯前端运行时就绪 (${state.lang === 'lua' ? 'Wasmoon Lua 5.4' : 'MicroPython / Pyodide WASM'})</span>
+            <span>单向生成 · 积木数: 7</span>
+          </div>
+          <div class="status-group">
+            <span>选中积木: ${state.selectedBlock.toUpperCase()}</span>
+            <span>UTF-8</span>
+          </div>
+        </footer>
+      `;
+    }
+
+    /* =====================================================================
+       Future Multi-Page Previews (Devices, Extensions, Projects, Settings)
+       ===================================================================== */
+    function renderSubPage() {
+      if (state.page === 'devices') {
+        return `
+          <div class="subpage-wrap">
+            <div class="subpage-inner">
+              <div class="subpage-header">
+                <div>
+                  <div class="subpage-title">设备连接与脚本下载（后续扩展页示意）</div>
+                  <div class="subpage-sub">浏览器可通过 Web Serial / Web Bluetooth 直连串口设备，或通过本地桥接程序向目标硬件/上位机下发 Lua / Python 脚本。</div>
+                </div>
+                <button class="btn-primary-sm" data-action="toast" data-msg="后续将调用 navigator.serial.requestPort() 扫描串口设备">+ 连接新设备</button>
+              </div>
+              <div class="card-grid">
+                <div class="ui-card">
+                  <div class="card-top">
+                    <div style="display:flex;align-items:center;gap:10px">
+                      <div class="card-icon" style="background:linear-gradient(135deg,#10b981,#0d9488)">WEB</div>
+                      <div>
+                        <div style="font-weight:700">浏览器本地沙箱（内置）</div>
+                        <div style="font-size:11px;color:var(--text-muted)">Wasmoon Lua 5.4 / Pyodide</div>
+                      </div>
+                    </div>
+                    <span class="status-pill ok">已就绪</span>
+                  </div>
+                  <div class="card-desc">无需硬件与后端服务，在 Web Worker 中安全试跑积木生成的 Lua / Python 脚本并实时回传打印日志。</div>
+                  <div class="card-footer">
+                    <span style="font-size:11px;color:var(--text-muted)">当前默认执行目标</span>
+                    <button class="btn-outline" data-nav="blocks">返回画布试跑</button>
+                  </div>
+                </div>
+
+                <div class="ui-card">
+                  <div class="card-top">
+                    <div style="display:flex;align-items:center;gap:10px">
+                      <div class="card-icon" style="background:linear-gradient(135deg,#3b82f6,#4f46e5)">MCU</div>
+                      <div>
+                        <div style="font-weight:700">ESP32 / RP2040 串口设备</div>
+                        <div style="font-size:11px;color:var(--text-muted)">Web Serial API · 115200 bps</div>
+                      </div>
+                    </div>
+                    <span class="status-pill idle">未连接</span>
+                  </div>
+                  <div class="card-desc">一键将积木生成的 MicroPython / Lua 脚本下载写入板载文件系统，并同步打开实时串口日志监视。</div>
+                  <div class="card-footer">
+                    <span style="font-size:11px;color:var(--text-muted)">支持自动重启运行</span>
+                    <button class="btn-primary-sm" data-action="toast" data-msg="示意：已准备连接串口并下发脚本">连接并下载</button>
+                  </div>
+                </div>
+
+                <div class="ui-card">
+                  <div class="card-top">
+                    <div style="display:flex;align-items:center;gap:10px">
+                      <div class="card-icon" style="background:linear-gradient(135deg,#8b5cf6,#ec4899)">HOST</div>
+                      <div>
+                        <div style="font-weight:700">外部宿主 / 本地桥接</div>
+                        <div style="font-size:11px;color:var(--text-muted)">WebSocket / 导出脚本目录</div>
+                      </div>
+                    </div>
+                    <span class="status-pill accent">可扩展</span>
+                  </div>
+                  <div class="card-desc">可将脚本推送至外部游戏引擎、工控上位机或本机 Python/Lua 解释器，共享同一套前端积木界面。</div>
+                  <div class="card-footer">
+                    <span style="font-size:11px;color:var(--text-muted)">ws://127.0.0.1:9527</span>
+                    <button class="btn-outline" data-action="toast" data-msg="示意：配置本地桥接地址">配置通道</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      if (state.page === 'extensions') {
+        return `
+          <div class="subpage-wrap">
+            <div class="subpage-inner">
+              <div class="subpage-header">
+                <div>
+                  <div class="subpage-title">扩展积木库与脚本后端管理</div>
+                  <div class="subpage-sub">按需加载不同领域的积木包，同时支持接入新的脚本生成后端（如 JS / Shell / 自定义 DSL）。</div>
+                </div>
+                <button class="btn-outline" data-nav="blocks">← 返回画布</button>
+              </div>
+              <div class="card-grid">
+                ${[
+                  { name: '基础语法与打印模块', tag: '已内置', color: '#0d9488', desc: '包含变量、循环、逻辑、运算、文本、列表、函数以及分级打印日志积木，完整支持 Lua & Python。' },
+                  { name: '硬件 GPIO / 串口通信包', tag: '规划中', color: '#3b82f6', desc: '提供引脚读写、PWM、I2C、串口收发积木，对接设备下载页后自动启用。' },
+                  { name: 'JSON / HTTP 网络请求包', tag: '可扩展', color: '#7c3aed', desc: '用于对接外部 API、Webhook 与数据解析，按目标语言生成对应标准库代码。' }
+                ].map(ex => `
+                  <div class="ui-card">
+                    <div class="card-top">
+                      <div style="display:flex;align-items:center;gap:10px">
+                        <div class="card-icon" style="background:${ex.color}">PKG</div>
+                        <div style="font-weight:700">${ex.name}</div>
+                      </div>
+                      <span class="status-pill ${ex.tag === '已内置' ? 'ok' : 'accent'}">${ex.tag}</span>
+                    </div>
+                    <div class="card-desc">${ex.desc}</div>
+                    <div class="card-footer">
+                      <span style="font-size:11px;color:var(--text-muted)">支持 Lua / Python</span>
+                      <button class="btn-outline" data-action="toast" data-msg="已查看 ${ex.name} 详情">查看积木</button>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      if (state.page === 'projects') {
+        return `
+          <div class="subpage-wrap">
+            <div class="subpage-inner">
+              <div class="subpage-header">
+                <div>
+                  <div class="subpage-title">项目管理与脚本模板</div>
+                  <div class="subpage-sub">工程以统一 JSON（.jimu）持久化，可随时切换 Lua / Python 导出脚本。</div>
+                </div>
+                <button class="btn-primary-sm" data-nav="blocks">+ 新建积木项目</button>
+              </div>
+              <div class="card-grid">
+                ${[
+                  { name: 'demo_logger.jimu', target: 'Lua 5.4 / Python 3', desc: '当前打开 · 循环累加与分级日志打印示例。', active: true },
+                  { name: 'sensor_alarm_template.jimu', target: 'MicroPython / Lua', desc: '模板 · 阈值判断与串口告警输出流程。', active: false },
+                  { name: 'text_formatter.jimu', target: 'Python 3', desc: '模板 · 列表遍历、文本拼接与自定义函数。', active: false }
+                ].map(p => `
+                  <div class="ui-card">
+                    <div class="card-top">
+                      <div style="font-weight:700">${p.name}</div>
+                      <span class="status-pill ${p.active ? 'ok' : 'idle'}">${p.active ? '编辑中' : '模板'}</span>
+                    </div>
+                    <div class="card-desc">${p.desc}</div>
+                    <div class="card-footer">
+                      <span style="font-size:11px;color:var(--text-muted)">${p.target}</span>
+                      <button class="btn-outline" data-nav="blocks">打开编辑</button>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="subpage-wrap">
+          <div class="subpage-inner">
+            <div class="subpage-header">
+              <div>
+                <div class="subpage-title">环境与偏好设置</div>
+                <div class="subpage-sub">配置渲染器风格、缩进规则、WASM 运行时超时保护等全局选项。</div>
+              </div>
+              <button class="btn-outline" data-nav="blocks">← 返回画布</button>
+            </div>
+            <div class="card-grid">
+              <div class="ui-card">
+                <div style="font-weight:700">视觉渲染风格</div>
+                <div class="card-desc">当前采用 MicroBlocks 紧凑圆角风格（基于 Blockly Zelos 定制），支持一键切换浅色/深色主题。</div>
+              </div>
+              <div class="ui-card">
+                <div style="font-weight:700">脚本沙箱安全限制</div>
+                <div class="card-desc">单次执行超时保护：5000ms；遇到死循环时可直接终止 Web Worker，不卡死主界面。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    /* =====================================================================
+       4 Distinct Layout Assemblers
+       ===================================================================== */
+    function renderWorkspaceForLayout() {
+      if (state.page !== 'blocks') {
+        return renderSubPage();
+      }
+
+      // Layout 1 (Recommended): Activity Rail + MicroBlocks Toolbox + Main Canvas + Collapsible Right Code & Bottom Console
+      if (state.layout === 1) {
+        return `
+          <div class="row-main">
+            ${renderToolbox(false)}
+            <div class="col-main">
+              <div class="row-main">
+                ${renderCanvas()}
+                ${state.showCode ? renderCodeInspector() : ''}
+              </div>
+              ${state.showConsole ? renderConsolePanel() : ''}
+            </div>
+          </div>
+        `;
+      }
+
+      // Layout 2: Ultra-Clean Floating MicroBlocks Studio (Full-bleed canvas + Floating Cards)
+      if (state.layout === 2) {
+        return `
+          <div class="floating-shell">
+            ${renderCanvas(state.showCode ? 'float-canvas-pad' : 'float-canvas-only')}
+            ${renderToolbox(true)}
+            ${state.showCode ? `
+              <aside class="float-right-drawer">
+                <div class="pane-header">
+                  <div class="pane-tabs">
+                    <button class="pane-tab ${state.floatDrawerTab === 'code' ? 'active' : ''}" data-ftab="code">
+                      ${ICONS.code}<span>${state.lang === 'lua' ? 'main.lua' : 'main.py'}</span>
+                    </button>
+                    <button class="pane-tab ${state.floatDrawerTab === 'console' ? 'active' : ''}" data-ftab="console">
+                      ${ICONS.terminal}<span>打印日志</span>
+                      <span class="count-badge">${state.logs.length}</span>
+                    </button>
+                  </div>
+                  <button class="btn-ghost" data-action="copy-code" style="padding:3px 6px" title="复制代码">${ICONS.copy}</button>
+                </div>
+                ${state.floatDrawerTab === 'code' ? renderCodeContent() : renderConsoleContent()}
+              </aside>
+            ` : ''}
+          </div>
+        `;
+      }
+
+      // Layout 3: Wide Sidebar + Full-Height Canvas + Right Stacked Code/Console
+      if (state.layout === 3) {
+        return `
+          <div class="row-main">
+            ${renderToolbox(false)}
+            ${renderCanvas()}
+            <aside class="inspector-pane" style="width:360px;flex-basis:360px">
+              <div style="flex:1 1 56%;min-height:0;display:flex;flex-direction:column;overflow:hidden">
+                <div class="pane-header">
+                  <div class="pane-tabs">
+                    <button class="pane-tab active">${ICONS.code}<span>实时脚本 (${state.lang === 'lua' ? 'Lua' : 'Python'})</span></button>
+                  </div>
+                  <button class="btn-ghost" data-action="copy-code" style="padding:3px 6px">${ICONS.copy}</button>
+                </div>
+                ${renderCodeContent()}
+              </div>
+              <div style="flex:1 1 44%;min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--border);overflow:hidden">
+                <div class="pane-header">
+                  <div class="pane-tabs">
+                    <button class="pane-tab active">${ICONS.terminal}<span>打印日志</span><span class="count-badge">${state.logs.length}</span></button>
+                  </div>
+                  <button class="btn-ghost" data-action="clear-log" style="padding:2px 8px;font-size:11.5px">清空</button>
+                </div>
+                ${renderConsoleContent()}
+              </div>
+            </aside>
+          </div>
+        `;
+      }
+
+      // Layout 4: Side-by-Side Split Compare Workbench
+      const showBlocks = state.splitMode !== 'code';
+      const showCode = state.splitMode !== 'blocks';
+      return `
+        <div class="col-main">
+          <div class="split-grid">
+            ${showBlocks ? renderToolbox(false) : ''}
+            ${showBlocks ? renderCanvas() : ''}
+            ${showCode ? `
+              <section class="split-code-pane" style="${!showBlocks ? 'flex:1 1 100%;border-left:none' : ''}">
+                <div class="pane-header">
+                  <div class="pane-tabs">
+                    <button class="pane-tab active">
+                      ${ICONS.code}
+                      <span>生成代码对照 · ${state.lang === 'lua' ? 'main.lua (Lua 5.4)' : 'main.py (Python 3)'}</span>
+                    </button>
+                  </div>
+                  <div style="display:flex;gap:6px">
+                    <button class="btn-ghost" data-action="copy-code">${ICONS.copy}<span>复制</span></button>
+                  </div>
+                </div>
+                ${renderCodeContent()}
+                ${renderConsolePanel('height:175px;flex-basis:175px')}
+              </section>
+            ` : ''}
+          </div>
+          ${!showCode ? renderConsolePanel('height:150px;flex-basis:150px') : ''}
+        </div>
+      `;
+    }
+
+    function render() {
+      // 1. Update meta bar tabs & description strip
+      document.querySelectorAll('.layout-tab').forEach(btn => {
+        btn.classList.toggle('active', Number(btn.dataset.layout) === state.layout);
+      });
+
+      const meta = LAYOUT_META[state.layout];
+      document.getElementById('layoutInfoStrip').innerHTML = `
+        <div class="info-left">
+          <span class="info-tag">${meta.tag}</span>
+          <span class="info-desc" title="${meta.desc}">${meta.desc}</span>
+        </div>
+        <div class="info-pros">
+          ${meta.pros.map(p => `<span class="pro-chip"><span class="pro-dot"></span>${p}</span>`).join('')}
+        </div>
+      `;
+
+      // 2. Render simulated software viewport
+      const leftNav = (state.layout === 1 || state.layout === 4)
+        ? renderActivityRail()
+        : state.layout === 3
+        ? renderWideSidebar()
+        : '';
+
+      document.getElementById('appViewport').innerHTML = `
+        ${renderTopBar()}
+        <div class="app-body">
+          ${leftNav}
+          <div class="col-main">
+            ${renderWorkspaceForLayout()}
+          </div>
+        </div>
+        ${renderStatusBar()}
+      `;
+
+      // Restore search focus if typing
+      const searchEl = document.getElementById('toolboxSearch');
+      if (searchEl) {
+        searchEl.addEventListener('input', (e) => {
+          state.searchQuery = e.target.value;
+          const pos = e.target.selectionStart;
+          render();
+          const next = document.getElementById('toolboxSearch');
+          if (next) {
+            next.focus();
+            next.setSelectionRange(pos, pos);
+          }
+        });
+      }
+    }
+
+    /* =====================================================================
+       Simulated Execution with Step Highlight + Print Logs + Bubble
+       ===================================================================== */
+    let runTimers = [];
+
+    function stopRun() {
+      runTimers.forEach(clearTimeout);
+      runTimers = [];
+      state.running = false;
+      state.executingBlock = null;
+      render();
+    }
+
+    function startSimulatedRun() {
+      if (state.running) {
+        stopRun();
+        showToast('已停止执行');
+        return;
+      }
+
+      if (state.page !== 'blocks') state.page = 'blocks';
+      if (state.layout === 1) state.showConsole = true;
+      if (state.layout === 2) { state.showCode = true; state.floatDrawerTab = 'console'; }
+
+      state.running = true;
+      state.bubbleVisible = false;
+      const now = () => new Date().toTimeString().slice(0, 8);
+      const runtimeName = state.lang === 'lua' ? 'Lua 5.4 (Wasmoon WASM)' : 'Python 3.12 (WASM Worker)';
+
+      state.logs = [
+        { time: now(), lvl: 'info', text: `启动纯前端沙箱：${runtimeName}` }
+      ];
+
+      const steps = [
+        { t: 150,  blk: 'b1' },
+        { t: 380,  blk: 'b2' },
+        { t: 620,  blk: 'b3', log: { lvl: 'info',  text: '任务启动，准备打印 3 条日志...' } },
+        { t: 920,  blk: 'b4' },
+        { t: 1120, blk: 'b5' },
+        { t: 1320, blk: 'b6', log: { lvl: 'print', text: '第 1 轮 => total = 10' } },
+        { t: 1560, blk: 'b5' },
+        { t: 1760, blk: 'b6', log: { lvl: 'print', text: '第 2 轮 => total = 20' } },
+        { t: 2000, blk: 'b5' },
+        { t: 2200, blk: 'b6', log: { lvl: 'print', text: '第 3 轮 => total = 30' } },
+        { t: 2480, blk: 'b7', bubble: true, log: { lvl: 'ok', text: '最终汇总结果: 30 · 执行完成 (耗时 6ms)' } },
+        { t: 2900, done: true }
+      ];
+
+      render();
+
+      steps.forEach(s => {
+        const id = setTimeout(() => {
+          if (s.done) {
+            state.running = false;
+            state.executingBlock = null;
+          } else {
+            state.executingBlock = s.blk;
+            state.selectedBlock = s.blk;
+            if (s.bubble) state.bubbleVisible = true;
+            if (s.log) state.logs.push({ time: now(), ...s.log });
+          }
+          render();
+        }, s.t);
+        runTimers.push(id);
+      });
+    }
+
+    /* =====================================================================
+       Global Event Delegation
+       ===================================================================== */
+    document.getElementById('layoutTabs').addEventListener('click', (e) => {
+      const btn = e.target.closest('.layout-tab');
+      if (!btn) return;
+      state.layout = Number(btn.dataset.layout);
+      render();
+    });
+
+    document.getElementById('themeToggleBtn').addEventListener('click', () => {
+      state.theme = state.theme === 'light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', state.theme);
+      document.getElementById('themeIcon').textContent = state.theme === 'light' ? '🌙' : '☀️';
+      document.getElementById('themeLabel').textContent = state.theme === 'light' ? '深色主题' : '浅色主题';
+    });
+
+    document.getElementById('appViewport').addEventListener('click', (e) => {
+      const nav = e.target.closest('[data-nav]');
+      if (nav) {
+        state.page = nav.dataset.nav;
+        render();
+        return;
+      }
+
+      const lang = e.target.closest('[data-lang]');
+      if (lang) {
+        state.lang = lang.dataset.lang;
+        showToast(`已切换目标后端为 ${state.lang === 'lua' ? 'Lua 5.4' : 'Python 3'}`);
+        render();
+        return;
+      }
+
+      const cat = e.target.closest('[data-cat]');
+      if (cat) {
+        state.activeCat = cat.dataset.cat;
+        state.searchQuery = '';
+        render();
+        return;
+      }
+
+      const split = e.target.closest('[data-split]');
+      if (split) {
+        state.splitMode = split.dataset.split;
+        render();
+        return;
+      }
+
+      const ftab = e.target.closest('[data-ftab]');
+      if (ftab) {
+        state.floatDrawerTab = ftab.dataset.ftab;
+        render();
+        return;
+      }
+
+      const blk = e.target.closest('[data-block]');
+      if (blk) {
+        state.selectedBlock = blk.dataset.block;
+        render();
+        return;
+      }
+
+      const act = e.target.closest('[data-action]');
+      if (act) {
+        const action = act.dataset.action;
+        if (action === 'run') startSimulatedRun();
+        else if (action === 'toggle-code') { state.showCode = !state.showCode; render(); }
+        else if (action === 'toggle-console') { state.showConsole = !state.showConsole; render(); }
+        else if (action === 'toggle-wide') { state.wideCollapsed = !state.wideCollapsed; render(); }
+        else if (action === 'clear-log') { state.logs = []; render(); }
+        else if (action === 'zoom-in') { state.zoom = Math.min(130, state.zoom + 10); render(); }
+        else if (action === 'zoom-out') { state.zoom = Math.max(70, state.zoom - 10); render(); }
+        else if (action === 'zoom-reset') { state.zoom = 100; render(); }
+        else if (action === 'copy-code') { showToast(`已复制 ${state.lang === 'lua' ? 'main.lua' : 'main.py'} 到剪贴板`); }
+        else if (action === 'export') { showToast(`已导出 demo_logger.${state.lang === 'lua' ? 'lua' : 'py'}`); }
+        else if (action === 'check-tip') { showToast('静态校验通过：无悬空积木、无跨语言不兼容块'); }
+        else if (action === 'toast') { showToast(act.dataset.msg || '操作完成'); }
+      }
+    });
+
+    // Initial render
+    render();
+  </script>
+</body>
+</html>
