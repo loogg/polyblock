@@ -1,7 +1,19 @@
-import { AlertTriangle, CheckCircle2, Code2, Copy, Eye } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Code2,
+  Copy,
+  Cpu,
+  Eye,
+  RotateCcw,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
 import type { GeneratedCodeResult } from '../core/backends/types';
+import type {
+  VirtualBoardInputs,
+  VirtualBoardState,
+} from '../core/extensions/types';
 import { highlightCodeLine } from '../core/highlight';
 import type { ScriptLanguageId } from '../types/project';
 
@@ -15,6 +27,11 @@ interface CodeInspectorProps {
   breakpoints: string[];
   variables: Record<string, string>;
   errorLine: number | null;
+  showVirtualBoard: boolean;
+  virtualBoard: VirtualBoardState;
+  mockInputs: VirtualBoardInputs;
+  onUpdateMockInputs: (patch: Partial<VirtualBoardInputs>) => void;
+  onResetVirtualBoard: () => void;
   onSelectBlockFromLine: (blockId: string) => void;
   onToggleBreakpoint: (blockId: string) => void;
   onClearBreakpoints: () => void;
@@ -31,16 +48,30 @@ export function CodeInspector({
   breakpoints,
   variables,
   errorLine,
+  showVirtualBoard,
+  virtualBoard,
+  mockInputs,
+  onUpdateMockInputs,
+  onResetVirtualBoard,
   onSelectBlockFromLine,
   onToggleBreakpoint,
   onClearBreakpoints,
   onCopyCode,
 }: CodeInspectorProps) {
-  const [activeTab, setActiveTab] = useState<'code' | 'vars' | 'diagnostics'>('code');
+  const [activeTab, setActiveTab] = useState<
+    'code' | 'vars' | 'board' | 'diagnostics'
+  >('code');
   const codeScrollRef = useRef<HTMLDivElement | null>(null);
   const backend = backendRegistry.get(language);
   const displayFileName = `${scriptName}.${backend.extension}`;
   const breakpointSet = useMemo(() => new Set(breakpoints), [breakpoints]);
+
+  // Fall back to code tab if virtual board pack gets disabled
+  useEffect(() => {
+    if (!showVirtualBoard && activeTab === 'board') {
+      setActiveTab('code');
+    }
+  }, [showVirtualBoard, activeTab]);
 
   const lines = useMemo(() => generated.code.split('\n'), [generated.code]);
 
@@ -52,14 +83,15 @@ export function CodeInspector({
     ? generated.sourceMap[executingBlockId]
     : undefined;
 
-  // Map each line to the start-line block that can hold a breakpoint
   const lineBreakpointBlock = useMemo(() => {
     const map: Record<number, string> = {};
     for (const [blockId, range] of Object.entries(generated.sourceMap)) {
-      // Skip outer start-hat block so breakpoint targets actual executable statements
       if (generated.lineToBlock[range.startLine] === blockId) {
         const lineText = (lines[range.startLine - 1] ?? '').trim();
-        if (!lineText.startsWith('-- 当程序启动') && !lineText.startsWith('# 当程序启动')) {
+        if (
+          !lineText.startsWith('-- 当程序启动') &&
+          !lineText.startsWith('# 当程序启动')
+        ) {
           map[range.startLine] = blockId;
         }
       }
@@ -67,7 +99,6 @@ export function CodeInspector({
     return map;
   }, [generated.sourceMap, generated.lineToBlock, lines]);
 
-  // Merged variable list: live runtime values + declared workspace variables
   const displayVariables = useMemo(() => {
     const merged: Array<{ name: string; value: string; live: boolean }> = [];
     const seen = new Set<string>();
@@ -87,12 +118,8 @@ export function CodeInspector({
     return merged;
   }, [generated.variableNames, variables]);
 
-  const liveVarEntries = useMemo(
-    () => Object.entries(variables),
-    [variables],
-  );
+  const liveVarEntries = useMemo(() => Object.entries(variables), [variables]);
 
-  // Follow executing block line smoothly during stepping/playback
   useEffect(() => {
     if (activeTab !== 'code' || !codeScrollRef.current) return;
     const targetLine = execRange?.startLine ?? activeRange?.startLine;
@@ -103,8 +130,10 @@ export function CodeInspector({
     rowEl?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [activeTab, execRange, activeRange]);
 
+  const rgbActive = virtualBoard.rgb !== '#1e293b' && virtualBoard.rgb !== '#334155';
+
   return (
-    <aside className="inspector-pane" aria-label="实时代码、变量与校验面板">
+    <aside className="inspector-pane" aria-label="实时代码、模拟外设、变量与校验面板">
       <div className="pane-header">
         <div className="pane-tabs">
           <button
@@ -113,15 +142,45 @@ export function CodeInspector({
             onClick={() => setActiveTab('code')}
           >
             <Code2 size={14} style={{ flexShrink: 0 }} />
-            <span className="code-tab-filename" title={displayFileName}>
+            <span
+              className="code-tab-filename"
+              style={showVirtualBoard ? { maxWidth: 70 } : undefined}
+              title={displayFileName}
+            >
               {displayFileName}
             </span>
             {breakpoints.length > 0 && (
-              <span className="count-badge err" title={`当前已设 ${breakpoints.length} 个断点`}>
+              <span
+                className="count-badge err"
+                title={`当前已设 ${breakpoints.length} 个断点`}
+              >
                 ● {breakpoints.length}
               </span>
             )}
           </button>
+
+          {showVirtualBoard && (
+            <button
+              type="button"
+              className={`pane-tab ${activeTab === 'board' ? 'active' : ''}`}
+              onClick={() => setActiveTab('board')}
+              title="虚拟硬件外设模拟面板"
+            >
+              <Cpu size={13} />
+              <span>模拟</span>
+              {virtualBoard.led && (
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    background: '#22c55e',
+                    display: 'inline-block',
+                  }}
+                />
+              )}
+            </button>
+          )}
 
           <button
             type="button"
@@ -158,7 +217,7 @@ export function CodeInspector({
               className="btn-ghost"
               onClick={onClearBreakpoints}
               title="清除全部断点"
-              style={{ padding: '2px 6px', fontSize: 11 }}
+              style={{ padding: '2px 5px', fontSize: 11 }}
             >
               清断点
             </button>
@@ -193,7 +252,8 @@ export function CodeInspector({
               const isError = errorLine === lineNum;
               const mappedBlockId = generated.lineToBlock[lineNum];
               const bpBlockId = lineBreakpointBlock[lineNum];
-              const hasBp = bpBlockId !== undefined && breakpointSet.has(bpBlockId);
+              const hasBp =
+                bpBlockId !== undefined && breakpointSet.has(bpBlockId);
 
               const lineClass = isError
                 ? 'error-line'
@@ -280,7 +340,156 @@ export function CodeInspector({
               </div>
             </div>
           )}
+
+          {showVirtualBoard && !isPaused && (
+            <div
+              className="vboard-mini-strip"
+              onClick={() => setActiveTab('board')}
+              title="点击展开虚拟外设模拟面板"
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span
+                    className={`vboard-led ${virtualBoard.led ? 'on' : ''}`}
+                    style={{ width: 9, height: 9 }}
+                  />
+                  LED
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span
+                    className="vboard-rgb"
+                    style={{
+                      width: 10,
+                      height: 10,
+                      background: virtualBoard.rgb,
+                      boxShadow: rgbActive ? `0 0 8px ${virtualBoard.rgb}` : 'none',
+                    }}
+                  />
+                  RGB
+                </span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>
+                  {mockInputs.temp}°C
+                </span>
+              </div>
+              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                打开模拟面板 →
+              </span>
+            </div>
+          )}
         </>
+      )}
+
+      {activeTab === 'board' && showVirtualBoard && (
+        <div className="vboard-wrap">
+          <div className="vboard-pcb">
+            <div className="vboard-top-row">
+              <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4 }}>
+                POLYBLOCK VIRTUAL BOARD v1
+              </span>
+              <button
+                type="button"
+                onClick={onResetVirtualBoard}
+                title="复位虚拟外设输出"
+                style={{
+                  color: '#94a3b8',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 11,
+                }}
+              >
+                <RotateCcw size={11} />
+                <span>复位</span>
+              </button>
+            </div>
+
+            <div className="vboard-indicators">
+              <div className="vboard-lamp-item">
+                <span
+                  className={`vboard-led ${virtualBoard.led ? 'on' : ''}`}
+                  aria-label={virtualBoard.led ? 'LED 已点亮' : 'LED 已熄灭'}
+                />
+                <span>板载 LED：{virtualBoard.led ? 'ON' : 'OFF'}</span>
+              </div>
+
+              <div className="vboard-lamp-item">
+                <span
+                  className="vboard-rgb"
+                  style={{
+                    background: virtualBoard.rgb,
+                    boxShadow: rgbActive
+                      ? `0 0 14px ${virtualBoard.rgb}, 0 0 4px #ffffff`
+                      : 'none',
+                  }}
+                />
+                <span>RGB</span>
+              </div>
+            </div>
+
+            <div className="vboard-oled" aria-label="虚拟 OLED 显示屏">
+              {virtualBoard.oledLines.length === 0 ? (
+                <span style={{ opacity: 0.45 }}>[OLED 已清空]</span>
+              ) : (
+                virtualBoard.oledLines.map((line, i) => (
+                  <div key={i}>{line}</div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="vboard-control-card">
+            <div className="vboard-slider-head">
+              <span>模拟温度传感器 (board.read_temp)</span>
+              <span className="vboard-temp-val">{mockInputs.temp}°C</span>
+            </div>
+            <input
+              type="range"
+              aria-label="模拟温度传感器滑块"
+              min={15}
+              max={95}
+              step={1}
+              value={mockInputs.temp}
+              onChange={(e) =>
+                onUpdateMockInputs({ temp: Number(e.target.value) })
+              }
+              style={{ width: '100%', accentColor: 'var(--accent)' }}
+            />
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: 10.5,
+                color: 'var(--text-muted)',
+              }}
+            >
+              <span>15°C (低温)</span>
+              <span>35°C (演示阈值)</span>
+              <span>95°C (高温)</span>
+            </div>
+          </div>
+
+          <div className="vboard-control-card">
+            <div className="vboard-slider-head">
+              <span>模拟板载按键 (board.is_pressed)</span>
+            </div>
+            <div className="vboard-btn-row">
+              <button
+                type="button"
+                className={`vboard-key-btn ${mockInputs.btnA ? 'pressed' : ''}`}
+                onClick={() => onUpdateMockInputs({ btnA: !mockInputs.btnA })}
+              >
+                按键 A · {mockInputs.btnA ? '按下中' : '释放'}
+              </button>
+              <button
+                type="button"
+                className={`vboard-key-btn ${mockInputs.btnB ? 'pressed' : ''}`}
+                onClick={() => onUpdateMockInputs({ btnB: !mockInputs.btnB })}
+              >
+                按键 B · {mockInputs.btnB ? '按下中' : '释放'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {activeTab === 'vars' && (

@@ -11,6 +11,7 @@ interface WorkerReply {
     | 'PAUSED'
     | 'RESUMED'
     | 'WAITING'
+    | 'DEVICE_EVENT'
     | 'DONE'
     | 'ERROR';
   runId: string;
@@ -19,6 +20,8 @@ interface WorkerReply {
   vars?: Record<string, string>;
   reason?: 'breakpoint' | 'step';
   active?: boolean;
+  kind?: string;
+  value?: unknown;
   message?: string;
   durationMs?: number;
 }
@@ -155,6 +158,11 @@ export class MicroPythonWasmRunner implements ScriptRunner {
           return;
         }
 
+        if (msg.type === 'DEVICE_EVENT' && msg.kind) {
+          callbacks.onDeviceEvent?.(msg.kind, msg.value);
+          return;
+        }
+
         if (msg.type === 'DONE') {
           this.cleanupRun();
           callbacks.onStatusChange?.('ready');
@@ -206,6 +214,8 @@ export class MicroPythonWasmRunner implements ScriptRunner {
         breakpoints: request.breakpoints ?? [],
         stepDelayMs: request.stepDelayMs ?? 0,
         startInStepMode: request.startInStepMode ?? false,
+        mockModules: request.mockModules ?? [],
+        mockInputs: request.mockInputs ?? {},
       });
     });
   }
@@ -240,6 +250,15 @@ export class MicroPythonWasmRunner implements ScriptRunner {
       type: 'SET_SPEED',
       runId: this.activeRunId,
       stepDelayMs,
+    });
+  }
+
+  updateMockInputs(mockInputs: Record<string, unknown>): void {
+    if (!this.worker || !this.activeRunId) return;
+    this.worker.postMessage({
+      type: 'UPDATE_MOCK_INPUTS',
+      runId: this.activeRunId,
+      mockInputs,
     });
   }
 

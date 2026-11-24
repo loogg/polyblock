@@ -7,6 +7,7 @@ import {
 let cachedWasmUrl: string | null = null;
 let factory: LuaFactory | null = null;
 let activeSession: WorkerDebugSession | null = null;
+let currentMockInputs: Record<string, unknown> = {};
 
 function formatLuaArg(val: unknown): string {
   if (val === null || val === undefined) return 'nil';
@@ -112,10 +113,24 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     }
     return;
   }
+  if (msg.type === 'UPDATE_MOCK_INPUTS') {
+    currentMockInputs = { ...currentMockInputs, ...msg.mockInputs };
+    return;
+  }
 
   if (msg.type !== 'RUN') return;
 
-  const { runId, code, wasmUrl, breakpoints, stepDelayMs, startInStepMode } = msg;
+  const {
+    runId,
+    code,
+    wasmUrl,
+    breakpoints,
+    stepDelayMs,
+    startInStepMode,
+    mockModules,
+    mockInputs,
+  } = msg;
+  currentMockInputs = { ...(mockInputs ?? {}) };
   const startedAt = performance.now();
   const session = new WorkerDebugSession(
     { runId, breakpoints, stepDelayMs, startInStepMode },
@@ -151,7 +166,34 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
         session.setFinalVars(varsJson);
       });
 
+      engine.global.set('__poly_device_emit', (kind: string, value: unknown) => {
+        self.postMessage({ type: 'DEVICE_EVENT', runId, kind: String(kind), value });
+      });
+
+      engine.global.set('__poly_mock_input', (key: string) => {
+        return currentMockInputs[String(key)];
+      });
+
+      engine.global.set('__poly_now_ms', () => {
+        return performance.now();
+      });
+
       await engine.doString(`math.randomseed(${seed})\n${LUA_BOOTSTRAP}`);
+
+      // Mount sandbox extension mock modules into Lua's package.preload
+      for (const mod of mockModules ?? []) {
+        if (!mod.luaSource || !mod.moduleName) continue;
+        const safeModName = JSON.stringify(mod.moduleName);
+        const safeSrc = JSON.stringify(mod.luaSource);
+        await engine.doString(`
+          package.preload[${safeModName}] = function()
+            local chunk, err = load(${safeSrc}, "@" .. ${safeModName})
+            if not chunk then error(err) end
+            return chunk()
+          end
+        `);
+      }
+
       await engine.doString(code);
 
       self.postMessage({

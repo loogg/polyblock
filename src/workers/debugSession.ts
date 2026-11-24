@@ -5,6 +5,12 @@ export interface DebugRunConfig {
   startInStepMode?: boolean;
 }
 
+export interface WorkerMockModule {
+  moduleName: string;
+  luaSource?: string;
+  pythonSource?: string;
+}
+
 export type WorkerControlMessage =
   | {
       type: 'RUN';
@@ -14,12 +20,19 @@ export type WorkerControlMessage =
       breakpoints: string[];
       stepDelayMs: number;
       startInStepMode?: boolean;
+      mockModules?: WorkerMockModule[];
+      mockInputs?: Record<string, unknown>;
     }
   | { type: 'RESUME'; runId: string }
   | { type: 'STEP_NEXT'; runId: string }
   | { type: 'PAUSE'; runId: string }
   | { type: 'SET_BREAKPOINTS'; runId: string; breakpoints: string[] }
-  | { type: 'SET_SPEED'; runId: string; stepDelayMs: number };
+  | { type: 'SET_SPEED'; runId: string; stepDelayMs: number }
+  | {
+      type: 'UPDATE_MOCK_INPUTS';
+      runId: string;
+      mockInputs: Record<string, unknown>;
+    };
 
 export function parseVarsJson(raw: unknown): Record<string, string> {
   if (typeof raw !== 'string' || !raw.trim()) return {};

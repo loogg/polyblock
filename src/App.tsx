@@ -1,5 +1,5 @@
 import type * as Blockly from 'blockly';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityRail } from './components/ActivityRail';
 import {
   BlocklyWorkbench,
@@ -16,6 +16,11 @@ import { StatusBar } from './components/StatusBar';
 import { TopBar } from './components/TopBar';
 import { backendRegistry } from './core/backends/registry';
 import type { GeneratedCodeResult } from './core/backends/types';
+import { extensionRegistry } from './core/extensions/registry';
+import type {
+  VirtualBoardInputs,
+  VirtualBoardState,
+} from './core/extensions/types';
 import {
   addScriptToProject,
   deleteProjectFromStore,
@@ -51,6 +56,12 @@ const SPEED_DELAY_MS: Record<ExecutionSpeedId, number> = {
   fast: 0,
   normal: 180,
   slow: 450,
+};
+
+const DEFAULT_VIRTUAL_BOARD: VirtualBoardState = {
+  led: false,
+  rgb: '#1e293b',
+  oledLines: ['PolyBlock OLED', '等待脚本输出...'],
 };
 
 const VALID_PAGES: PageId[] = [
@@ -115,6 +126,9 @@ function triggerFileDownload(filename: string, content: string, mime: string) {
 }
 
 export function App() {
+  // Ensure built-in & saved custom extension packs are registered before Blockly loads
+  extensionRegistry.ensureInitialized();
+
   const initialStoreRef = useRef<WorkspaceStoreState>(loadWorkspaceStore());
   const workbenchRef = useRef<BlocklyWorkbenchHandle | null>(null);
 
@@ -122,6 +136,7 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings>(loadSavedSettings);
   const [activePage, setActivePage] = useState<PageId>(readPageFromHash);
   const [isDirty, setIsDirty] = useState<boolean>(false);
+  const [extRevision, setExtRevision] = useState<number>(0);
 
   const [showCode, setShowCode] = useState<boolean>(true);
   const [showConsole, setShowConsole] = useState<boolean>(true);
@@ -129,6 +144,15 @@ export function App() {
   const [executingBlockId, setExecutingBlockId] = useState<string | null>(null);
   const [liveVariables, setLiveVariables] = useState<Record<string, string>>({});
   const [errorLine, setErrorLine] = useState<number | null>(null);
+
+  const [virtualBoard, setVirtualBoard] = useState<VirtualBoardState>(
+    DEFAULT_VIRTUAL_BOARD,
+  );
+  const [mockInputs, setMockInputs] = useState<VirtualBoardInputs>({
+    temp: 28,
+    btnA: false,
+    btnB: false,
+  });
 
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus>('ready');
   const [lastDurationMs, setLastDurationMs] = useState<number | null>(null);
@@ -138,7 +162,7 @@ export function App() {
       timestamp: formatNowTime(),
       level: 'system',
       message:
-        'PolyBlock 多脚本工程工作台就绪：顶部可切换项目，画布标签栏可自由管理多个积木脚本并独立试跑与调试。',
+        'PolyBlock 多脚本工程工作台就绪：支持多项目与多脚本标签、扩展积木包、虚拟硬件模拟与双语言断点调试。',
     },
   ]);
 
@@ -147,6 +171,24 @@ export function App() {
   const language = activeProject.language;
   const breakpoints = activeScript.breakpoints;
   const activeBackend = backendRegistry.get(language);
+
+  const allExtensionPacks = useMemo(
+    () => extensionRegistry.listAll(),
+    [extRevision],
+  );
+
+  const extraCategories = useMemo(
+    () => extensionRegistry.toCategorySpecs(activeProject.enabledExtensions),
+    [activeProject.enabledExtensions, extRevision],
+  );
+
+  const showVirtualBoard = useMemo(
+    () =>
+      extensionRegistry
+        .getEnabledPacks(activeProject.enabledExtensions)
+        .some((p) => p.hasVirtualBoardUi),
+    [activeProject.enabledExtensions, extRevision],
+  );
 
   const [generated, setGenerated] = useState<GeneratedCodeResult>({
     language,
@@ -164,16 +206,17 @@ export function App() {
   const storeRef = useRef<WorkspaceStoreState>(store);
   storeRef.current = store;
 
-  // Keep refs synchronized for async callbacks without stale closures
   const activeProjectIdRef = useRef<string>(activeProject.id);
   const activeScriptIdRef = useRef<string>(activeScript.id);
   const languageRef = useRef<ScriptLanguageId>(language);
   const breakpointsRef = useRef<string[]>(breakpoints);
+  const mockInputsRef = useRef<VirtualBoardInputs>(mockInputs);
 
   activeProjectIdRef.current = activeProject.id;
   activeScriptIdRef.current = activeScript.id;
   languageRef.current = language;
   breakpointsRef.current = breakpoints;
+  mockInputsRef.current = mockInputs;
 
   const notify = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -198,12 +241,10 @@ export function App() {
     [],
   );
 
-  // Persist WorkspaceStore v2 on every update
   useEffect(() => {
     saveWorkspaceStore(store);
   }, [store]);
 
-  // Sync theme attribute & persist settings
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', settings.theme);
     try {
@@ -213,7 +254,6 @@ export function App() {
     }
   }, [settings]);
 
-  // Hash routing sync (GitHub Pages safe)
   useEffect(() => {
     const onHashChange = () => setActivePage(readPageFromHash());
     window.addEventListener('hashchange', onHashChange);
@@ -228,14 +268,12 @@ export function App() {
     }
   }, []);
 
-  // Dispose workers on unmount
   useEffect(() => {
     return () => {
       runnerManager.disposeAll();
     };
   }, []);
 
-  // Resize Blockly SVG cleanly when panels toggle
   useEffect(() => {
     const id = requestAnimationFrame(() => workbenchRef.current?.resize());
     return () => cancelAnimationFrame(id);
@@ -252,7 +290,6 @@ export function App() {
     [],
   );
 
-  /** Snapshot current Blockly canvas into a given store before switching script/project. */
   const flushActiveCanvasIntoStore = useCallback(
     (baseStore: WorkspaceStoreState): WorkspaceStoreState => {
       const ws = workbenchRef.current?.getWorkspace();
@@ -283,7 +320,6 @@ export function App() {
     [],
   );
 
-  /** Load target project+script workspace into Blockly and refresh code inspector cleanly. */
   const mountScriptIntoCanvas = useCallback(
     (nextStore: WorkspaceStoreState) => {
       const nextProj = getActiveProject(nextStore);
@@ -351,6 +387,108 @@ export function App() {
   );
 
   /* ========================================================================
+     Extension Pack Operations (Project-Scoped + Custom .polyext.json Import)
+     ======================================================================== */
+  const handleToggleExtension = useCallback(
+    (packId: string) => {
+      const pack = extensionRegistry.get(packId);
+      if (!pack) return;
+      setStore((prev) => {
+        const proj = getActiveProject(prev);
+        const exists = proj.enabledExtensions.includes(packId);
+        const nextExts = exists
+          ? proj.enabledExtensions.filter((id) => id !== packId)
+          : [...proj.enabledExtensions, packId];
+        notify(
+          exists
+            ? `已从当前项目停用「${pack.name}」`
+            : `已为当前项目启用「${pack.name}」，左侧分类栏新增「${pack.categoryLabel}」`,
+        );
+        return updateProjectById(prev, proj.id, (p) => ({
+          ...p,
+          enabledExtensions: nextExts,
+          updatedAt: new Date().toISOString(),
+        }));
+      });
+    },
+    [notify],
+  );
+
+  const handleImportExtensionJson = useCallback(
+    (raw: unknown) => {
+      try {
+        const imported = extensionRegistry.importCustomPack(raw);
+        setExtRevision((r) => r + 1);
+        // Auto-enable newly imported pack on the active project
+        setStore((prev) =>
+          updateProjectById(prev, activeProjectIdRef.current, (p) => ({
+            ...p,
+            enabledExtensions: p.enabledExtensions.includes(imported.id)
+              ? p.enabledExtensions
+              : [...p.enabledExtensions, imported.id],
+            updatedAt: new Date().toISOString(),
+          })),
+        );
+        notify(
+          `已导入并启用自定义扩展包「${imported.name}」（${imported.blocks.length} 个积木）`,
+        );
+      } catch (err) {
+        notify(
+          `扩展包校验失败：${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+    [notify],
+  );
+
+  const handleRemoveCustomPack = useCallback(
+    (packId: string) => {
+      const ok = extensionRegistry.removeCustomPack(packId);
+      if (!ok) return;
+      setExtRevision((r) => r + 1);
+      setStore((prev) => ({
+        ...prev,
+        projects: prev.projects.map((p) => ({
+          ...p,
+          enabledExtensions: p.enabledExtensions.filter((id) => id !== packId),
+        })),
+      }));
+      notify('已删除自定义扩展包');
+    },
+    [notify],
+  );
+
+  const handleUpdateMockInputs = useCallback(
+    (patch: Partial<VirtualBoardInputs>) => {
+      setMockInputs((prev) => {
+        const next = { ...prev, ...patch };
+        runnerManager.updateActiveMockInputs(next as unknown as Record<string, unknown>);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleDeviceEvent = useCallback((kind: string, value: unknown) => {
+    setVirtualBoard((prev) => {
+      if (kind === 'led') {
+        return { ...prev, led: Boolean(value) };
+      }
+      if (kind === 'rgb') {
+        return { ...prev, rgb: String(value || '#1e293b') };
+      }
+      if (kind === 'oled_clear') {
+        return { ...prev, oledLines: [] };
+      }
+      if (kind === 'oled_show') {
+        const nextLines = [...prev.oledLines, String(value)].slice(-4);
+        return { ...prev, oledLines: nextLines };
+      }
+      return prev;
+    });
+  }, []);
+
+  /* ========================================================================
      Multi-Script Tab Operations
      ======================================================================== */
   const handleSelectScript = useCallback(
@@ -377,19 +515,18 @@ export function App() {
     setStore(nextStore);
     mountScriptIntoCanvas(nextStore);
     const added = getActiveScript(getActiveProject(nextStore));
-    notify(`已新建脚本 ${added.name}.${backendRegistry.get(languageRef.current).extension}`);
+    notify(
+      `已新建脚本 ${added.name}.${backendRegistry.get(languageRef.current).extension}`,
+    );
   }, [stopIfRunning, flushActiveCanvasIntoStore, mountScriptIntoCanvas, notify]);
 
-  const handleRenameScript = useCallback(
-    (scriptId: string, nextName: string) => {
-      setStore((prev) =>
-        updateProjectById(prev, activeProjectIdRef.current, (p) =>
-          renameScriptInProject(p, scriptId, nextName),
-        ),
-      );
-    },
-    [],
-  );
+  const handleRenameScript = useCallback((scriptId: string, nextName: string) => {
+    setStore((prev) =>
+      updateProjectById(prev, activeProjectIdRef.current, (p) =>
+        renameScriptInProject(p, scriptId, nextName),
+      ),
+    );
+  }, []);
 
   const handleDuplicateScript = useCallback(
     (scriptId: string) => {
@@ -443,7 +580,7 @@ export function App() {
   );
 
   /* ========================================================================
-     Multi-Project Operations (Project as Root)
+     Multi-Project Operations
      ======================================================================== */
   const handleSelectProject = useCallback(
     (projectId: string) => {
@@ -488,25 +625,22 @@ export function App() {
     handleCreateFromTemplate('blank_project');
   }, [handleCreateFromTemplate]);
 
-  const handleRenameProject = useCallback(
-    (projectId: string, nextName: string) => {
-      setStore((prev) => {
-        const target = prev.projects.find((p) => p.id === projectId);
-        if (!target) return prev;
-        const unique = makeUniqueProjectName(
-          nextName,
-          prev.projects.map((p) => p.name),
-          target.name,
-        );
-        return updateProjectById(prev, projectId, (p) => ({
-          ...p,
-          name: unique,
-          updatedAt: new Date().toISOString(),
-        }));
-      });
-    },
-    [],
-  );
+  const handleRenameProject = useCallback((projectId: string, nextName: string) => {
+    setStore((prev) => {
+      const target = prev.projects.find((p) => p.id === projectId);
+      if (!target) return prev;
+      const unique = makeUniqueProjectName(
+        nextName,
+        prev.projects.map((p) => p.name),
+        target.name,
+      );
+      return updateProjectById(prev, projectId, (p) => ({
+        ...p,
+        name: unique,
+        updatedAt: new Date().toISOString(),
+      }));
+    });
+  }, []);
 
   const handleDuplicateProject = useCallback(
     (projectId: string) => {
@@ -544,8 +678,9 @@ export function App() {
       const flushed = flushActiveCanvasIntoStore(storeRef.current);
       setStore(flushed);
       const target =
-        flushed.projects.find((p) => p.id === (projectId ?? activeProjectIdRef.current)) ??
-        getActiveProject(flushed);
+        flushed.projects.find(
+          (p) => p.id === (projectId ?? activeProjectIdRef.current),
+        ) ?? getActiveProject(flushed);
       const safeName = target.name.replace(/[\\/:*?"<>|]+/g, '_');
       const fileName = `${safeName || 'project'}.polyblock.json`;
       triggerFileDownload(
@@ -588,13 +723,14 @@ export function App() {
     };
     setStore(freshStore);
     mountScriptIntoCanvas(freshStore);
+    setVirtualBoard(DEFAULT_VIRTUAL_BOARD);
     setIsDirty(false);
     navigateTo('blocks');
     notify('已恢复默认多脚本示例项目');
   }, [stopIfRunning, mountScriptIntoCanvas, navigateTo, notify]);
 
   /* ========================================================================
-     Language, Breakpoints & Execution (1A Project Language + 2A Active Script)
+     Language, Breakpoints & Execution
      ======================================================================== */
   const handleSelectLanguage = useCallback(
     (nextLang: ScriptLanguageId) => {
@@ -674,6 +810,12 @@ export function App() {
       const runner = runnerManager.getForLanguage(language);
       runnerManager.setActive(runner);
 
+      // Mount sandbox mocks for ALL registered packs (so scripts run cleanly even if a pack was toggled)
+      const allMocks = extensionRegistry
+        .listAll()
+        .map((p) => p.sandboxMock)
+        .filter((m): m is NonNullable<typeof m> => Boolean(m));
+
       const speedDelay = SPEED_DELAY_MS[settings.executionSpeed];
       setLogs([
         {
@@ -699,6 +841,8 @@ export function App() {
           breakpoints: breakpointsRef.current,
           stepDelayMs: speedDelay,
           startInStepMode,
+          mockModules: allMocks,
+          mockInputs: mockInputsRef.current as unknown as Record<string, unknown>,
         },
         {
           onClear: () => setLogs([]),
@@ -725,6 +869,7 @@ export function App() {
               );
             }
           },
+          onDeviceEvent: handleDeviceEvent,
           onStatusChange: (status) => setRunnerStatus(status),
         },
       );
@@ -759,6 +904,7 @@ export function App() {
       activeScript.name,
       generated,
       appendLog,
+      handleDeviceEvent,
     ],
   );
 
@@ -868,9 +1014,11 @@ export function App() {
                   executingBlockId={executingBlockId}
                   isPaused={runnerStatus === 'paused'}
                   breakpoints={breakpoints}
+                  extraCategories={extraCategories}
                   onWorkspaceChange={handleWorkspaceChange}
                   onSelectBlock={setSelectedBlockId}
                   onToggleBreakpoint={handleToggleBreakpoint}
+                  onOpenExtensionsPage={() => navigateTo('extensions')}
                 />
               </div>
 
@@ -885,6 +1033,11 @@ export function App() {
                   breakpoints={breakpoints}
                   variables={liveVariables}
                   errorLine={errorLine}
+                  showVirtualBoard={showVirtualBoard}
+                  virtualBoard={virtualBoard}
+                  mockInputs={mockInputs}
+                  onUpdateMockInputs={handleUpdateMockInputs}
+                  onResetVirtualBoard={() => setVirtualBoard(DEFAULT_VIRTUAL_BOARD)}
                   onSelectBlockFromLine={handleFocusBlock}
                   onToggleBreakpoint={handleToggleBreakpoint}
                   onClearBreakpoints={handleClearBreakpoints}
@@ -929,7 +1082,16 @@ export function App() {
           )}
 
           {activePage === 'extensions' && (
-            <ExtensionsPage onReturnToBlocks={() => navigateTo('blocks')} />
+            <ExtensionsPage
+              activeProjectName={activeProject.name}
+              allPacks={allExtensionPacks}
+              enabledExtensionIds={activeProject.enabledExtensions}
+              onToggleExtension={handleToggleExtension}
+              onImportExtensionJson={handleImportExtensionJson}
+              onRemoveCustomPack={handleRemoveCustomPack}
+              onReturnToBlocks={() => navigateTo('blocks')}
+              onNotify={notify}
+            />
           )}
 
           {activePage === 'settings' && (

@@ -15,6 +15,7 @@ export interface MultiScriptProjectTemplate {
   name: string;
   description: string;
   language: ScriptLanguageId;
+  enabledExtensions?: string[];
   scripts: Array<{
     name: string;
     isEntry?: boolean;
@@ -98,6 +99,283 @@ export function makeUniqueProjectName(
 const tplById = (id: string) =>
   PROJECT_TEMPLATES.find((t) => t.id === id) ?? PROJECT_TEMPLATES[0];
 
+const VIRTUAL_BOARD_LED_WS: Record<string, unknown> = {
+  blocks: {
+    languageVersion: 0,
+    blocks: [
+      {
+        type: 'poly_on_start',
+        id: 'vb_start_1',
+        x: 36,
+        y: 28,
+        inputs: {
+          BODY: {
+            block: {
+              type: 'ext_board_oled_clear',
+              id: 'vb_oled_clr',
+              next: {
+                block: {
+                  type: 'ext_board_oled',
+                  id: 'vb_oled_1',
+                  inputs: {
+                    TEXT: {
+                      block: {
+                        type: 'text',
+                        id: 'vb_oled_t1',
+                        fields: { TEXT: 'PolyBlock Board Ready' },
+                      },
+                    },
+                  },
+                  next: {
+                    block: {
+                      type: 'ext_board_led',
+                      id: 'vb_led_on',
+                      fields: { STATE: 'true' },
+                      next: {
+                        block: {
+                          type: 'ext_board_rgb',
+                          id: 'vb_rgb_green',
+                          fields: { COLOR: '#10b981' },
+                          next: {
+                            block: {
+                              type: 'poly_wait_ms',
+                              id: 'vb_wait_1',
+                              inputs: {
+                                MS: {
+                                  shadow: {
+                                    type: 'math_number',
+                                    id: 'vb_ms_1',
+                                    fields: { NUM: 350 },
+                                  },
+                                },
+                              },
+                              next: {
+                                block: {
+                                  type: 'ext_board_rgb',
+                                  id: 'vb_rgb_blue',
+                                  fields: { COLOR: '#3b82f6' },
+                                  next: {
+                                    block: {
+                                      type: 'ext_board_oled',
+                                      id: 'vb_oled_2',
+                                      inputs: {
+                                        TEXT: {
+                                          block: {
+                                            type: 'text',
+                                            id: 'vb_oled_t2',
+                                            fields: { TEXT: 'RGB => Sky Blue' },
+                                          },
+                                        },
+                                      },
+                                      next: {
+                                        block: {
+                                          type: 'poly_log',
+                                          id: 'vb_log_done',
+                                          fields: { LEVEL: 'OK' },
+                                          inputs: {
+                                            MESSAGE: {
+                                              block: {
+                                                type: 'text',
+                                                id: 'vb_done_t',
+                                                fields: { TEXT: '板载 LED / RGB / OLED 自检通过！' },
+                                              },
+                                            },
+                                          },
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ],
+  },
+};
+
+const VIRTUAL_BOARD_TEMP_WS: Record<string, unknown> = {
+  blocks: {
+    languageVersion: 0,
+    blocks: [
+      {
+        type: 'poly_on_start',
+        id: 'vt_start',
+        x: 36,
+        y: 28,
+        inputs: {
+          BODY: {
+            block: {
+              type: 'ext_board_oled_clear',
+              id: 'vt_clr',
+              next: {
+                block: {
+                  type: 'variables_set',
+                  id: 'vt_set_temp',
+                  fields: { VAR: { id: 'var_board_temp' } },
+                  inputs: {
+                    VALUE: {
+                      block: { type: 'ext_board_temp', id: 'vt_read_temp' },
+                    },
+                  },
+                  next: {
+                    block: {
+                      type: 'poly_print_kv',
+                      id: 'vt_print_temp',
+                      fields: { LABEL: '当前板载温度 °C' },
+                      inputs: {
+                        VALUE: {
+                          block: {
+                            type: 'variables_get',
+                            id: 'vt_get_t1',
+                            fields: { VAR: { id: 'var_board_temp' } },
+                          },
+                        },
+                      },
+                      next: {
+                        block: {
+                          type: 'controls_if',
+                          id: 'vt_if_hot',
+                          extraState: { hasElse: true },
+                          inputs: {
+                            IF0: {
+                              block: {
+                                type: 'logic_compare',
+                                id: 'vt_cmp',
+                                fields: { OP: 'GT' },
+                                inputs: {
+                                  A: {
+                                    block: {
+                                      type: 'variables_get',
+                                      id: 'vt_get_t2',
+                                      fields: { VAR: { id: 'var_board_temp' } },
+                                    },
+                                  },
+                                  B: {
+                                    block: {
+                                      type: 'math_number',
+                                      id: 'vt_35',
+                                      fields: { NUM: 35 },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                            DO0: {
+                              block: {
+                                type: 'ext_board_led',
+                                id: 'vt_led_hot',
+                                fields: { STATE: 'true' },
+                                next: {
+                                  block: {
+                                    type: 'ext_board_rgb',
+                                    id: 'vt_rgb_hot',
+                                    fields: { COLOR: '#ef4444' },
+                                    next: {
+                                      block: {
+                                        type: 'ext_board_oled',
+                                        id: 'vt_oled_hot',
+                                        inputs: {
+                                          TEXT: {
+                                            block: {
+                                              type: 'text',
+                                              id: 'vt_txt_hot',
+                                              fields: { TEXT: 'ALARM: TEMP > 35C!' },
+                                            },
+                                          },
+                                        },
+                                        next: {
+                                          block: {
+                                            type: 'poly_log',
+                                            id: 'vt_log_warn',
+                                            fields: { LEVEL: 'WARN' },
+                                            inputs: {
+                                              MESSAGE: {
+                                                block: {
+                                                  type: 'text',
+                                                  id: 'vt_w_txt',
+                                                  fields: { TEXT: '高温告警！已点亮红色 RGB 灯' },
+                                                },
+                                              },
+                                            },
+                                          },
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                            ELSE: {
+                              block: {
+                                type: 'ext_board_led',
+                                id: 'vt_led_ok',
+                                fields: { STATE: 'false' },
+                                next: {
+                                  block: {
+                                    type: 'ext_board_rgb',
+                                    id: 'vt_rgb_ok',
+                                    fields: { COLOR: '#10b981' },
+                                    next: {
+                                      block: {
+                                        type: 'ext_board_oled',
+                                        id: 'vt_oled_ok',
+                                        inputs: {
+                                          TEXT: {
+                                            block: {
+                                              type: 'text',
+                                              id: 'vt_txt_ok',
+                                              fields: { TEXT: 'TEMP NORMAL (OK)' },
+                                            },
+                                          },
+                                        },
+                                        next: {
+                                          block: {
+                                            type: 'poly_log',
+                                            id: 'vt_log_ok',
+                                            fields: { LEVEL: 'OK' },
+                                            inputs: {
+                                              MESSAGE: {
+                                                block: {
+                                                  type: 'text',
+                                                  id: 'vt_ok_txt',
+                                                  fields: { TEXT: '温度正常，绿灯待机中' },
+                                                },
+                                              },
+                                            },
+                                          },
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ],
+  },
+  variables: [{ name: 'temp', id: 'var_board_temp' }],
+};
+
 export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiScriptProjectTemplate[] = [
   {
     id: 'starter_suite',
@@ -105,10 +383,23 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiScriptProjectTemplate[] = [
     description:
       '包含 3 个可独立运行的积木脚本：主累加日志（main）、延时与断点单步演示（step_debug）、随机采样告警（threshold_alarm）。',
     language: 'lua',
+    enabledExtensions: [],
     scripts: [
       { name: 'main', isEntry: true, workspace: tplById('demo_logger').workspace },
       { name: 'step_debug', workspace: tplById('step_debug_demo').workspace },
       { name: 'threshold_alarm', workspace: tplById('threshold_alarm').workspace },
+    ],
+  },
+  {
+    id: 'virtual_board_demo',
+    name: '虚拟硬件联动演示项目',
+    description:
+      '预装「虚拟硬件外设包」，含 LED/RGB/OLED 自检（led_blink）与交互式温度告警（temp_guard），拖动右侧模拟温度滑块即可触发不同分支。',
+    language: 'python',
+    enabledExtensions: ['virtual-board', 'dict-json'],
+    scripts: [
+      { name: 'led_blink', isEntry: true, workspace: VIRTUAL_BOARD_LED_WS },
+      { name: 'temp_guard', workspace: VIRTUAL_BOARD_TEMP_WS },
     ],
   },
   {
@@ -117,6 +408,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiScriptProjectTemplate[] = [
     description:
       '演示多脚本项目组织：列表动态追加统计（list_stats）与延时循环监控（monitor）。',
     language: 'python',
+    enabledExtensions: ['dict-json'],
     scripts: [
       { name: 'list_stats', isEntry: true, workspace: tplById('list_stats').workspace },
       { name: 'monitor', workspace: tplById('step_debug_demo').workspace },
@@ -127,6 +419,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiScriptProjectTemplate[] = [
     name: '空白项目',
     description: '仅包含一个干净的 main 入口脚本，适合从零搭建自己的多脚本工程。',
     language: 'lua',
+    enabledExtensions: [],
     scripts: [{ name: 'main', isEntry: true, workspace: createBlankWorkspace() }],
   },
 ];
@@ -162,7 +455,7 @@ export function instantiateProjectFromTemplate(
     name: makeUniqueProjectName(customName ?? tpl.name, existingProjectNames),
     description: tpl.description,
     language: tpl.language,
-    enabledExtensions: [],
+    enabledExtensions: [...(tpl.enabledExtensions ?? [])],
     entryScriptId: entryId,
     activeScriptId: entryId,
     scripts,

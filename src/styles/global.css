@@ -909,6 +909,208 @@ select {
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.45), 0 1px 2px rgba(0, 0, 0, 0.14);
 }
 
+.cat-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+
+.cat-add-ext {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 7px 4px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px dashed rgba(79, 70, 229, 0.35);
+  transition: filter 0.14s;
+}
+
+.cat-add-ext:hover {
+  filter: brightness(1.06);
+}
+
+/* ============================================================================
+   Virtual Hardware Simulator Panel (Phase 4)
+   ============================================================================ */
+.vboard-wrap {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vboard-pcb {
+  background: linear-gradient(155deg, #0f172a 0%, #1e293b 100%);
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 14px;
+  color: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--shadow-md);
+}
+
+.vboard-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.vboard-indicators {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.vboard-lamp-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: #cbd5e1;
+}
+
+.vboard-led {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #334155;
+  border: 1.5px solid #64748b;
+  transition: all 0.18s ease;
+}
+
+.vboard-led.on {
+  background: #22c55e;
+  border-color: #bbf7d0;
+  box-shadow: 0 0 12px #22c55e, 0 0 4px #ffffff;
+}
+
+.vboard-rgb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.45);
+  transition: all 0.2s ease;
+}
+
+.vboard-oled {
+  background: #020617;
+  border: 2px solid #334155;
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-height: 82px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #38bdf8;
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vboard-control-card {
+  background: var(--bg-panel-subtle);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vboard-slider-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.vboard-temp-val {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.vboard-btn-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vboard-key-btn {
+  flex: 1 1 50%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  transition: all 0.14s;
+}
+
+.vboard-key-btn.pressed {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.35);
+}
+
+.vboard-mini-strip {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  background: var(--bg-panel-subtle);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.vboard-mini-strip:hover {
+  background: var(--bg-hover);
+}
+
+.ext-toggle-btn {
+  padding: 5px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.14s;
+}
+
+.ext-toggle-btn.enabled {
+  background: var(--success-soft);
+  color: var(--success);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.ext-toggle-btn.disabled {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.ext-toggle-btn.disabled:hover {
+  background: var(--accent-hover);
+}
+
 .canvas-container {
   flex: 1 1 auto;
   min-width: 0;
@@ -1136,7 +1338,7 @@ select {
 
 .pane-tab {
   height: 100%;
-  padding: 0 8px;
+  padding: 0 6px;
   display: inline-flex;
   align-items: center;
   gap: 4px;

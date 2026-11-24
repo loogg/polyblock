@@ -1,6 +1,7 @@
 import * as Blockly from 'blockly';
 import '@blockly/block-plus-minus';
 import * as zhHans from 'blockly/msg/zh-hans';
+import { extensionRegistry } from '../extensions/registry';
 
 let blocksRegistered = false;
 
@@ -193,5 +194,6 @@ export function registerPolyBlocks(): void {
     };
   }
 
+  extensionRegistry.ensureInitialized();
   blocksRegistered = true;
 }

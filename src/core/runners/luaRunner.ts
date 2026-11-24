@@ -4,13 +4,23 @@ import { extractErrorLine, parseStdoutLine } from './logParser';
 import type { RunCallbacks, RunRequest, RunResult, ScriptRunner } from './types';
 
 interface WorkerReply {
-  type: 'STDOUT' | 'STEP' | 'PAUSED' | 'RESUMED' | 'WAITING' | 'DONE' | 'ERROR';
+  type:
+    | 'STDOUT'
+    | 'STEP'
+    | 'PAUSED'
+    | 'RESUMED'
+    | 'WAITING'
+    | 'DEVICE_EVENT'
+    | 'DONE'
+    | 'ERROR';
   runId: string;
   line?: string;
   blockId?: string;
   vars?: Record<string, string>;
   reason?: 'breakpoint' | 'step';
   active?: boolean;
+  kind?: string;
+  value?: unknown;
   message?: string;
   durationMs?: number;
 }
@@ -139,6 +149,11 @@ export class WasmoonLuaRunner implements ScriptRunner {
           return;
         }
 
+        if (msg.type === 'DEVICE_EVENT' && msg.kind) {
+          callbacks.onDeviceEvent?.(msg.kind, msg.value);
+          return;
+        }
+
         if (msg.type === 'DONE') {
           this.cleanupRun();
           callbacks.onStatusChange?.('ready');
@@ -188,6 +203,8 @@ export class WasmoonLuaRunner implements ScriptRunner {
         breakpoints: request.breakpoints ?? [],
         stepDelayMs: request.stepDelayMs ?? 0,
         startInStepMode: request.startInStepMode ?? false,
+        mockModules: request.mockModules ?? [],
+        mockInputs: request.mockInputs ?? {},
       });
     });
   }
@@ -222,6 +239,15 @@ export class WasmoonLuaRunner implements ScriptRunner {
       type: 'SET_SPEED',
       runId: this.activeRunId,
       stepDelayMs,
+    });
+  }
+
+  updateMockInputs(mockInputs: Record<string, unknown>): void {
+    if (!this.worker || !this.activeRunId) return;
+    this.worker.postMessage({
+      type: 'UPDATE_MOCK_INPUTS',
+      runId: this.activeRunId,
+      mockInputs,
     });
   }
 

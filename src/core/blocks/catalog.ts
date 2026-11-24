@@ -299,7 +299,9 @@ export function buildFlyoutToolbox(
   workspace: Blockly.WorkspaceSvg | null,
   categoryId: string,
   searchQuery: string,
+  extraCategories: BlockCategorySpec[] = [],
 ): Blockly.utils.toolbox.ToolboxInfo {
+  const allCategories = [...BLOCK_CATEGORIES, ...extraCategories];
   const q = searchQuery.trim().toLowerCase();
 
   const topSpacer: Blockly.utils.toolbox.FlyoutItemInfo = {
@@ -309,7 +311,7 @@ export function buildFlyoutToolbox(
 
   if (q) {
     const matched: Blockly.utils.toolbox.FlyoutItemInfoArray = [];
-    for (const cat of BLOCK_CATEGORIES) {
+    for (const cat of allCategories) {
       for (const blk of cat.blocks) {
         if (
           blk.keywords.toLowerCase().includes(q) ||
@@ -345,7 +347,7 @@ export function buildFlyoutToolbox(
   }
 
   const category =
-    BLOCK_CATEGORIES.find((c) => c.id === categoryId) ?? BLOCK_CATEGORIES[0];
+    allCategories.find((c) => c.id === categoryId) ?? allCategories[0];
 
   if (category.custom === 'VARIABLE' && workspace) {
     const vars = workspace.getVariableMap().getAllVariables();

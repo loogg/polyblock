@@ -3,6 +3,7 @@ import {
   Crosshair,
   Minus,
   Plus,
+  Puzzle,
   Redo2,
   Search,
   Undo2,
@@ -19,6 +20,7 @@ import {
 import {
   BLOCK_CATEGORIES,
   buildFlyoutToolbox,
+  type BlockCategorySpec,
 } from '../core/blocks/catalog';
 import { registerPolyBlocks } from '../core/blocks/definitions';
 import {
@@ -46,9 +48,11 @@ interface BlocklyWorkbenchProps {
   executingBlockId: string | null;
   isPaused: boolean;
   breakpoints: string[];
+  extraCategories: BlockCategorySpec[];
   onWorkspaceChange: (workspace: Blockly.WorkspaceSvg) => void;
   onSelectBlock: (blockId: string | null) => void;
   onToggleBreakpoint: (blockId: string) => void;
+  onOpenExtensionsPage: () => void;
 }
 
 // Singleton hook bridge so Blockly's global ContextMenuRegistry invokes current React callbacks
@@ -102,9 +106,11 @@ export const BlocklyWorkbench = forwardRef<
     executingBlockId,
     isPaused,
     breakpoints,
+    extraCategories,
     onWorkspaceChange,
     onSelectBlock,
     onToggleBreakpoint,
+    onOpenExtensionsPage,
   },
   ref,
 ) {
@@ -113,6 +119,7 @@ export const BlocklyWorkbench = forwardRef<
   const onChangeRef = useRef(onWorkspaceChange);
   const onSelectRef = useRef(onSelectBlock);
   const initialDataRef = useRef(initialWorkspace);
+  const extraCatsRef = useRef<BlockCategorySpec[]>(extraCategories);
 
   const [activeCat, setActiveCat] = useState<string>('print');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -120,13 +127,14 @@ export const BlocklyWorkbench = forwardRef<
 
   onChangeRef.current = onWorkspaceChange;
   onSelectRef.current = onSelectBlock;
+  extraCatsRef.current = extraCategories;
   currentToggleBpHandler = onToggleBreakpoint;
   currentBreakpointsSet = new Set(breakpoints);
 
   const refreshFlyout = useCallback((catId: string, query: string) => {
     const ws = workspaceRef.current;
     if (!ws) return;
-    const toolboxDef = buildFlyoutToolbox(ws, catId, query);
+    const toolboxDef = buildFlyoutToolbox(ws, catId, query, extraCatsRef.current);
     ws.updateToolbox(toolboxDef);
   }, []);
 
@@ -247,10 +255,18 @@ export const BlocklyWorkbench = forwardRef<
     ws.setTheme(theme === 'dark' ? polyblockDarkTheme : polyblockLightTheme);
   }, [theme]);
 
-  // Sync category or search query to flyout
+  // Sync category, search query, or dynamically enabled extension categories to flyout
   useEffect(() => {
+    const allIds = new Set([
+      ...BLOCK_CATEGORIES.map((c) => c.id),
+      ...extraCategories.map((c) => c.id),
+    ]);
+    if (!allIds.has(activeCat)) {
+      setActiveCat('print');
+      return;
+    }
     refreshFlyout(activeCat, searchQuery);
-  }, [activeCat, searchQuery, refreshFlyout]);
+  }, [activeCat, searchQuery, extraCategories, refreshFlyout]);
 
   // Resize cleanly whenever blocks page becomes visible again
   useEffect(() => {
@@ -393,6 +409,37 @@ export const BlocklyWorkbench = forwardRef<
             <span>{cat.label}</span>
           </button>
         ))}
+
+        {extraCategories.length > 0 && <div className="cat-divider" />}
+
+        {extraCategories.map((cat) => (
+          <button
+            key={cat.id}
+            type="button"
+            className={`cat-btn ${
+              !searchQuery && activeCat === cat.id ? 'active' : ''
+            }`}
+            style={{ '--cat-color': cat.color } as React.CSSProperties}
+            onClick={() => {
+              setSearchQuery('');
+              setActiveCat(cat.id);
+            }}
+            title={`扩展分类：${cat.label}`}
+          >
+            <span className="cat-dot" />
+            <span>{cat.label}</span>
+          </button>
+        ))}
+
+        <button
+          type="button"
+          className="cat-add-ext"
+          onClick={onOpenExtensionsPage}
+          title="管理或导入自定义扩展积木包"
+        >
+          <Puzzle size={13} />
+          <span>+扩展</span>
+        </button>
       </nav>
 
       <div className="canvas-container">

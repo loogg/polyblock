@@ -123,4 +123,25 @@ WorkspaceStore (localStorage: polyblock.store.v2，自动兼容迁移 v1 数据)
 2. **画布顶部 36px 脚本标签栏**：与右侧 `CodeInspector` 顶栏齐平，支持单击切换画布、`+` 新建脚本、双击行内重命名、复制、设为入口（★）、删除以及多脚本快速下拉跳转，不占用画布横向宽度。
 3. **严格状态隔离**：切换脚本标签前先立即快照保存当前画布，切换时禁用 Blockly 临时事件并清空撤销栈（`clearUndo`），确保不同脚本的积木、撤销历史、断点与生成代码互不串台。
 
+## 7. Phase 4 扩展：声明式积木扩展包与沙箱虚拟外设模拟架构
+
+通过统一 `PolyExtensionPack` JSON 规范，在不修改核心代码的前提下动态扩展新积木分类、双语言代码模板与浏览器沙箱 Mock 模块：
+
+```text
+[PolyExtensionPack (.polyext.json)]
+   ├── 元信息: id / name / version / categoryLabel / color
+   ├── 积木定义: blocks[] (外观 JSON + 默认 shadow + 搜索词)
+   ├── 多语言生成模板: lua { template, imports } / python { template, imports }
+   └── 可选沙箱 Mock: sandboxMock { moduleName, luaSource, pythonSource }
+                 │
+                 ├──> ExtensionRegistry.register() ──> 动态注入 Blockly 积木 + Lua/Python 生成器
+                 ├──> ProjectModel.enabledExtensions[] ──> 按项目动态呈现左侧积木分类与搜索
+                 └──> Worker Runner (package.preload / sys.modules) ──> 实时 DEVICE_EVENT 回传虚拟外设面板
+```
+
+### 关键收益
+- **一份扩展包通吃“沙箱模拟 + 真机导出”**：导出给目标板子的仍是标准 `local board = require("board")` / `import board` 纯净代码；浏览器沙箱自动挂载 `sandboxMock` 并驱动交互式虚拟外设面板（LED / RGB / OLED / 模拟温度滑块 / 按键 A·B）。
+- **支持外部自定义扩展包导入**：用户在「扩展」页可一键下载 JSON 模板、导入自定义 `.polyext.json` 积木包（持久化于 `polyblock.extensions.custom.v1`）并按项目随时启停。
+
+
 

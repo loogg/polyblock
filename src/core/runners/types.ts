@@ -1,4 +1,5 @@
 import type { LogLevel, ScriptLanguageId } from '../../types/project';
+import type { ExtensionSandboxMock } from '../extensions/types';
 
 export type RunnerKind = 'browser-wasm' | 'network-ws' | 'local-bridge' | 'web-serial';
 
@@ -14,6 +15,10 @@ export interface RunRequest {
   breakpoints?: string[];
   stepDelayMs?: number;
   startInStepMode?: boolean;
+  /** Extension sandbox mocks mounted into Lua package.preload / Python sys.modules. */
+  mockModules?: ExtensionSandboxMock[];
+  /** Live interactive simulator inputs (e.g., virtual board temperature / buttons). */
+  mockInputs?: Record<string, unknown>;
 }
 
 export interface RunCallbacks {
@@ -27,6 +32,7 @@ export interface RunCallbacks {
     reason: 'breakpoint' | 'step',
   ) => void;
   onResumed?: () => void;
+  onDeviceEvent?: (kind: string, value: unknown) => void;
 }
 
 export interface RunResult {
@@ -60,5 +66,6 @@ export interface ScriptRunner {
   pause?(): void;
   updateBreakpoints?(breakpoints: string[]): void;
   updateStepDelay?(stepDelayMs: number): void;
+  updateMockInputs?(mockInputs: Record<string, unknown>): void;
   dispose(): void;
 }

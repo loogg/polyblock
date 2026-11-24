@@ -104,6 +104,10 @@ class RunnerManager {
     this.activeRunner?.updateStepDelay?.(stepDelayMs);
   }
 
+  updateActiveMockInputs(mockInputs: Record<string, unknown>): void {
+    this.activeRunner?.updateMockInputs?.(mockInputs);
+  }
+
   disposeAll(): void {
     for (const runner of this.runners.values()) {
       runner.dispose();
