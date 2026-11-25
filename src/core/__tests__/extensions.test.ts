@@ -59,7 +59,11 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(pureCats.some((c) => c.id === 'timers')).toBe(false);
     const pureEventBlocks =
       pureCats.find((c) => c.id === 'event')?.blocks.map((b) => b.type) ?? [];
-    expect(pureEventBlocks).toEqual(['poly_on_start', 'poly_comment']);
+    expect(pureEventBlocks).toEqual([
+      'poly_on_start',
+      'poly_require_script',
+      'poly_comment',
+    ]);
 
     const rtCats = getCoreCategoriesForCapabilities([
       CAP_RT_LIFECYCLE,
@@ -175,7 +179,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     const proj = instantiateProjectFromTemplate('virtual_board_demo');
     expect(proj.enabledCapabilities).toContain('virtual-board');
     expect(proj.handles[0].scripts.map((s) => s.name)).toEqual([
-      'led_blink',
+      'main',
       'temp_guard',
       'dict_config',
     ]);

@@ -169,6 +169,12 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
             Boolean(hasBtn),
           )
         : false,
+    sync_handlers: (hasRun: unknown, hasTimer: unknown, hasBtn: unknown) =>
+      activeScheduler?.syncHandlers(
+        Boolean(hasRun),
+        Boolean(hasTimer),
+        Boolean(hasBtn),
+      ),
     co_sleep: (ms: unknown) => activeScheduler?.onStartCoSleep(ms),
     co_yield_slice: () => activeScheduler?.onStartCoYieldSlice(),
     co_done: () => activeScheduler?.onStartCoDone(),

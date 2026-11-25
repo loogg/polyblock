@@ -548,24 +548,39 @@ export const FLAGSHIP_DRIVE_CTRL_WS: Record<string, unknown> = {
                           },
                           next: {
                             block: {
-                              type: 'poly_start_timer',
-                              id: 'fg_d_start_t0',
-                              fields: { TIMER_ID: '0' },
+                              type: 'poly_set_run_period',
+                              id: 'fg_d_set_period',
                               inputs: {
-                                PERIOD_MS: { block: { type: 'math_number', id: 'fg_d_700', fields: { NUM: 700 } } },
-                                REPEAT: { block: { type: 'math_number', id: 'fg_d_inf', fields: { NUM: 0 } } },
+                                MS: {
+                                  shadow: {
+                                    type: 'math_number',
+                                    id: 'fg_d_250',
+                                    fields: { NUM: 250 },
+                                  },
+                                },
                               },
                               next: {
                                 block: {
-                                  type: 'poly_log',
-                                  id: 'fg_d_boot_log',
-                                  fields: { LEVEL: 'INFO' },
+                                  type: 'poly_start_timer',
+                                  id: 'fg_d_start_t0',
+                                  fields: { TIMER_ID: '0' },
                                   inputs: {
-                                    MESSAGE: {
-                                      block: {
-                                        type: 'text',
-                                        id: 'fg_d_boot_txt',
-                                        fields: { TEXT: '底盘与云台控制启动：60% 巡航 + T0 扫描' },
+                                    PERIOD_MS: { block: { type: 'math_number', id: 'fg_d_700', fields: { NUM: 700 } } },
+                                    REPEAT: { block: { type: 'math_number', id: 'fg_d_inf', fields: { NUM: 0 } } },
+                                  },
+                                  next: {
+                                    block: {
+                                      type: 'poly_log',
+                                      id: 'fg_d_boot_log',
+                                      fields: { LEVEL: 'INFO' },
+                                      inputs: {
+                                        MESSAGE: {
+                                          block: {
+                                            type: 'text',
+                                            id: 'fg_d_boot_txt',
+                                            fields: { TEXT: '底盘与云台控制启动：60% 巡航 + T0 扫描' },
+                                          },
+                                        },
                                       },
                                     },
                                   },
@@ -587,8 +602,7 @@ export const FLAGSHIP_DRIVE_CTRL_WS: Record<string, unknown> = {
         type: 'poly_on_run',
         id: 'fg_d_on_run',
         x: 36,
-        y: 540,
-        fields: { PERIOD_MS: 250 },
+        y: 620,
         inputs: {
           BODY: {
             block: {

@@ -117,6 +117,16 @@ export function createBlankWorkspace(): Record<string, unknown> {
   };
 }
 
+/** Blank canvas for auxiliary module/callback scripts inside an existing handle (no duplicate `on_start`). */
+export function createBlankModuleWorkspace(): Record<string, unknown> {
+  return {
+    blocks: {
+      languageVersion: 0,
+      blocks: [],
+    },
+  };
+}
+
 export function sanitizeScriptName(raw: string): string {
   const cleaned = raw
     .trim()
@@ -705,54 +715,76 @@ const EVENT_LOOP_MAIN_WS: Record<string, unknown> = {
                   },
                   next: {
                     block: {
-                      type: 'ext_board_oled_clear',
-                      id: 'ev_oled_clr',
+                      type: 'poly_require_script',
+                      id: 'ev_req_timers',
+                      fields: { SCRIPT: 'timers' },
                       next: {
                         block: {
-                          type: 'ext_board_oled',
-                          id: 'ev_oled_ready',
+                          type: 'poly_set_run_period',
+                          id: 'ev_set_period',
                           inputs: {
-                            TEXT: {
-                              block: {
-                                type: 'text',
-                                id: 'ev_ready_txt',
-                                fields: { TEXT: 'Event Loop Ready' },
+                            MS: {
+                              shadow: {
+                                type: 'math_number',
+                                id: 'ev_run_ms',
+                                fields: { NUM: 100 },
                               },
                             },
                           },
                           next: {
                             block: {
-                              type: 'poly_start_timer',
-                              id: 'ev_start_t0',
-                              fields: { TIMER_ID: '0' },
-                              inputs: {
-                                PERIOD_MS: {
-                                  shadow: {
-                                    type: 'math_number',
-                                    id: 'ev_t0_ms',
-                                    fields: { NUM: 500 },
-                                  },
-                                },
-                                REPEAT: {
-                                  shadow: {
-                                    type: 'math_number',
-                                    id: 'ev_t0_rep',
-                                    fields: { NUM: 0 },
-                                  },
-                                },
-                              },
+                              type: 'ext_board_oled_clear',
+                              id: 'ev_oled_clr',
                               next: {
                                 block: {
-                                  type: 'poly_log',
-                                  id: 'ev_start_log',
-                                  fields: { LEVEL: 'INFO' },
+                                  type: 'ext_board_oled',
+                                  id: 'ev_oled_ready',
                                   inputs: {
-                                    MESSAGE: {
+                                    TEXT: {
                                       block: {
                                         type: 'text',
-                                        id: 'ev_start_msg',
-                                        fields: {
-                                          TEXT: '事件循环启动：T0心跳 / on_run监控',
+                                        id: 'ev_ready_txt',
+                                        fields: { TEXT: 'Event Loop Ready' },
+                                      },
+                                    },
+                                  },
+                                  next: {
+                                    block: {
+                                      type: 'poly_start_timer',
+                                      id: 'ev_start_t0',
+                                      fields: { TIMER_ID: '0' },
+                                      inputs: {
+                                        PERIOD_MS: {
+                                          shadow: {
+                                            type: 'math_number',
+                                            id: 'ev_t0_ms',
+                                            fields: { NUM: 500 },
+                                          },
+                                        },
+                                        REPEAT: {
+                                          shadow: {
+                                            type: 'math_number',
+                                            id: 'ev_t0_rep',
+                                            fields: { NUM: 0 },
+                                          },
+                                        },
+                                      },
+                                      next: {
+                                        block: {
+                                          type: 'poly_log',
+                                          id: 'ev_start_log',
+                                          fields: { LEVEL: 'INFO' },
+                                          inputs: {
+                                            MESSAGE: {
+                                              block: {
+                                                type: 'text',
+                                                id: 'ev_start_msg',
+                                                fields: {
+                                                  TEXT: '事件循环启动：已加载 timers.lua（T0心跳 / on_run监控）',
+                                                },
+                                              },
+                                            },
+                                          },
                                         },
                                       },
                                     },
@@ -775,8 +807,7 @@ const EVENT_LOOP_MAIN_WS: Record<string, unknown> = {
         type: 'poly_on_run',
         id: 'ev_on_run',
         x: 36,
-        y: 520,
-        fields: { PERIOD_MS: 100 },
+        y: 620,
         inputs: {
           BODY: {
             block: {
@@ -839,9 +870,108 @@ const EVENT_LOOP_MAIN_WS: Record<string, unknown> = {
         },
       },
       {
+        type: 'poly_on_button',
+        id: 'ev_on_btn_a',
+        x: 720,
+        y: 28,
+        fields: { KEY: 'A', EDGE: 'press' },
+        inputs: {
+          BODY: {
+            block: {
+              type: 'poly_log',
+              id: 'ev_btn_log',
+              fields: { LEVEL: 'WARN' },
+              inputs: {
+                MESSAGE: {
+                  block: {
+                    type: 'text',
+                    id: 'ev_btn_txt',
+                    fields: { TEXT: '按键 A 按下：启动 T1 三次告警提示定时器 (400ms)' },
+                  },
+                },
+              },
+              next: {
+                block: {
+                  type: 'poly_start_timer',
+                  id: 'ev_start_t1',
+                  fields: { TIMER_ID: '1' },
+                  inputs: {
+                    PERIOD_MS: {
+                      shadow: {
+                        type: 'math_number',
+                        id: 'ev_t1_ms',
+                        fields: { NUM: 400 },
+                      },
+                    },
+                    REPEAT: {
+                      shadow: {
+                        type: 'math_number',
+                        id: 'ev_t1_rep',
+                        fields: { NUM: 3 },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        type: 'poly_on_stop',
+        id: 'ev_on_stop',
+        x: 720,
+        y: 360,
+        inputs: {
+          BODY: {
+            block: {
+              type: 'ext_board_led',
+              id: 'ev_stop_led',
+              fields: { STATE: 'false' },
+              next: {
+                block: {
+                  type: 'ext_board_rgb',
+                  id: 'ev_stop_rgb',
+                  fields: { COLOR: '#1e293b' },
+                  next: {
+                    block: {
+                      type: 'poly_log',
+                      id: 'ev_stop_log',
+                      fields: { LEVEL: 'OK' },
+                      inputs: {
+                        MESSAGE: {
+                          block: {
+                            type: 'text',
+                            id: 'ev_stop_txt',
+                            fields: { TEXT: 'on_stop 已安全关闭 LED 与三色灯' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ],
+  },
+  variables: [
+    { name: 'led_on', id: 'var_ev_led' },
+    { name: 'ticks', id: 'var_ev_ticks' },
+  ],
+};
+
+/** Companion script `timers.lua` in L3 Event-Driven Demo, loaded by `main.lua` via `require("timers")`. */
+const EVENT_LOOP_TIMERS_WS: Record<string, unknown> = {
+  blocks: {
+    languageVersion: 0,
+    blocks: [
+      {
         type: 'poly_on_timer',
         id: 'ev_on_t0',
-        x: 700,
+        x: 36,
         y: 28,
         fields: { TIMER_ID: '0' },
         inputs: {
@@ -902,58 +1032,10 @@ const EVENT_LOOP_MAIN_WS: Record<string, unknown> = {
         },
       },
       {
-        type: 'poly_on_button',
-        id: 'ev_on_btn_a',
-        x: 700,
-        y: 460,
-        fields: { KEY: 'A', EDGE: 'press' },
-        inputs: {
-          BODY: {
-            block: {
-              type: 'poly_log',
-              id: 'ev_btn_log',
-              fields: { LEVEL: 'WARN' },
-              inputs: {
-                MESSAGE: {
-                  block: {
-                    type: 'text',
-                    id: 'ev_btn_txt',
-                    fields: { TEXT: '按键 A 按下：启动 T1 三次告警提示定时器 (400ms)' },
-                  },
-                },
-              },
-              next: {
-                block: {
-                  type: 'poly_start_timer',
-                  id: 'ev_start_t1',
-                  fields: { TIMER_ID: '1' },
-                  inputs: {
-                    PERIOD_MS: {
-                      shadow: {
-                        type: 'math_number',
-                        id: 'ev_t1_ms',
-                        fields: { NUM: 400 },
-                      },
-                    },
-                    REPEAT: {
-                      shadow: {
-                        type: 'math_number',
-                        id: 'ev_t1_rep',
-                        fields: { NUM: 3 },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      {
         type: 'poly_on_timer',
         id: 'ev_on_t1',
-        x: 700,
-        y: 780,
+        x: 36,
+        y: 380,
         fields: { TIMER_ID: '1' },
         inputs: {
           BODY: {
@@ -981,44 +1063,6 @@ const EVENT_LOOP_MAIN_WS: Record<string, unknown> = {
                         type: 'variables_get',
                         id: 'ev_get_ticks',
                         fields: { VAR: { id: 'var_ev_ticks' } },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      {
-        type: 'poly_on_stop',
-        id: 'ev_on_stop',
-        x: 36,
-        y: 940,
-        inputs: {
-          BODY: {
-            block: {
-              type: 'ext_board_led',
-              id: 'ev_stop_led',
-              fields: { STATE: 'false' },
-              next: {
-                block: {
-                  type: 'ext_board_rgb',
-                  id: 'ev_stop_rgb',
-                  fields: { COLOR: '#1e293b' },
-                  next: {
-                    block: {
-                      type: 'poly_log',
-                      id: 'ev_stop_log',
-                      fields: { LEVEL: 'OK' },
-                      inputs: {
-                        MESSAGE: {
-                          block: {
-                            type: 'text',
-                            id: 'ev_stop_txt',
-                            fields: { TEXT: 'on_stop 已安全关闭 LED 与三色灯' },
-                          },
-                        },
                       },
                     },
                   },
@@ -1223,7 +1267,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
         color: '#0ea5e9',
         autoStart: true,
         scripts: [
-          { name: 'led_blink', isEntry: true, workspace: VIRTUAL_BOARD_LED_WS },
+          { name: 'main', isEntry: true, workspace: VIRTUAL_BOARD_LED_WS },
           { name: 'temp_guard', workspace: VIRTUAL_BOARD_TEMP_WS },
           { name: 'dict_config', workspace: MEDIUM_DICT_CONFIG_WS },
         ],
@@ -1234,7 +1278,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     id: 'event_timer_demo',
     name: '事件回调与多路定时器示例',
     description:
-      '进阶事件驱动（Lua 5.4 顶层零闭包 ABI）：启用周期循环、多路编号定时与虚拟硬件按键中断；支持 T0 常驻心跳灯、on_run 实时温检、按键 A 触发 T1 三次告警与 on_stop 安全停机。',
+      '进阶事件驱动（Lua 5.4 多文件句柄拆分 + 顶层零闭包 ABI）：主入口 main.lua 通过 require("timers") 加载同句柄 timers.lua，展示 on_start 设周期、独立 on_timer_0/1 函数分发、按键中断与 on_stop 安全停机。',
     language: 'lua',
     targetProfileId: 'virtual-board-rt',
     defaultTimerCount: 8,
@@ -1242,7 +1286,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     difficulty: {
       level: 'L3',
       label: 'L3 进阶 · 事件定时',
-      highlights: ['on_run / on_stop', '多路编号定时器', '按键边沿回调', '局部变量作用域'],
+      highlights: ['main + timers 拆文件', '独立 on_timer_N 函数', '按键边沿回调', '局部变量作用域'],
     },
     handles: [
       {
@@ -1258,7 +1302,8 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
           },
         },
         scripts: [
-          { name: 'event_loop', isEntry: true, workspace: EVENT_LOOP_MAIN_WS },
+          { name: 'main', isEntry: true, workspace: EVENT_LOOP_MAIN_WS },
+          { name: 'timers', workspace: EVENT_LOOP_TIMERS_WS },
           { name: 'timer_oneshot', workspace: TIMER_ONESHOT_WS },
         ],
       },
@@ -1316,7 +1361,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
           },
         },
         scripts: [
-          { name: 'motion_ctrl', isEntry: true, workspace: FLAGSHIP_DRIVE_CTRL_WS },
+          { name: 'main', isEntry: true, workspace: FLAGSHIP_DRIVE_CTRL_WS },
           { name: 'patrol_test', workspace: FLAGSHIP_PATROL_TEST_WS },
         ],
       },
@@ -1332,7 +1377,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
           },
         },
         scripts: [
-          { name: 'thermal_watch', isEntry: true, workspace: FLAGSHIP_SENSOR_GUARD_WS },
+          { name: 'main', isEntry: true, workspace: FLAGSHIP_SENSOR_GUARD_WS },
         ],
       },
       {
@@ -1347,7 +1392,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
           },
         },
         scripts: [
-          { name: 'metrics_report', isEntry: true, workspace: FLAGSHIP_TELEMETRY_HUB_WS },
+          { name: 'main', isEntry: true, workspace: FLAGSHIP_TELEMETRY_HUB_WS },
         ],
       },
     ],
@@ -2211,7 +2256,11 @@ export function addScriptToHandle(
   const newScript: ProjectScript = {
     id: createId('scr'),
     name: uniqueName,
-    workspace: workspace ? cloneJson(workspace) : createBlankWorkspace(),
+    workspace: workspace
+      ? cloneJson(workspace)
+      : handle.scripts.length > 0
+        ? createBlankModuleWorkspace()
+        : createBlankWorkspace(),
     breakpoints: [],
     updatedAt: now,
   };

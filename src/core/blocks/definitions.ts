@@ -2,8 +2,38 @@ import * as Blockly from 'blockly';
 import '@blockly/block-plus-minus';
 import * as zhHans from 'blockly/msg/zh-hans';
 import { extensionRegistry } from '../extensions/registry';
+import { getSiblingScriptDropdownOptions } from './timerConfigBridge';
 
 let blocksRegistered = false;
+
+/** Dynamic dropdown for sibling scripts inside the active handle (preserves serialized names cleanly). */
+class ScriptNameFieldDropdown extends Blockly.FieldDropdown {
+  private pendingValue: string | null = null;
+
+  constructor() {
+    super(function (this: Blockly.FieldDropdown) {
+      const self = this as ScriptNameFieldDropdown;
+      return getSiblingScriptDropdownOptions(
+        self.pendingValue ?? self.getValue() ?? undefined,
+      );
+    });
+  }
+
+  protected override doClassValidation_(newValue?: string): string | null {
+    const cleaned = String(newValue ?? '').trim();
+    if (cleaned) {
+      this.pendingValue = cleaned;
+      this.getOptions(false);
+    }
+    const res = super.doClassValidation_(cleaned || undefined);
+    this.pendingValue = null;
+    return res;
+  }
+}
+
+function createScriptNameField(): Blockly.FieldDropdown {
+  return new ScriptNameFieldDropdown();
+}
 
 /**
  * Registers ONLY Layer 0 pure-language core blocks (zero hardware / zero timer / zero button hardcoding),
@@ -180,6 +210,22 @@ export function registerPolyBlocks(): void {
   ];
 
   Blockly.defineBlocksWithJsonArray(coreBlockDefs);
+
+  // Imperative core block: load sibling script in the same handle (`require("name")`)
+  Blockly.Blocks['poly_require_script'] = {
+    init(this: Blockly.Block) {
+      this.appendDummyInput()
+        .appendField('加载脚本')
+        .appendField(createScriptNameField(), 'SCRIPT');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setInputsInline(true);
+      this.setStyle('event_stmt_blocks');
+      this.setTooltip(
+        '加载同句柄内的其他脚本（Lua 导出 require("名称")），将其中的全局事件回调或函数注册到本句柄 _G（零闭包，兼容无文件系统与有文件系统后端）。可放在「当程序启动」中或画布顶层。',
+      );
+    },
+  };
 
   // Align selected built-in block styles with our MicroBlocks palette
   const styleOverrides: Record<string, string> = {

@@ -18,32 +18,17 @@ export const RT_LIFECYCLE_PACK: PolyExtensionPack = {
     {
       type: 'poly_on_run',
       kind: 'hat',
-      message0: '当周期运行 on_run 每 %1 ms',
-      args0: [
-        {
-          type: 'field_number',
-          name: 'PERIOD_MS',
-          value: 100,
-          min: 10,
-          max: 60000,
-          precision: 1,
-        },
-      ],
+      message0: '当周期运行触发时',
       inputsInline: true,
       blockStyle: 'event_blocks',
-      fields: { PERIOD_MS: 100 },
       tooltip:
-        '周期主回调（on_run，默认每 100ms 触发一次），运行后进入常驻事件循环直到手动停止。',
-      keywords: '当周期运行 on_run 周期 主循环 loop 回调 100ms',
+        '周期主回调（on_run，默认使能、每 100ms 触发一次；可在「当程序启动」或运行中用「设置周期运行间隔」调整频率）。',
+      keywords: '当周期运行 触发 on_run 周期 主循环 loop 回调 100ms',
       hat: {
         eventName: 'on_run',
         params: [],
         mode: 'singleton',
-        importsLua: ['local rt = require("rt")'],
-        importsPython: ['import rt'],
-        preludeLua: 'rt.set_run_period({{PERIOD_MS:min10_int}})',
-        preludePython: 'rt.set_run_period({{PERIOD_MS:min10_int}})',
-        scopeLabelTemplate: 'on_run (每 {{PERIOD_MS:min10_int}}ms)',
+        scopeLabelTemplate: 'on_run (周期运行)',
         scopeShortTemplate: 'on_run',
         scopeCategory: 'lifecycle',
         keepsAlive: true,
@@ -52,13 +37,14 @@ export const RT_LIFECYCLE_PACK: PolyExtensionPack = {
     {
       type: 'poly_set_run_period',
       kind: 'statement',
-      message0: '设置 on_run 周期为 %1 ms',
+      message0: '设置周期运行间隔为 %1 ms',
       args0: [{ type: 'input_value', name: 'MS', check: 'Number' }],
       inputsInline: true,
       blockStyle: 'event_stmt_blocks',
       shadows: { MS: { type: 'math_number', value: 100 } },
-      tooltip: '动态修改 on_run 周期回调的触发间隔（毫秒）。',
-      keywords: '设置 on_run 周期 period ms 间隔 频率',
+      tooltip:
+        '设置或动态修改周期运行（on_run）的触发间隔（毫秒），调用后立即按新周期重新计时生效（对应 rt.set_run_period）。',
+      keywords: '设置 on_run 周期运行 间隔 period ms 频率',
       lua: {
         imports: ['local rt = require("rt")'],
         template: 'rt.set_run_period({{MS}})',
@@ -71,7 +57,7 @@ export const RT_LIFECYCLE_PACK: PolyExtensionPack = {
     {
       type: 'poly_run_control',
       kind: 'statement',
-      message0: '%1 on_run 周期运行',
+      message0: '%1 周期运行',
       args0: [
         {
           type: 'field_dropdown',
@@ -85,7 +71,7 @@ export const RT_LIFECYCLE_PACK: PolyExtensionPack = {
       inputsInline: true,
       blockStyle: 'event_stmt_blocks',
       fields: { ACTION: 'stop' },
-      tooltip: '在运行时启动或暂停 on_run 周期调度（对应 rt.start_run / rt.stop_run）。',
+      tooltip: '在运行时启动或暂停周期运行调度（默认使能为 1，对应 rt.start_run / rt.stop_run）。',
       keywords: '启动 停止 暂停 on_run 周期运行 start_run stop_run',
       lua: {
         imports: ['local rt = require("rt")'],
@@ -99,10 +85,10 @@ export const RT_LIFECYCLE_PACK: PolyExtensionPack = {
     {
       type: 'poly_on_stop',
       kind: 'hat',
-      message0: '当程序停止 (on_stop)',
+      message0: '当程序停止',
       inputsInline: true,
       blockStyle: 'event_blocks',
-      tooltip: '手动停止常驻事件循环时自动执行一次收尾清理（如熄灭 LED / 复位输出）。',
+      tooltip: '手动停止常驻事件循环时自动执行一次收尾清理（生成顶层 on_stop 回调，如熄灭 LED / 复位输出）。',
       keywords: '当程序停止 on_stop 退出 收尾 清理 事件',
       hat: {
         eventName: 'on_stop',
@@ -157,12 +143,13 @@ export const RT_TIMERS_PACK: PolyExtensionPack = {
       blockStyle: 'timer_hat_blocks',
       fields: { TIMER_ID: '0' },
       tooltip:
-        '绑定指定通道 ID 的定时器到期回调，自动聚合成顶层 on_timer(id) 分发函数（零闭包）。',
+        '绑定指定通道 ID 的定时器到期回调：拆分为独立全局函数 on_timer_<id>()，并自动生成轻量 on_timer(id) 路由分发（零闭包）。',
       keywords: '当定时器 触发 回调 on_timer timer id 通道',
       hat: {
         eventName: 'on_timer',
         params: ['id'],
         mode: 'dispatch',
+        extractBranchFnPrefix: 'on_timer_',
         conditionLua: 'id == {{TIMER_ID:int}}',
         conditionPython: 'id == {{TIMER_ID:int}}',
         branchCommentLua: '{{TIMER_ID:channel_comment_lua}}',

@@ -55,6 +55,11 @@ const CORE_EVENT_BLOCKS: ToolboxBlockSpec[] = [
   },
   {
     kind: 'block',
+    type: 'poly_require_script',
+    keywords: '加载脚本 require 导入 模块 同句柄 脚本 timers',
+  },
+  {
+    kind: 'block',
     type: 'poly_comment',
     keywords: '注释 comment 备注 说明',
   },

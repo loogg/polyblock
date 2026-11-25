@@ -3,6 +3,7 @@ import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { LuaFactory } from 'wasmoon';
 import { loadMicroPython } from '@micropython/micropython-webassembly-pyscript';
+import { inspectWorkspaceScriptMeta } from '../backends/eventMode';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
 import {
@@ -14,7 +15,10 @@ import {
   getHandleTimerConfig,
   instantiateProjectFromTemplate,
 } from '../projects/store';
-import { setActiveTimerConfig } from '../blocks/timerConfigBridge';
+import {
+  setActiveHandleScripts,
+  setActiveTimerConfig,
+} from '../blocks/timerConfigBridge';
 import { WorkerDebugSession } from '../../workers/debugSession';
 import { WorkerRuntimeScheduler } from '../../workers/runtimeScheduler';
 
@@ -22,6 +26,11 @@ interface HarnessOptions {
   stepDelayMs?: number;
   timeSliceMs?: number;
   callbackTimeoutMs?: number;
+  preloadModules?: Array<{
+    name: string;
+    luaSource?: string;
+    pythonSource?: string;
+  }>;
   onReady?: (sched: WorkerRuntimeScheduler) => void;
 }
 
@@ -94,6 +103,15 @@ async function runLuaDebugInWasmoon(
       (s: unknown, r: unknown, t: unknown, b: unknown) =>
         scheduler.initCoroutineMode(Boolean(s), Boolean(r), Boolean(t), Boolean(b)),
     );
+    lua.global.set(
+      '__poly_sync_handlers',
+      (r: unknown, t: unknown, b: unknown) =>
+        scheduler.syncHandlers(Boolean(r), Boolean(t), Boolean(b)),
+    );
+    lua.global.set('__poly_sim_set', () => {});
+    lua.global.set('__poly_device_emit', () => {});
+    lua.global.set('__poly_sim_get', (k: unknown) => (k === 'temp' ? 28 : false));
+    lua.global.set('__poly_mock_input', (k: unknown) => (k === 'temp' ? 28 : false));
     lua.global.set('__poly_co_sleep', (ms: unknown) =>
       scheduler.onStartCoSleep(ms),
     );
@@ -156,6 +174,17 @@ async function runLuaDebugInWasmoon(
       end
     `);
 
+    for (const mod of opts.preloadModules ?? []) {
+      if (!mod.luaSource) continue;
+      await lua.doString(`
+        package.preload[${JSON.stringify(mod.name)}] = function()
+          local chunk, err = load(${JSON.stringify(mod.luaSource)}, "@" .. ${JSON.stringify(mod.name)})
+          if not chunk then error(err) end
+          return chunk()
+        end
+      `);
+    }
+
     opts.onReady?.(scheduler);
     await lua.doString(luaDebug);
     return { logs, scheduler };
@@ -216,6 +245,8 @@ async function runPyDebugInMicroPython(
       scheduler.shouldEnterEventLoop(Boolean(r), Boolean(t), Boolean(b)),
     init_scheduler: (s: unknown, r: unknown, t: unknown, b: unknown) =>
       scheduler.initCoroutineMode(Boolean(s), Boolean(r), Boolean(t), Boolean(b)),
+    sync_handlers: (r: unknown, t: unknown, b: unknown) =>
+      scheduler.syncHandlers(Boolean(r), Boolean(t), Boolean(b)),
     co_sleep: (ms: unknown) => scheduler.onStartCoSleep(ms),
     co_yield_slice: () => scheduler.onStartCoYieldSlice(),
     co_done: () => scheduler.onStartCoDone(),
@@ -350,8 +381,9 @@ sys.modules["board"] = _m
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles[0];
     setActiveTimerConfig(getHandleTimerConfig(hdl));
+    const oneshotScript = hdl.scripts.find((s) => s.name === 'timer_oneshot')!;
     const ws = new Blockly.Workspace();
-    Blockly.serialization.workspaces.load(hdl.scripts[1].workspace, ws);
+    Blockly.serialization.workspaces.load(oneshotScript.workspace, ws);
 
     const luaDebug = backendRegistry.get('lua').generate(ws).debugCode;
     const pyDebug = backendRegistry.get('python').generate(ws).debugCode;
@@ -386,33 +418,42 @@ sys.modules["board"] = _m
               inputs: {
                 BODY: {
                   block: {
-                    type: 'poly_start_timer',
-                    id: 'co_t0_start',
-                    fields: { TIMER_ID: '0' },
+                    type: 'poly_set_run_period',
+                    id: 'co_set_rp',
                     inputs: {
-                      PERIOD_MS: { shadow: { type: 'math_number', id: 'm_t0', fields: { NUM: 35 } } },
-                      REPEAT: { shadow: { type: 'math_number', id: 'm_rep', fields: { NUM: 0 } } },
+                      MS: { shadow: { type: 'math_number', id: 'm_rp30', fields: { NUM: 30 } } },
                     },
                     next: {
                       block: {
-                        type: 'controls_whileUntil',
-                        id: 'co_loop',
-                        fields: { MODE: 'WHILE' },
+                        type: 'poly_start_timer',
+                        id: 'co_t0_start',
+                        fields: { TIMER_ID: '0' },
                         inputs: {
-                          BOOL: { block: { type: 'logic_boolean', id: 'co_true', fields: { BOOL: 'TRUE' } } },
-                          DO: {
-                            block: {
-                              type: 'poly_print',
-                              id: 'co_p_loop',
-                              inputs: {
-                                VALUE: { block: { type: 'text', id: 'co_txt', fields: { TEXT: 'START_LOOP_TICK' } } },
-                              },
-                              next: {
+                          PERIOD_MS: { shadow: { type: 'math_number', id: 'm_t0', fields: { NUM: 35 } } },
+                          REPEAT: { shadow: { type: 'math_number', id: 'm_rep', fields: { NUM: 0 } } },
+                        },
+                        next: {
+                          block: {
+                            type: 'controls_whileUntil',
+                            id: 'co_loop',
+                            fields: { MODE: 'WHILE' },
+                            inputs: {
+                              BOOL: { block: { type: 'logic_boolean', id: 'co_true', fields: { BOOL: 'TRUE' } } },
+                              DO: {
                                 block: {
-                                  type: 'poly_wait_ms',
-                                  id: 'co_wait',
+                                  type: 'poly_print',
+                                  id: 'co_p_loop',
                                   inputs: {
-                                    MS: { shadow: { type: 'math_number', id: 'm_w', fields: { NUM: 45 } } },
+                                    VALUE: { block: { type: 'text', id: 'co_txt', fields: { TEXT: 'START_LOOP_TICK' } } },
+                                  },
+                                  next: {
+                                    block: {
+                                      type: 'poly_wait_ms',
+                                      id: 'co_wait',
+                                      inputs: {
+                                        MS: { shadow: { type: 'math_number', id: 'm_w', fields: { NUM: 45 } } },
+                                      },
+                                    },
                                   },
                                 },
                               },
@@ -428,7 +469,6 @@ sys.modules["board"] = _m
             {
               type: 'poly_on_run',
               id: 'co_run',
-              fields: { PERIOD_MS: 30 },
               inputs: {
                 BODY: {
                   block: {
@@ -540,26 +580,35 @@ sys.modules["board"] = _m
               inputs: {
                 BODY: {
                   block: {
-                    type: 'variables_set',
-                    id: 'tight_init',
-                    fields: { VAR: { id: 'v_cnt' } },
+                    type: 'poly_set_run_period',
+                    id: 'tight_set_rp',
                     inputs: {
-                      VALUE: { block: { type: 'math_number', id: 'm0', fields: { NUM: 0 } } },
+                      MS: { shadow: { type: 'math_number', id: 'tm30', fields: { NUM: 30 } } },
                     },
                     next: {
                       block: {
-                        type: 'controls_whileUntil',
-                        id: 'tight_loop',
-                        fields: { MODE: 'WHILE' },
+                        type: 'variables_set',
+                        id: 'tight_init',
+                        fields: { VAR: { id: 'v_cnt' } },
                         inputs: {
-                          BOOL: { block: { type: 'logic_boolean', id: 'tb', fields: { BOOL: 'TRUE' } } },
-                          DO: {
-                            block: {
-                              type: 'math_change',
-                              id: 'tight_inc',
-                              fields: { VAR: { id: 'v_cnt' } },
-                              inputs: {
-                                DELTA: { shadow: { type: 'math_number', id: 'm1', fields: { NUM: 1 } } },
+                          VALUE: { block: { type: 'math_number', id: 'm0', fields: { NUM: 0 } } },
+                        },
+                        next: {
+                          block: {
+                            type: 'controls_whileUntil',
+                            id: 'tight_loop',
+                            fields: { MODE: 'WHILE' },
+                            inputs: {
+                              BOOL: { block: { type: 'logic_boolean', id: 'tb', fields: { BOOL: 'TRUE' } } },
+                              DO: {
+                                block: {
+                                  type: 'math_change',
+                                  id: 'tight_inc',
+                                  fields: { VAR: { id: 'v_cnt' } },
+                                  inputs: {
+                                    DELTA: { shadow: { type: 'math_number', id: 'm1', fields: { NUM: 1 } } },
+                                  },
+                                },
                               },
                             },
                           },
@@ -573,7 +622,6 @@ sys.modules["board"] = _m
             {
               type: 'poly_on_run',
               id: 'tight_run',
-              fields: { PERIOD_MS: 30 },
               inputs: {
                 BODY: {
                   block: {
@@ -638,9 +686,23 @@ sys.modules["board"] = _m
           languageVersion: 0,
           blocks: [
             {
+              type: 'poly_on_start',
+              id: 'err_s',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'poly_set_run_period',
+                    id: 'err_rp',
+                    inputs: {
+                      MS: { shadow: { type: 'math_number', id: 'em20', fields: { NUM: 20 } } },
+                    },
+                  },
+                },
+              },
+            },
+            {
               type: 'poly_on_run',
               id: 'err_run',
-              fields: { PERIOD_MS: 20 },
               inputs: {
                 BODY: {
                   block: {
@@ -673,9 +735,23 @@ sys.modules["board"] = _m
           languageVersion: 0,
           blocks: [
             {
+              type: 'poly_on_start',
+              id: 'inf_s',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'poly_set_run_period',
+                    id: 'inf_rp',
+                    inputs: {
+                      MS: { shadow: { type: 'math_number', id: 'im20', fields: { NUM: 20 } } },
+                    },
+                  },
+                },
+              },
+            },
+            {
               type: 'poly_on_run',
               id: 'inf_run',
-              fields: { PERIOD_MS: 20 },
               inputs: {
                 BODY: {
                   block: {
@@ -786,5 +862,55 @@ sys.modules["board"] = _m
     });
     expect(pyLogs).toContain('CUSTOM_HAT:ESTOP_ON');
     expect(pyLogs).toContain('CUSTOM_HAT:ESTOP_OFF');
+  });
+
+  it('loads split timers.lua dynamically via require("timers") inside on_start and dispatches on_timer_0 / on_timer_1 in real Wasmoon Lua 5.4', async () => {
+    const proj = instantiateProjectFromTemplate('event_timer_demo');
+    const hdl = proj.handles[0];
+    setActiveTimerConfig(getHandleTimerConfig(hdl));
+    const metas = hdl.scripts.map((s) => {
+      const m = inspectWorkspaceScriptMeta(s.workspace);
+      return {
+        id: s.id,
+        name: s.name,
+        isEntry: s.id === hdl.entryScriptId,
+        declaredEvents: m.declaredEvents,
+        requiredScripts: m.requiredScripts,
+      };
+    });
+
+    const mainScript = hdl.scripts.find((s) => s.name === 'main')!;
+    const timersScript = hdl.scripts.find((s) => s.name === 'timers')!;
+
+    setActiveHandleScripts(metas, timersScript.id);
+    const timersWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(timersScript.workspace, timersWs);
+    const timersCleanLua = backendRegistry.get('lua').generate(timersWs).code;
+    timersWs.dispose();
+
+    setActiveHandleScripts(metas, mainScript.id);
+    const mainWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(mainScript.workspace, mainWs);
+    const mainDebugLua = backendRegistry.get('lua').generate(mainWs).debugCode;
+    mainWs.dispose();
+    setActiveHandleScripts([], null);
+    setActiveTimerConfig({ count: 8, aliases: {} });
+
+    const { logs } = await runLuaDebugInWasmoon(mainDebugLua, {
+      preloadModules: [
+        { name: 'board', luaSource: VIRTUAL_BOARD_PACK.sandboxMock!.luaSource },
+        { name: 'timers', luaSource: timersCleanLua },
+      ],
+      onReady: (sched) => {
+        // Press Button A -> triggers T1 (400ms x 3) handled in timers.lua's on_timer_1()
+        setTimeout(() => sched.onMockInputsDelta({ btnA: false }, { btnA: true }), 80);
+        setTimeout(() => sched.requestGracefulStop(), 650);
+      },
+    });
+
+    expect(logs.some((l) => l.includes('已加载 timers.lua'))).toBe(true);
+    expect(logs.some((l) => l.includes('按键 A 按下'))).toBe(true);
+    expect(logs.some((l) => l.includes('T1 告警触发次数 = 1'))).toBe(true);
+    expect(logs.some((l) => l.includes('on_stop 已安全关闭 LED 与三色灯'))).toBe(true);
   });
 });

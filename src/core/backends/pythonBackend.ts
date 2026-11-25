@@ -149,6 +149,12 @@ function registerPythonBlockGenerators(): void {
     return `# ${text}\n`;
   };
 
+  pythonGenerator.forBlock['poly_require_script'] = (block) => {
+    const raw = String(block.getFieldValue('SCRIPT') || 'timers').trim() || 'timers';
+    const ident = sanitizeLocalIdent(raw);
+    return `from ${ident} import *\n`;
+  };
+
   pythonGenerator.forBlock['poly_local_set'] = (block, generator) => {
     const rawName = String(block.getFieldValue('NAME') || 'tmp');
     const ident = sanitizeLocalIdent(rawName);
@@ -264,9 +270,18 @@ async def _poly_call_cb(_cname, _fn, *_args):
     return
   _poly.cb_enter(_cname)
   try:
-    await _fn(*_args)
+    _ret = _fn(*_args)
+    if hasattr(_ret, 'send'):
+      await _ret
   finally:
     _poly.cb_exit()
+
+def _poly_refresh_handlers():
+  _poly.sync_handlers(
+    'on_run' in globals() and callable(on_run),
+    'on_timer' in globals() and callable(on_timer),
+    _has_ext or ('on_button' in globals() and callable(on_button))
+  )
 
 _start_task = asyncio.create_task(_poly_start_runner()) if _has_start else None
 if _poly.init_scheduler(_has_start, _has_run, _has_timer, _has_ext):
@@ -276,16 +291,20 @@ if _poly.init_scheduler(_has_start, _has_run, _has_timer, _has_ext):
       await _poly.resume_start_slice()
       if _POLY_START_ERR is not None:
         raise _POLY_START_ERR
+      _poly_refresh_handlers()
     elif _ev == 'run':
-      if _has_run:
+      if 'on_run' in globals() and callable(on_run):
         await _poly_call_cb('on_run', on_run)
+      _poly_refresh_handlers()
     elif isinstance(_ev, str) and _ev.startswith('timer:'):
-      if _has_timer:
+      if 'on_timer' in globals() and callable(on_timer):
         await _poly_call_cb('on_timer', on_timer, int(_ev[6:]))
+      _poly_refresh_handlers()
     elif isinstance(_ev, str) and _ev.startswith('button:'):
       _parts = _ev.split(':')
       if 'on_button' in globals() and callable(on_button) and len(_parts) == 3:
         await _poly_call_cb('on_button', on_button, _parts[1], _parts[2] == '1')
+      _poly_refresh_handlers()
     elif isinstance(_ev, str) and _ev.startswith('event:'):
       _epayload = json.loads(_ev[6:])
       _ename = _epayload[0]
@@ -293,6 +312,7 @@ if _poly.init_scheduler(_has_start, _has_run, _has_timer, _has_ext):
       _efn = globals().get(_ename)
       if callable(_efn):
         await _poly_call_cb(_ename, _efn, *_eargs)
+      _poly_refresh_handlers()
     else:
       break
 if _start_task is not None and not _start_task.done():

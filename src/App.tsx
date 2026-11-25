@@ -20,13 +20,16 @@ import { ScriptTabBar } from './components/ScriptTabBar';
 import { StatusBar } from './components/StatusBar';
 import { TimerAliasModal } from './components/TimerAliasModal';
 import { TopBar } from './components/TopBar';
+import { inspectWorkspaceScriptMeta } from './core/backends/eventMode';
 import { backendRegistry } from './core/backends/registry';
 import type { GeneratedCodeResult } from './core/backends/types';
 import {
   normalizeTimerConfig,
   setActiveChannelPoolConfig,
   setActiveChannelPoolConfigs,
+  setActiveHandleScripts,
   setActiveProjectCapabilities,
+  type ActiveHandleScriptMeta,
   type ChannelAliasPromptRequest,
 } from './core/blocks/timerConfigBridge';
 import {
@@ -90,6 +93,7 @@ import type {
   PageId,
   ProjectModel,
   ProjectTimerConfig,
+  RuntimeHandle,
   RuntimeTelemetry,
   ScriptLanguageId,
   TargetProfile,
@@ -111,6 +115,19 @@ const VALID_PAGES: PageId[] = [
   'extensions',
   'settings',
 ];
+
+function buildHandleScriptsMeta(handle: RuntimeHandle): ActiveHandleScriptMeta[] {
+  return handle.scripts.map((s) => {
+    const meta = inspectWorkspaceScriptMeta(s.workspace);
+    return {
+      id: s.id,
+      name: s.name,
+      isEntry: s.id === handle.entryScriptId,
+      declaredEvents: meta.declaredEvents,
+      requiredScripts: meta.requiredScripts,
+    };
+  });
+}
 
 function readPageFromHash(): PageId {
   const raw = window.location.hash.replace(/^#\/?/, '').trim() as PageId;
@@ -252,6 +269,7 @@ export function App() {
   );
   setActiveChannelPoolConfigs(activeChannelPoolConfigs);
   setActiveProjectCapabilities(activeProject.enabledCapabilities);
+  setActiveHandleScripts(buildHandleScriptsMeta(activeHandle), activeScript.id);
   extensionRegistry.setActiveProjectLocalPacks(activeProject.localExtensions ?? []);
 
   const language = activeProject.language;
@@ -459,6 +477,7 @@ export function App() {
         ),
       );
       setActiveProjectCapabilities(nextProj.enabledCapabilities);
+      setActiveHandleScripts(buildHandleScriptsMeta(nextHandle), nextScript.id);
 
       activeProjectIdRef.current = nextProj.id;
       activeHandleIdRef.current = nextHandle.id;
@@ -1417,6 +1436,7 @@ export function App() {
         language,
         activeProject.sharedModules,
         activeProject.defaultTimerCount,
+        activeChannelPoolConfigs,
       );
 
       const speedDelay = SPEED_DELAY_MS[settings.executionSpeed];
@@ -1513,6 +1533,7 @@ export function App() {
       settings.timeoutMs,
       settings.timeSliceMs,
       activeTimerConfig.count,
+      activeChannelPoolConfigs,
       language,
       activeHandle,
       activeScript.id,

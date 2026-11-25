@@ -416,6 +416,56 @@ function registerHatGenerators(
       .filter((top) => top.type === b.type && !top.isShadow() && top.isEnabled());
     if (matchingHats.length === 0) return '';
 
+    if (hatSpec.extractBranchFnPrefix) {
+      const fnPrefix = hatSpec.extractBranchFnPrefix;
+      const usedFnNames = new Set<string>();
+      const fnDefs: string[] = [];
+      const dispatchBranches: string[] = [];
+
+      matchingHats.forEach((hatBlk, idx) => {
+        const kw = idx === 0 ? 'if' : 'elseif';
+        const cond = hatSpec.conditionLua
+          ? renderTemplate(hatSpec.conditionLua, b, hatBlk, 'lua', pack)
+          : 'true';
+        const comment = hatSpec.branchCommentLua
+          ? renderTemplate(hatSpec.branchCommentLua, b, hatBlk, 'lua', pack)
+          : '';
+        const rawKey = hatSpec.duplicateKeyTemplate
+          ? renderTemplate(hatSpec.duplicateKeyTemplate, b, hatBlk, 'lua', pack)
+          : String(idx);
+        const safeSuffix = rawKey.replace(/[^A-Za-z0-9_]+/g, '_') || String(idx);
+        let fnName = `${fnPrefix}${safeSuffix}`;
+        let dupIdx = 2;
+        while (usedFnNames.has(fnName)) {
+          fnName = `${fnPrefix}${safeSuffix}_${dupIdx}`;
+          dupIdx += 1;
+        }
+        usedFnNames.add(fnName);
+
+        const rawBody = generator.statementToCode(hatBlk, 'BODY');
+        const headerComment = comment.trim() ? `${comment.trim()}\n` : '';
+        if (codegenContext.debugPass) {
+          fnDefs.push(`function ${fnName}()\n${rawBody}end\n`);
+        } else {
+          fnDefs.push(
+            `${SENTINEL_START}'${hatBlk.id}'__\n` +
+              `${headerComment}` +
+              `function ${fnName}()\n` +
+              `${rawBody}` +
+              `end\n` +
+              `${SENTINEL_END}'${hatBlk.id}'__\n`,
+          );
+        }
+        dispatchBranches.push(`  ${kw} ${cond} then${comment}\n    ${fnName}()\n`);
+      });
+
+      return (
+        `${fnDefs.join('\n')}\n` +
+        `function ${hatSpec.eventName}(${paramsStr})\n` +
+        `${dispatchBranches.join('')}  end\nend\n`
+      );
+    }
+
     const branches: string[] = [];
     matchingHats.forEach((hatBlk, idx) => {
       const kw = idx === 0 ? 'if' : 'elseif';
@@ -474,6 +524,57 @@ function registerHatGenerators(
       .getTopBlocks(true)
       .filter((top) => top.type === b.type && !top.isShadow() && top.isEnabled());
     if (matchingHats.length === 0) return '';
+
+    if (hatSpec.extractBranchFnPrefix) {
+      const fnPrefix = hatSpec.extractBranchFnPrefix;
+      const usedFnNames = new Set<string>();
+      const fnDefs: string[] = [];
+      const dispatchBranches: string[] = [];
+      const callPrefix = codegenContext.debugPass ? 'await ' : '';
+
+      matchingHats.forEach((hatBlk, idx) => {
+        const kw = idx === 0 ? 'if' : 'elif';
+        const cond = hatSpec.conditionPython
+          ? renderTemplate(hatSpec.conditionPython, b, hatBlk, 'python', pack)
+          : 'True';
+        const comment = hatSpec.branchCommentPython
+          ? renderTemplate(hatSpec.branchCommentPython, b, hatBlk, 'python', pack)
+          : '';
+        const rawKey = hatSpec.duplicateKeyTemplate
+          ? renderTemplate(hatSpec.duplicateKeyTemplate, b, hatBlk, 'python', pack)
+          : String(idx);
+        const safeSuffix = rawKey.replace(/[^A-Za-z0-9_]+/g, '_') || String(idx);
+        let fnName = `${fnPrefix}${safeSuffix}`;
+        let dupIdx = 2;
+        while (usedFnNames.has(fnName)) {
+          fnName = `${fnPrefix}${safeSuffix}_${dupIdx}`;
+          dupIdx += 1;
+        }
+        usedFnNames.add(fnName);
+
+        const rawBody = generator.statementToCode(hatBlk, 'BODY');
+        const safeBody = rawBody.trim() ? rawBody : '  pass\n';
+        const headerComment = comment.trim() ? `${comment.trim()}\n` : '';
+        if (codegenContext.debugPass) {
+          fnDefs.push(`${defKw} ${fnName}():\n${globalLine}${safeBody}\n`);
+        } else {
+          fnDefs.push(
+            `${SENTINEL_START}'${hatBlk.id}'__\n` +
+              `${headerComment}` +
+              `${defKw} ${fnName}():\n` +
+              `${globalLine}${safeBody}` +
+              `${SENTINEL_END}'${hatBlk.id}'__\n`,
+          );
+        }
+        dispatchBranches.push(`  ${kw} ${cond}:${comment}\n    ${callPrefix}${fnName}()\n`);
+      });
+
+      return (
+        `${fnDefs.join('\n')}\n` +
+        `${defKw} ${hatSpec.eventName}(${paramsStr}):\n` +
+        `${dispatchBranches.join('')}\n`
+      );
+    }
 
     const branches: string[] = [];
     matchingHats.forEach((hatBlk, idx) => {

@@ -8,8 +8,10 @@ import type {
   ScriptLanguageId,
 } from '../../types/project';
 import { backendRegistry } from '../backends/registry';
+import { inspectWorkspaceScriptMeta } from '../backends/eventMode';
 import {
   setActiveChannelPoolConfigs,
+  setActiveHandleScripts,
 } from '../blocks/timerConfigBridge';
 import { extensionRegistry } from '../extensions/registry';
 import type { ExtensionSandboxMock } from '../extensions/types';
@@ -157,6 +159,19 @@ export class MultiHandleRunnerOrchestrator {
         handle,
         channelPoolPacks,
         project.defaultTimerCount,
+      );
+      setActiveHandleScripts(
+        handle.scripts.map((s) => {
+          const meta = inspectWorkspaceScriptMeta(s.workspace);
+          return {
+            id: s.id,
+            name: s.name,
+            isEntry: s.id === handle.entryScriptId,
+            declaredEvents: meta.declaredEvents,
+            requiredScripts: meta.requiredScripts,
+          };
+        }),
+        entryScript.id,
       );
       const compiled = compileScriptHeadless(
         entryScript.workspace,

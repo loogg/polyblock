@@ -374,6 +374,15 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
             Boolean(hasBtn),
           ),
       );
+      engine.global.set(
+        '__poly_sync_handlers',
+        (hasRun: unknown, hasTimer: unknown, hasBtn: unknown) =>
+          scheduler.syncHandlers(
+            Boolean(hasRun),
+            Boolean(hasTimer),
+            Boolean(hasBtn),
+          ),
+      );
       engine.global.set('__poly_co_sleep', (ms: unknown) =>
         scheduler.onStartCoSleep(ms),
       );

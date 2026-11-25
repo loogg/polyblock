@@ -301,12 +301,39 @@ export class WorkerRuntimeScheduler {
     });
   }
 
+  /**
+   * Dynamically refreshes discovered `_G` callbacks (mirrors C backend per-tick / lazy lookup).
+   * Enables `require("timers")` / `require("buttons")` inside `on_start()` to activate callbacks dynamically.
+   */
+  syncHandlers(
+    hasOnRun: boolean,
+    hasOnTimer: boolean,
+    hasOnButton: boolean,
+  ): void {
+    const prevHasRun = this.hasOnRun;
+    this.hasOnRun = Boolean(hasOnRun);
+    this.hasOnTimer = Boolean(hasOnTimer);
+    this.hasOnButton = Boolean(hasOnButton);
+
+    if (!prevHasRun && this.hasOnRun && !this.runExplicitlyControlled) {
+      this.runActive = true;
+      this.nextRunAt = this.now() + this.runPeriodMs;
+      this.wake();
+      this.emitTelemetry(true);
+    } else if (this.hasOnButton && !this.eventLoopActive && !this.stopRequested) {
+      this.eventLoopActive = true;
+      this.wake();
+      this.emitTelemetry(true);
+    }
+  }
+
   setRunPeriod(rawMs: unknown): void {
     const n = Number(rawMs);
     const period = Number.isFinite(n) ? Math.max(10, Math.min(600_000, Math.round(n))) : 100;
     this.runPeriodMs = period;
+    // Immediately re-arm next trigger from current logical time (effective immediately)
     if (this.runActive) {
-      this.nextRunAt = Math.min(this.nextRunAt, this.now() + period);
+      this.nextRunAt = this.now() + period;
     }
     this.wake();
     this.emitTelemetry(true);

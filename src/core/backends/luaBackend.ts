@@ -127,6 +127,11 @@ function registerLuaBlockGenerators(): void {
     return `-- ${text}\n`;
   };
 
+  luaGenerator.forBlock['poly_require_script'] = (block) => {
+    const scriptName = String(block.getFieldValue('SCRIPT') || 'timers').trim() || 'timers';
+    return `require(${JSON.stringify(scriptName)})\n`;
+  };
+
   luaGenerator.forBlock['poly_local_set'] = (block, generator) => {
     const rawName = String(block.getFieldValue('NAME') || 'tmp');
     const ident = sanitizeLocalIdent(rawName);
@@ -249,19 +254,31 @@ local function __poly_run_start_slice()
   end
 end
 
+local function __poly_refresh_handlers()
+  __poly_sync_handlers(
+    type(on_run) == "function",
+    type(on_timer) == "function",
+    _has_ext or (type(on_button) == "function")
+  )
+end
+
 if __poly_init_scheduler(_has_start, _has_run, _has_timer, _has_ext) then
   while true do
     local _ev = __poly_next_event():await()
     if _ev == "start_resume" then
       __poly_run_start_slice()
+      __poly_refresh_handlers()
     elseif _ev == "run" then
       __poly_call_cb("on_run", on_run)
+      __poly_refresh_handlers()
     elseif type(_ev) == "string" and _ev:sub(1, 6) == "timer:" then
       local _tid = tonumber(_ev:sub(7))
       if _tid ~= nil then __poly_call_cb("on_timer", on_timer, _tid) end
+      __poly_refresh_handlers()
     elseif type(_ev) == "string" and _ev:sub(1, 7) == "button:" then
       local _k, _p = _ev:match("^button:([^:]+):([01])$")
       if _k ~= nil then __poly_call_cb("on_button", on_button, _k, _p == "1") end
+      __poly_refresh_handlers()
     elseif type(_ev) == "string" and _ev:sub(1, 6) == "event:" then
       local _ename = __poly_last_event_name()
       local _fn = _G[_ename]
@@ -274,6 +291,7 @@ if __poly_init_scheduler(_has_start, _has_run, _has_timer, _has_ext) then
         else __poly_call_cb(_ename, _fn, __poly_last_event_arg(1), __poly_last_event_arg(2), __poly_last_event_arg(3), __poly_last_event_arg(4))
         end
       end
+      __poly_refresh_handlers()
     else
       break
     end

@@ -13,6 +13,16 @@ export interface ChannelAliasPromptRequest {
   label: string;
 }
 
+export interface ActiveHandleScriptMeta {
+  id: string;
+  name: string;
+  isEntry: boolean;
+  /** Top-level global callback event names declared in this script (e.g. 'on_start', 'on_timer'). */
+  declaredEvents: string[];
+  /** Sibling script names explicitly loaded via `poly_require_script` inside this script. */
+  requiredScripts: string[];
+}
+
 export function normalizeTimerConfig(
   raw?: Partial<ProjectTimerConfig> | null,
   fallbackCount = DEFAULT_TIMER_COUNT,
@@ -54,6 +64,8 @@ const activeChannelPools = new Map<string, ProjectTimerConfig>([
 ]);
 
 let activeCapabilities: string[] | null = null;
+let activeHandleScripts: ActiveHandleScriptMeta[] = [];
+let activeHandleScriptId: string | null = null;
 
 export function setActiveProjectCapabilities(caps: string[] | null): void {
   activeCapabilities = caps ? [...caps] : null;
@@ -61,6 +73,44 @@ export function setActiveProjectCapabilities(caps: string[] | null): void {
 
 export function getActiveProjectCapabilities(): string[] | null {
   return activeCapabilities;
+}
+
+export function setActiveHandleScripts(
+  scripts: ActiveHandleScriptMeta[],
+  currentScriptId: string | null,
+): void {
+  activeHandleScripts = scripts.map((s) => ({
+    ...s,
+    declaredEvents: [...s.declaredEvents],
+    requiredScripts: [...s.requiredScripts],
+  }));
+  activeHandleScriptId = currentScriptId;
+}
+
+export function getActiveHandleScripts(): ActiveHandleScriptMeta[] {
+  return activeHandleScripts;
+}
+
+export function getActiveHandleScriptId(): string | null {
+  return activeHandleScriptId;
+}
+
+/** Dynamic Blockly dropdown options listing sibling scripts in the active handle. */
+export function getSiblingScriptDropdownOptions(
+  fallbackName?: string,
+): Array<[string, string]> {
+  const siblings = activeHandleScripts.filter(
+    (s) => s.id !== activeHandleScriptId,
+  );
+  const options: Array<[string, string]> = siblings.map((s) => [s.name, s.name]);
+  const fb = (fallbackName ?? '').trim();
+  if (fb && !options.some(([, v]) => v === fb)) {
+    options.push([`${fb} (未找到)`, fb]);
+  }
+  if (options.length === 0) {
+    options.push(['timers', 'timers']);
+  }
+  return options;
 }
 
 let channelAliasPromptHandler: ((req: ChannelAliasPromptRequest) => void) | null = null;

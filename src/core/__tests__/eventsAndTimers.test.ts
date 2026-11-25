@@ -1,8 +1,10 @@
 import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { inspectWorkspaceScriptMeta } from '../backends/eventMode';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
 import {
+  setActiveHandleScripts,
   setActiveProjectCapabilities,
   setActiveTimerConfig,
 } from '../blocks/timerConfigBridge';
@@ -25,72 +27,104 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     extensionRegistry.ensureInitialized();
   });
 
-  it('generates clean zero-closure Lua 5.4 & Python 3 Event-Driven ABI with local vars and scope tree', () => {
+  it('generates clean zero-closure Lua 5.4 & Python 3 Event-Driven ABI with Scheme A on_timer_N functions and multi-file require("timers")', () => {
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles[0];
     setActiveTimerConfig(getHandleTimerConfig(hdl));
-    const ws = loadWs(hdl.scripts[0].workspace);
+    const scriptMetas = hdl.scripts.map((s) => {
+      const m = inspectWorkspaceScriptMeta(s.workspace);
+      return {
+        id: s.id,
+        name: s.name,
+        isEntry: s.id === hdl.entryScriptId,
+        declaredEvents: m.declaredEvents,
+        requiredScripts: m.requiredScripts,
+      };
+    });
 
-    const luaRes = backendRegistry.get('lua').generate(ws);
-    expect(luaRes.isEventDriven).toBe(true);
-    expect(luaRes.diagnostics).toHaveLength(0);
-    expect(luaRes.code).toContain('local rt = require("rt")');
-    expect(luaRes.code).toContain('local board = require("board")');
-    expect(luaRes.code).toContain('function on_start()');
-    expect(luaRes.code).toContain('rt.set_run_period(100)');
-    expect(luaRes.code).toContain('function on_run()');
-    expect(luaRes.code).toContain('local cur_temp = board.read_temp()');
-    expect(luaRes.code).toContain('function on_timer(id)');
-    expect(luaRes.code).toContain('if id == 0 then -- T0: 心跳灯');
-    expect(luaRes.code).toContain('elseif id == 1 then -- T1: 告警倒计时');
-    expect(luaRes.code).toContain('function on_button(key, pressed)');
-    expect(luaRes.code).toContain('if key == "A" and pressed then');
-    expect(luaRes.code).toContain('function on_stop()');
-    expect(luaRes.code).toContain('rt.start_timer(0, 500, 0) -- T0: 心跳灯');
-    expect(luaRes.code).toContain('rt.start_timer(1, 400, 3) -- T1: 告警倒计时');
-    expect(luaRes.code).not.toContain('rt.on_timer(');
-    expect(luaRes.debugCode).toContain('__poly_init_scheduler');
-    expect(luaRes.debugCode).toContain('coroutine.create(on_start)');
-    expect(luaRes.debugCode).toContain('__poly_next_event():await()');
-    expect(luaRes.sourceMap['ev_start_t0']).toBeDefined();
-    expect(luaRes.sourceMap['ev_print_t1']).toBeDefined();
+    // 1. Entry script `main` (on_start with require("timers") + rt.set_run_period(100), on_run, on_button, on_stop)
+    const mainScript = hdl.scripts[0];
+    const timersScript = hdl.scripts[1];
+    expect(mainScript.name).toBe('main');
+    expect(timersScript.name).toBe('timers');
 
-    // Verify Scope-Tree variable classification
-    const scopes = luaRes.variableScopes ?? [];
-    const sharedNode = scopes.find((s) => s.id === 'shared');
-    expect(sharedNode).toBeDefined();
-    expect(sharedNode!.variables.map((v) => v.name)).toContain('led_on');
-    expect(sharedNode!.variables.map((v) => v.name)).toContain('ticks');
-    expect(sharedNode!.variables.map((v) => v.name)).not.toContain('cur_temp');
+    setActiveHandleScripts(scriptMetas, mainScript.id);
+    const mainWs = loadWs(mainScript.workspace);
+    const luaMain = backendRegistry.get('lua').generate(mainWs);
+    expect(luaMain.isEventDriven).toBe(true);
+    expect(luaMain.diagnostics).toHaveLength(0);
+    expect(luaMain.code).toContain('local rt = require("rt")');
+    expect(luaMain.code).toContain('local board = require("board")');
+    expect(luaMain.code).toContain('function on_start()');
+    expect(luaMain.code).toContain('require("timers")');
+    expect(luaMain.code).toContain('rt.set_run_period(100)');
+    expect(luaMain.code).toContain('function on_run()');
+    expect(luaMain.code).toContain('local cur_temp = board.read_temp()');
+    expect(luaMain.code).toContain('function on_button(key, pressed)');
+    expect(luaMain.code).toContain('if key == "A" and pressed then');
+    expect(luaMain.code).toContain('function on_stop()');
+    expect(luaMain.code).toContain('rt.start_timer(0, 500, 0) -- T0: 心跳灯');
+    expect(luaMain.code).toContain('rt.start_timer(1, 400, 3) -- T1: 告警倒计时');
+    expect(luaMain.code).not.toContain('rt.on_timer(');
+    expect(luaMain.debugCode).toContain('__poly_init_scheduler');
+    expect(luaMain.debugCode).toContain('__poly_sync_handlers');
+    expect(luaMain.debugCode).toContain('coroutine.create(on_start)');
+    expect(luaMain.debugCode).toContain('__poly_next_event():await()');
+    expect(luaMain.sourceMap['ev_start_t0']).toBeDefined();
 
+    // Verify Scope-Tree variable classification on main.lua
+    const scopes = luaMain.variableScopes ?? [];
     const runNode = scopes.find((s) => s.label.includes('on_run'));
     expect(runNode).toBeDefined();
     expect(
       runNode!.variables.some((v) => v.name === 'cur_temp' && v.kind === 'local'),
     ).toBe(true);
 
-    const pyRes = backendRegistry.get('python').generate(ws);
-    expect(pyRes.isEventDriven).toBe(true);
-    expect(pyRes.diagnostics).toHaveLength(0);
-    expect(pyRes.code).toContain('import rt');
-    expect(pyRes.code).toContain('import board');
-    expect(pyRes.code).toContain('def on_start():');
-    expect(pyRes.code).toContain('global led_on, ticks');
-    expect(pyRes.code).not.toContain('global cur_temp');
-    expect(pyRes.code).toContain('cur_temp = board.read_temp()');
-    expect(pyRes.code).toContain('rt.set_run_period(100)');
-    expect(pyRes.code).toContain('def on_run():');
-    expect(pyRes.code).toContain('def on_timer(id):');
-    expect(pyRes.code).toContain('if id == 0:');
-    expect(pyRes.code).toContain('elif id == 1:');
-    expect(pyRes.code).toContain('def on_button(key, pressed):');
-    expect(pyRes.code).toContain('if key == "A" and pressed:');
-    expect(pyRes.code).toContain('def on_stop():');
-    expect(pyRes.code).not.toContain('rt.on_timer(');
-    expect(pyRes.debugCode).toContain('async def on_timer(id):');
-    expect(pyRes.debugCode).toContain('await _poly.next_event()');
+    const pyMain = backendRegistry.get('python').generate(mainWs);
+    expect(pyMain.isEventDriven).toBe(true);
+    expect(pyMain.diagnostics).toHaveLength(0);
+    expect(pyMain.code).toContain('import rt');
+    expect(pyMain.code).toContain('import board');
+    expect(pyMain.code).toContain('from timers import *');
+    expect(pyMain.code).toContain('def on_start():');
+    expect(pyMain.code).toContain('global led_on, ticks');
+    expect(pyMain.code).not.toContain('global cur_temp');
+    expect(pyMain.code).toContain('cur_temp = board.read_temp()');
+    expect(pyMain.code).toContain('rt.set_run_period(100)');
+    expect(pyMain.code).toContain('def on_run():');
+    expect(pyMain.code).toContain('def on_button(key, pressed):');
+    expect(pyMain.code).toContain('if key == "A" and pressed:');
+    expect(pyMain.code).toContain('def on_stop():');
+    expect(pyMain.debugCode).toContain('await _poly.next_event()');
+    mainWs.dispose();
 
-    ws.dispose();
+    // 2. Companion script `timers` (Scheme A: global function on_timer_0/1 + clean on_timer(id) router)
+    setActiveHandleScripts(scriptMetas, timersScript.id);
+    const timersWs = loadWs(timersScript.workspace);
+    const luaTimers = backendRegistry.get('lua').generate(timersWs);
+    expect(luaTimers.diagnostics).toHaveLength(0);
+    expect(luaTimers.code).toContain('function on_timer_0()');
+    expect(luaTimers.code).toContain('function on_timer_1()');
+    expect(luaTimers.code).not.toContain('local function on_timer_0');
+    expect(luaTimers.code).toContain('function on_timer(id)');
+    expect(luaTimers.code).toContain('if id == 0 then -- T0: 心跳灯\n    on_timer_0()');
+    expect(luaTimers.code).toContain('elseif id == 1 then -- T1: 告警倒计时\n    on_timer_1()');
+    expect(luaTimers.sourceMap['ev_print_t1']).toBeDefined();
+
+    const pyTimers = backendRegistry.get('python').generate(timersWs);
+    expect(pyTimers.diagnostics).toHaveLength(0);
+    expect(pyTimers.code).toContain('def on_timer_0():');
+    expect(pyTimers.code).toContain('def on_timer_1():');
+    expect(pyTimers.code).toContain('def on_timer(id):');
+    expect(pyTimers.code).toContain('if id == 0:');
+    expect(pyTimers.code).toContain('on_timer_0()');
+    expect(pyTimers.code).toContain('elif id == 1:');
+    expect(pyTimers.code).toContain('on_timer_1()');
+    expect(pyTimers.debugCode).toContain('async def on_timer(id):');
+    expect(pyTimers.debugCode).toContain('await on_timer_0()');
+
+    timersWs.dispose();
+    setActiveHandleScripts([], null);
     setActiveTimerConfig({ count: 8, aliases: {} });
   });
 
@@ -197,7 +231,6 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
             id: 'bad_run',
             x: 320,
             y: 20,
-            fields: { PERIOD_MS: 100 },
             inputs: {
               BODY: {
                 block: {
@@ -286,5 +319,77 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(dispatched).toContain('timer:0');
     expect(dispatched).toContain('timer:1');
     expect(dispatched).toContain('run');
+  });
+
+  it('flags cross-file global callback conflicts when linked scripts both define on_timer, and re-arms setRunPeriod immediately', async () => {
+    setActiveHandleScripts(
+      [
+        {
+          id: 's_main',
+          name: 'main',
+          isEntry: true,
+          declaredEvents: ['on_start', 'on_timer'],
+          requiredScripts: ['timers'],
+        },
+        {
+          id: 's_timers',
+          name: 'timers',
+          isEntry: false,
+          declaredEvents: ['on_timer'],
+          requiredScripts: [],
+        },
+      ],
+      's_main',
+    );
+    const conflictWs = loadWs({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'cf_s',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_require_script',
+                  id: 'cf_req',
+                  fields: { SCRIPT: 'timers' },
+                },
+              },
+            },
+          },
+          {
+            type: 'poly_on_timer',
+            id: 'cf_t0',
+            fields: { TIMER_ID: '0' },
+          },
+        ],
+      },
+    });
+    const res = backendRegistry.get('lua').generate(conflictWs);
+    expect(
+      res.diagnostics.some(
+        (d) =>
+          d.severity === 'error' &&
+          d.id.startsWith('cross-file-cb-conflict-on_timer-timers'),
+      ),
+    ).toBe(true);
+    conflictWs.dispose();
+    setActiveHandleScripts([], null);
+
+    // setRunPeriod immediately re-arms next trigger (from 5000ms down to 25ms)
+    const sched = new WorkerRuntimeScheduler({
+      runId: 'period-rearm',
+      timerCount: 4,
+      post: () => {},
+    });
+    sched.setRunPeriod(5000);
+    sched.initCoroutineMode(false, true, false, false);
+    const tStart = performance.now();
+    sched.setRunPeriod(25);
+    const ev = await sched.nextEvent();
+    const elapsed = performance.now() - tStart;
+    expect(ev).toBe('run');
+    expect(elapsed).toBeLessThan(250);
   });
 });

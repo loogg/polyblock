@@ -38,6 +38,12 @@ export interface ExtensionHatSpec {
   /** Optional inline comment suffix on each dispatch branch (e.g. `{{TIMER_ID:channel_comment_lua}}`). */
   branchCommentLua?: string;
   branchCommentPython?: string;
+  /**
+   * Optional Scheme A extraction prefix for mode='dispatch'.
+   * When set (e.g. `'on_timer_'`), each hat block generates a standalone global function
+   * `function on_timer_<key>() ... end`, and the top-level dispatcher only calls those functions.
+   */
+  extractBranchFnPrefix?: string;
   /** Template producing a uniqueness key to warn on duplicate dispatch branches (e.g. "{{KEY}}:{{EDGE}}"). */
   duplicateKeyTemplate?: string;
   /** Scope-tree display label template (e.g. "on_button · 按键 {{KEY}} {{EDGE}}"). */

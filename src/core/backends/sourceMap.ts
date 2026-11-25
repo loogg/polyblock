@@ -2,6 +2,8 @@ import type * as Blockly from 'blockly';
 import type { DiagnosticItem, SourceLineRange } from '../../types/project';
 import {
   getActiveChannelPoolConfig,
+  getActiveHandleScriptId,
+  getActiveHandleScripts,
   getActiveProjectCapabilities,
 } from '../blocks/timerConfigBridge';
 import { extensionRegistry } from '../extensions/registry';
@@ -247,6 +249,70 @@ export function analyzeWorkspaceDiagnostics(
             severity: 'error',
             message: `${pool.label} ${pool.prefix}${cid} 超出当前句柄配置范围（0~${poolCfg.count - 1}），请更换通道或在句柄配置中调大通道数。`,
             blockId: blk.id,
+          });
+        }
+      }
+    }
+  }
+
+  // 5. Cross-file global callback collision & missing `require` script checks within the active handle
+  const handleScripts = getActiveHandleScripts();
+  const currentScriptId = getActiveHandleScriptId();
+  if (handleScripts.length > 0) {
+    const currentScript = handleScripts.find((s) => s.id === currentScriptId);
+    const siblings = handleScripts.filter((s) => s.id !== currentScriptId);
+    const siblingByName = new Map(siblings.map((s) => [s.name, s]));
+
+    // Map declared eventName -> first top blockId in current workspace
+    const currentEventToBlock = new Map<string, string>();
+    for (const blk of enabledTopBlocks) {
+      if (blk.type === 'poly_on_start') {
+        if (!currentEventToBlock.has('on_start')) currentEventToBlock.set('on_start', blk.id);
+      } else {
+        const hatDef = extensionRegistry.getHatBlockDef(blk.type);
+        if (hatDef && !currentEventToBlock.has(hatDef.hat.eventName)) {
+          currentEventToBlock.set(hatDef.hat.eventName, blk.id);
+        }
+      }
+    }
+
+    const linkedSiblings = new Map<string, (typeof siblings)[number]>();
+    for (const blk of workspace.getAllBlocks(false)) {
+      if (blk.isShadow() || !blk.isEnabled() || blk.type !== 'poly_require_script') continue;
+      const targetName = String(blk.getFieldValue('SCRIPT') || '').trim();
+      if (!targetName) continue;
+      const found = siblingByName.get(targetName);
+      if (!found) {
+        diagnostics.push({
+          id: `require-missing-${targetName}-${blk.id}`,
+          severity: 'warning',
+          message: `当前句柄内未找到脚本「${targetName}」，请先在脚本标签栏新建该脚本。`,
+          blockId: blk.id,
+        });
+      } else {
+        linkedSiblings.set(found.id, found);
+      }
+    }
+
+    // Also include siblings that explicitly require the current script (reverse direction check)
+    if (currentScript) {
+      for (const sib of siblings) {
+        if (sib.requiredScripts.includes(currentScript.name)) {
+          linkedSiblings.set(sib.id, sib);
+        }
+      }
+    }
+
+    // Flag overlapping global callback definitions between linked scripts in the same handle
+    for (const sib of linkedSiblings.values()) {
+      for (const evName of sib.declaredEvents) {
+        const localBlkId = currentEventToBlock.get(evName);
+        if (localBlkId) {
+          diagnostics.push({
+            id: `cross-file-cb-conflict-${evName}-${sib.name}-${localBlkId}`,
+            severity: 'error',
+            message: `回调「${evName}」与同句柄联动脚本「${sib.name}」冲突：两者都会写入全局 _G.${evName}，后加载会覆盖前者，请将同类事件合并到同一脚本中。`,
+            blockId: localBlkId,
           });
         }
       }

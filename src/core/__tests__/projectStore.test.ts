@@ -140,9 +140,16 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     expect(proj.handles).toHaveLength(2);
 
     // Add + rename + duplicate + delete script in active handle
+    // Auxiliary script added to an existing handle defaults to blank module canvas (no duplicate `on_start`)
     proj = addScriptToProject(proj, 'helper');
     expect(getActiveHandle(proj).scripts).toHaveLength(2);
     expect(getActiveHandle(proj).scripts[1].name).toBe('helper');
+    const helperBlocks = (
+      getActiveHandle(proj).scripts[1].workspace as {
+        blocks?: { blocks?: unknown[] };
+      }
+    ).blocks?.blocks;
+    expect(helperBlocks).toEqual([]);
 
     proj = renameScriptInProject(proj, getActiveHandle(proj).scripts[1].id, 'main.lua');
     expect(getActiveHandle(proj).scripts[1].name).toBe('main_2');
