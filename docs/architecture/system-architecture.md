@@ -228,3 +228,17 @@ flowchart TD
 ### 9.4 多句柄并发沙箱模拟（`MultiHandleRunner`）
 - **单句柄调试**：运行当前句柄的当前脚本（自动挂载同句柄其他辅助脚本），支持逐块高亮、断点暂停与单步调试。
 - **全项目多句柄并发模拟**：为项目中每个 `autoStart` 句柄分配独立 `Worker` + 独立 WASM 引擎 + 独立 `WorkerRuntimeScheduler`，并发驱动同一虚拟硬件板卡与共享输入事件，日志自动带 `[句柄名]` 彩色标签，右侧监控按句柄展示各自的 `on_run` 与定时器进度，点击停止统一触发各句柄 `on_stop()` 优雅停机。
+
+## 10. 内核与硬件解耦架构：TargetProfile + 可插拔能力包（Phase 7）
+
+为彻底消除“定时器 / 按键回调 / 虚拟外设”写死在核心引擎中的耦合，PolyBlock 重构为严格的四层解耦架构：
+
+1. **Layer 0 · 通用编程内核（零硬件假设）**：
+   - 仅包含所有项目共有的语言基础积木（`当程序启动`、打印、控制流、共享/局部变量、运算、逻辑、文本、列表、函数）、三层工程骨架（`Project → RuntimeHandle → ProjectScript`）、双语言生成器、作用域树与断点单步调试器。
+2. **Layer 1 · 目标运行环境 / 板型规格（`TargetProfile` · `.polyboard.json`）**：
+   - 项目级绑定一套目标板型预设（内置：`纯脚本环境 generic-script`、`通用嵌入式 RT 板 embedded-rt`、`虚拟硬件 RT 演示板 virtual-board-rt`、`虚拟硬件基础板 virtual-board-basic`，并支持导入自定义 `.polyboard.json`），决定该项目的默认能力清单与硬件规格，同时允许用户在项目配置中按需自由启停具体能力（`3A`）。
+3. **Layer 2 · 平等可插拔的能力 / 外设包（`enabledCapabilities[]`）**：
+   - 运行时能力（`rt-lifecycle` 周期回调 `on_run/on_stop`、`rt-timers` 每句柄独立多路编号定时器）与外设/API 扩展包（`virtual-board` 含 LED/RGB/OLED/温度与 `on_button` 按键回调、`dict-json`、`clock-timer`、自定义 `.polyext.json`）统一纳入项目能力清单。
+   - **按需呈现原则**：未启用 `rt-timers` 的项目不显示「定时」分类、设置弹窗不显示定时器配置、监控区不显示定时器；未启用 `virtual-board` 的项目不显示 `on_button` 积木与虚拟板卡模拟面板；纯脚本项目完全隐藏「模拟」页签。
+4. **Layer 3 · 句柄级通用能力配置（`RuntimeHandle.capabilityConfigs`）**：
+   - `RuntimeHandle` 不再硬编码 `timerConfig`，改为通用 `capabilityConfigs: Record<string, unknown>`（如启用 `rt-timers` 时存取 `capabilityConfigs['rt-timers']`），未来接入更多每句柄隔离能力（如串口/PWM/状态机配置）零修改核心模型。

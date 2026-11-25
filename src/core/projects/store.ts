@@ -5,6 +5,12 @@ import {
   MIN_TIMER_COUNT,
   normalizeTimerConfig,
 } from '../blocks/timerConfigBridge';
+import {
+  CAP_RT_LIFECYCLE,
+  CAP_RT_TIMERS,
+  CAP_VIRTUAL_BOARD,
+  targetProfileRegistry,
+} from '../capabilities/registry';
 import type {
   LegacyProjectFileV1,
   LegacyProjectModelV2,
@@ -13,6 +19,7 @@ import type {
   ProjectTimerConfig,
   RuntimeHandle,
   ScriptLanguageId,
+  TargetProfile,
   WorkspaceStoreState,
 } from '../../types/project';
 
@@ -47,8 +54,9 @@ export interface MultiHandleProjectTemplate {
   name: string;
   description: string;
   language: ScriptLanguageId;
+  targetProfileId: string;
   defaultTimerCount?: number;
-  enabledExtensions?: string[];
+  enabledCapabilities: string[];
   handles: HandleTemplateSpec[];
 }
 
@@ -152,8 +160,81 @@ export function makeUniqueProjectName(
   return `${base} (${idx})`;
 }
 
-export function getHandleTimerConfig(handle: RuntimeHandle): ProjectTimerConfig {
-  return normalizeTimerConfig(handle.timerConfig);
+export function getHandleTimerConfig(
+  handle: RuntimeHandle,
+  fallbackCount = DEFAULT_TIMER_COUNT,
+): ProjectTimerConfig {
+  const fromCap = handle.capabilityConfigs?.[CAP_RT_TIMERS] as
+    | Partial<ProjectTimerConfig>
+    | undefined;
+  const legacy = (handle as unknown as { timerConfig?: Partial<ProjectTimerConfig> })
+    .timerConfig;
+  return normalizeTimerConfig(fromCap ?? legacy, fallbackCount);
+}
+
+export function setHandleTimerConfig(
+  handle: RuntimeHandle,
+  nextCfg: ProjectTimerConfig,
+): RuntimeHandle {
+  return {
+    ...handle,
+    capabilityConfigs: {
+      ...(handle.capabilityConfigs ?? {}),
+      [CAP_RT_TIMERS]: normalizeTimerConfig(nextCfg),
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function applyTargetProfileToProject(
+  project: ProjectModel,
+  profile: TargetProfile,
+): ProjectModel {
+  const now = new Date().toISOString();
+  return {
+    ...project,
+    targetProfileId: profile.id,
+    enabledCapabilities: [...profile.capabilities],
+    defaultTimerCount: profile.defaultTimerCount || DEFAULT_TIMER_COUNT,
+    updatedAt: now,
+  };
+}
+
+function inferCapabilitiesFromWorkspaces(
+  workspaces: Array<Record<string, unknown>>,
+): string[] {
+  const raw = JSON.stringify(workspaces);
+  const inferred = new Set<string>();
+  if (
+    raw.includes('"poly_on_run"') ||
+    raw.includes('"poly_on_stop"') ||
+    raw.includes('"poly_set_run_period"') ||
+    raw.includes('"poly_run_control"')
+  ) {
+    inferred.add(CAP_RT_LIFECYCLE);
+  }
+  if (
+    raw.includes('"poly_on_timer"') ||
+    raw.includes('"poly_start_timer"') ||
+    raw.includes('"poly_stop_timer"') ||
+    raw.includes('"poly_get_timer_value"') ||
+    raw.includes('"poly_is_timer_running"')
+  ) {
+    inferred.add(CAP_RT_TIMERS);
+  }
+  if (raw.includes('"poly_on_button"') || raw.includes('"ext_board_')) {
+    inferred.add(CAP_VIRTUAL_BOARD);
+  }
+  return Array.from(inferred);
+}
+
+function inferProfileId(caps: string[]): string {
+  const hasRt = caps.includes(CAP_RT_LIFECYCLE) || caps.includes(CAP_RT_TIMERS);
+  const hasVb = caps.includes(CAP_VIRTUAL_BOARD);
+  if (hasRt && hasVb) return 'virtual-board-rt';
+  if (hasRt) return 'embedded-rt';
+  if (hasVb) return 'virtual-board-basic';
+  return 'generic-script';
 }
 
 const tplById = (id: string) =>
@@ -1101,10 +1182,11 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     id: 'starter_suite',
     name: '入门演示项目',
     description:
-      '包含单句柄下的 3 个教学脚本：主累加日志（main）、延时与断点单步（step_debug）、随机采样告警（threshold_alarm）。',
+      '纯脚本环境（无硬件、无定时器）：含主累加日志（main）、延时与断点单步（step_debug）、随机采样告警（threshold_alarm）。',
     language: 'lua',
+    targetProfileId: 'generic-script',
     defaultTimerCount: 8,
-    enabledExtensions: [],
+    enabledCapabilities: [],
     handles: [
       {
         name: 'main_vm',
@@ -1123,10 +1205,11 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     id: 'multi_handle_robot',
     name: '多句柄协同仿真项目',
     description:
-      '演示三层工程模型（2 个独立隔离的 Lua 句柄）：led_ctrl 与 sensor_hub 各自独享 T0 定时器与局部变量，可一键并发模拟且互不窜扰。',
+      '虚拟硬件 RT 演示板（2 个独立隔离句柄）：led_ctrl 与 sensor_hub 各自独享 T0 定时器与局部变量，可一键并发模拟且互不窜扰。',
     language: 'lua',
+    targetProfileId: 'virtual-board-rt',
     defaultTimerCount: 8,
-    enabledExtensions: ['virtual-board'],
+    enabledCapabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_VIRTUAL_BOARD],
     handles: [
       {
         name: 'led_ctrl',
@@ -1166,10 +1249,11 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     id: 'event_timer_demo',
     name: '事件回调与多路定时器示例',
     description:
-      '单句柄嵌入式零闭包 ABI 演示（on_start / on_run / on_timer(id) / on_button / on_stop）：常驻心跳灯、实时滑块响应与按键触发 T1。',
+      '虚拟硬件 RT 演示板（单句柄零闭包 ABI）：常驻心跳灯、实时滑块响应与按键触发 T1 三次告警定时器。',
     language: 'lua',
+    targetProfileId: 'virtual-board-rt',
     defaultTimerCount: 8,
-    enabledExtensions: ['virtual-board'],
+    enabledCapabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_VIRTUAL_BOARD],
     handles: [
       {
         name: 'board_vm',
@@ -1194,10 +1278,11 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     id: 'virtual_board_demo',
     name: '虚拟硬件联动演示项目',
     description:
-      '预装「虚拟硬件外设包」，含 LED/RGB/OLED 自检（led_blink）与交互式温度告警（temp_guard）。',
+      '虚拟硬件基础板（无定时器）：预装示例虚拟硬件外设包与字典进阶包，含 LED/RGB/OLED 自检与交互式温度告警。',
     language: 'python',
+    targetProfileId: 'virtual-board-basic',
     defaultTimerCount: 8,
-    enabledExtensions: ['virtual-board', 'dict-json'],
+    enabledCapabilities: [CAP_VIRTUAL_BOARD, 'dict-json'],
     handles: [
       {
         name: 'main_vm',
@@ -1213,10 +1298,11 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
   {
     id: 'blank_project',
     name: '空白项目',
-    description: '包含一个干净的 main_vm 句柄与 main 入口脚本，适合从零搭建工程。',
+    description: '纯脚本环境空白工程（无定时器/无预设外设），后续可在项目配置中按需勾选目标板型与能力包。',
     language: 'lua',
+    targetProfileId: 'generic-script',
     defaultTimerCount: 8,
-    enabledExtensions: [],
+    enabledCapabilities: [],
     handles: [
       {
         name: 'main_vm',
@@ -1232,6 +1318,7 @@ function instantiateHandleSpec(
   spec: HandleTemplateSpec,
   idx: number,
   defaultTimerCount: number,
+  hasTimersCap: boolean,
   now: string,
 ): RuntimeHandle {
   const scripts: ProjectScript[] = spec.scripts.map((s) => ({
@@ -1246,6 +1333,13 @@ function instantiateHandleSpec(
     spec.scripts.findIndex((s) => s.isEntry),
   );
   const entryId = scripts[entryIdx]?.id ?? scripts[0].id;
+  const capabilityConfigs: Record<string, unknown> = {};
+  if (hasTimersCap || spec.timerConfig) {
+    capabilityConfigs[CAP_RT_TIMERS] = normalizeTimerConfig(
+      spec.timerConfig,
+      defaultTimerCount,
+    );
+  }
 
   return {
     id: createId('hdl'),
@@ -1253,7 +1347,7 @@ function instantiateHandleSpec(
     description: spec.description,
     color: spec.color ?? HANDLE_COLOR_PALETTE[idx % HANDLE_COLOR_PALETTE.length],
     autoStart: spec.autoStart ?? true,
-    timerConfig: normalizeTimerConfig(spec.timerConfig, defaultTimerCount),
+    capabilityConfigs,
     entryScriptId: entryId,
     activeScriptId: entryId,
     scripts,
@@ -1271,9 +1365,10 @@ export function instantiateProjectFromTemplate(
     MULTI_SCRIPT_PROJECT_TEMPLATES[0];
   const now = new Date().toISOString();
   const defaultTimerCount = tpl.defaultTimerCount ?? DEFAULT_TIMER_COUNT;
+  const hasTimersCap = tpl.enabledCapabilities.includes(CAP_RT_TIMERS);
 
   const handles = tpl.handles.map((hs, idx) =>
-    instantiateHandleSpec(hs, idx, defaultTimerCount, now),
+    instantiateHandleSpec(hs, idx, defaultTimerCount, hasTimersCap, now),
   );
 
   return {
@@ -1283,11 +1378,52 @@ export function instantiateProjectFromTemplate(
     name: makeUniqueProjectName(customName ?? tpl.name, existingProjectNames),
     description: tpl.description,
     language: tpl.language,
+    targetProfileId: tpl.targetProfileId,
+    enabledCapabilities: [...tpl.enabledCapabilities],
     defaultTimerCount,
-    enabledExtensions: [...(tpl.enabledExtensions ?? [])],
     sharedModules: [],
     activeHandleId: handles[0].id,
     handles,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function instantiateProjectFromProfile(
+  profile: TargetProfile,
+  existingProjectNames: string[] = [],
+  customName?: string,
+): ProjectModel {
+  const now = new Date().toISOString();
+  const hasTimersCap = profile.capabilities.includes(CAP_RT_TIMERS);
+  const handle = instantiateHandleSpec(
+    {
+      name: 'main_vm',
+      color: HANDLE_COLOR_PALETTE[0],
+      autoStart: true,
+      scripts: [{ name: 'main', isEntry: true, workspace: createBlankWorkspace() }],
+    },
+    0,
+    profile.defaultTimerCount || DEFAULT_TIMER_COUNT,
+    hasTimersCap,
+    now,
+  );
+  return {
+    format: 'polyblock-project',
+    version: 3,
+    id: createId('proj'),
+    name: makeUniqueProjectName(
+      customName ?? `${profile.name.split('（')[0]}工程`,
+      existingProjectNames,
+    ),
+    description: profile.description,
+    language: profile.defaultLanguage,
+    targetProfileId: profile.id,
+    enabledCapabilities: [...profile.capabilities],
+    defaultTimerCount: profile.defaultTimerCount || DEFAULT_TIMER_COUNT,
+    sharedModules: [],
+    activeHandleId: handle.id,
+    handles: [handle],
     createdAt: now,
     updatedAt: now,
   };
@@ -1345,6 +1481,16 @@ export function migrateProjectV2ToV3(
   const activeScriptId =
     (v2.activeScriptId && idMap.get(v2.activeScriptId)) || entryId;
   const timerCfg = normalizeTimerConfig(v2.timerConfig);
+  const inferred = inferCapabilitiesFromWorkspaces(scripts.map((s) => s.workspace));
+  const mergedCaps = Array.from(
+    new Set([
+      ...(Array.isArray(v2.enabledExtensions)
+        ? v2.enabledExtensions.filter((e): e is string => typeof e === 'string')
+        : []),
+      ...inferred,
+      ...(v2.timerConfig ? [CAP_RT_TIMERS] : []),
+    ]),
+  );
 
   const handle: RuntimeHandle = {
     id: createId('hdl'),
@@ -1352,7 +1498,10 @@ export function migrateProjectV2ToV3(
     description: '由 v2 工程自动迁移的主句柄',
     color: HANDLE_COLOR_PALETTE[0],
     autoStart: true,
-    timerConfig: timerCfg,
+    capabilityConfigs:
+      v2.timerConfig || mergedCaps.includes(CAP_RT_TIMERS)
+        ? { [CAP_RT_TIMERS]: timerCfg }
+        : {},
     entryScriptId: entryId,
     activeScriptId,
     scripts,
@@ -1372,15 +1521,128 @@ export function migrateProjectV2ToV3(
         : (typeof v2.name === 'string' && v2.name.trim()) || fallbackName,
     description: typeof v2.description === 'string' ? v2.description : undefined,
     language: v2.language === 'python' ? 'python' : 'lua',
+    targetProfileId: inferProfileId(mergedCaps),
+    enabledCapabilities: mergedCaps,
     defaultTimerCount: timerCfg.count,
-    enabledExtensions: Array.isArray(v2.enabledExtensions)
-      ? v2.enabledExtensions.filter((e): e is string => typeof e === 'string')
-      : [],
     sharedModules: [],
     activeHandleId: handle.id,
     handles: [handle],
     createdAt: typeof v2.createdAt === 'string' ? v2.createdAt : now,
     updatedAt: typeof v2.updatedAt === 'string' ? v2.updatedAt : now,
+  };
+}
+
+function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
+  const now = new Date().toISOString();
+  const defaultCount = Number.isFinite(Number(raw.defaultTimerCount))
+    ? Math.max(
+        MIN_TIMER_COUNT,
+        Math.min(MAX_TIMER_COUNT, Math.trunc(Number(raw.defaultTimerCount))),
+      )
+    : DEFAULT_TIMER_COUNT;
+
+  const rawHandles = Array.isArray(raw.handles)
+    ? (raw.handles as Array<Record<string, unknown>>)
+    : [];
+
+  const allWs: Array<Record<string, unknown>> = [];
+  const handles: RuntimeHandle[] = rawHandles.map((rh, idx) => {
+    const scripts = Array.isArray(rh.scripts)
+      ? (rh.scripts as ProjectScript[])
+      : [
+          {
+            id: createId('scr'),
+            name: 'main',
+            workspace: createBlankWorkspace(),
+            breakpoints: [],
+            updatedAt: now,
+          },
+        ];
+    for (const s of scripts) {
+      if (s.workspace) allWs.push(s.workspace);
+    }
+
+    const existingCapConfigs =
+      rh.capabilityConfigs && typeof rh.capabilityConfigs === 'object'
+        ? cloneJson(rh.capabilityConfigs as Record<string, unknown>)
+        : {};
+    if (!existingCapConfigs[CAP_RT_TIMERS] && rh.timerConfig) {
+      existingCapConfigs[CAP_RT_TIMERS] = normalizeTimerConfig(
+        rh.timerConfig as Partial<ProjectTimerConfig>,
+        defaultCount,
+      );
+    }
+
+    const entryId =
+      typeof rh.entryScriptId === 'string' &&
+      scripts.some((s) => s.id === rh.entryScriptId)
+        ? rh.entryScriptId
+        : scripts[0].id;
+    const activeId =
+      typeof rh.activeScriptId === 'string' &&
+      scripts.some((s) => s.id === rh.activeScriptId)
+        ? rh.activeScriptId
+        : entryId;
+
+    return {
+      id: typeof rh.id === 'string' ? rh.id : createId('hdl'),
+      name: typeof rh.name === 'string' ? rh.name : `handle_${idx + 1}`,
+      description: typeof rh.description === 'string' ? rh.description : undefined,
+      color:
+        typeof rh.color === 'string' && rh.color.startsWith('#')
+          ? rh.color
+          : HANDLE_COLOR_PALETTE[idx % HANDLE_COLOR_PALETTE.length],
+      autoStart: rh.autoStart !== false,
+      capabilityConfigs: existingCapConfigs,
+      entryScriptId: entryId,
+      activeScriptId: activeId,
+      scripts,
+      updatedAt: typeof rh.updatedAt === 'string' ? rh.updatedAt : now,
+    };
+  });
+
+  // Migrate early-v3 `enabledExtensions` -> unified `enabledCapabilities`
+  let enabledCapabilities: string[];
+  if (Array.isArray(raw.enabledCapabilities)) {
+    enabledCapabilities = raw.enabledCapabilities.filter(
+      (c): c is string => typeof c === 'string',
+    );
+  } else {
+    const legacyExts = Array.isArray(raw.enabledExtensions)
+      ? raw.enabledExtensions.filter((e): e is string => typeof e === 'string')
+      : [];
+    const inferred = inferCapabilitiesFromWorkspaces(allWs);
+    enabledCapabilities = Array.from(new Set([...legacyExts, ...inferred]));
+  }
+
+  const profileId =
+    typeof raw.targetProfileId === 'string' && raw.targetProfileId.trim()
+      ? raw.targetProfileId
+      : inferProfileId(enabledCapabilities);
+
+  const activeHandleId =
+    typeof raw.activeHandleId === 'string' &&
+    handles.some((h) => h.id === raw.activeHandleId)
+      ? raw.activeHandleId
+      : handles[0].id;
+
+  return {
+    format: 'polyblock-project',
+    version: 3,
+    id: typeof raw.id === 'string' ? raw.id : createId('proj'),
+    name: typeof raw.name === 'string' ? raw.name : '未命名项目',
+    description: typeof raw.description === 'string' ? raw.description : undefined,
+    language: raw.language === 'python' ? 'python' : 'lua',
+    targetProfileId: profileId,
+    enabledCapabilities,
+    defaultTimerCount: defaultCount,
+    sharedModules: Array.isArray(raw.sharedModules)
+      ? (raw.sharedModules as ProjectScript[])
+      : [],
+    activeHandleId,
+    handles,
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : now,
+    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : now,
   };
 }
 
@@ -1425,6 +1687,16 @@ export function parseImportedProject(
       if (typeof rh.id === 'string') {
         handleIdMap.set(rh.id, newHandleId);
       }
+      const capCfgs =
+        rh.capabilityConfigs && typeof rh.capabilityConfigs === 'object'
+          ? cloneJson(rh.capabilityConfigs as Record<string, unknown>)
+          : {};
+      if (!capCfgs[CAP_RT_TIMERS] && rh.timerConfig) {
+        capCfgs[CAP_RT_TIMERS] = normalizeTimerConfig(
+          rh.timerConfig as Partial<ProjectTimerConfig>,
+          defaultCount,
+        );
+      }
       return {
         id: newHandleId,
         name: hName,
@@ -1434,10 +1706,7 @@ export function parseImportedProject(
             ? rh.color
             : HANDLE_COLOR_PALETTE[hIdx % HANDLE_COLOR_PALETTE.length],
         autoStart: rh.autoStart !== false,
-        timerConfig: normalizeTimerConfig(
-          rh.timerConfig as Partial<ProjectTimerConfig> | undefined,
-          defaultCount,
-        ),
+        capabilityConfigs: capCfgs,
         entryScriptId: entryId,
         activeScriptId: entryId,
         scripts,
@@ -1450,6 +1719,23 @@ export function parseImportedProject(
         handleIdMap.get(obj.activeHandleId)) ||
       handles[0].id;
 
+    const allWs = handles.flatMap((h) => h.scripts.map((s) => s.workspace));
+    const enabledCapabilities = Array.isArray(obj.enabledCapabilities)
+      ? obj.enabledCapabilities.filter((c): c is string => typeof c === 'string')
+      : Array.from(
+          new Set([
+            ...(Array.isArray(obj.enabledExtensions)
+              ? obj.enabledExtensions.filter((e): e is string => typeof e === 'string')
+              : []),
+            ...inferCapabilitiesFromWorkspaces(allWs),
+          ]),
+        );
+
+    const targetProfileId =
+      typeof obj.targetProfileId === 'string' && obj.targetProfileId.trim()
+        ? obj.targetProfileId
+        : inferProfileId(enabledCapabilities);
+
     return {
       format: 'polyblock-project',
       version: 3,
@@ -1460,10 +1746,9 @@ export function parseImportedProject(
       ),
       description: typeof obj.description === 'string' ? obj.description : undefined,
       language: obj.language === 'python' ? 'python' : 'lua',
+      targetProfileId,
+      enabledCapabilities,
       defaultTimerCount: defaultCount,
-      enabledExtensions: Array.isArray(obj.enabledExtensions)
-        ? obj.enabledExtensions.filter((e): e is string => typeof e === 'string')
-        : [],
       sharedModules: Array.isArray(obj.sharedModules)
         ? normalizeScriptsArray(
             obj.sharedModules as Array<Record<string, unknown>>,
@@ -1510,8 +1795,9 @@ export function parseImportedProject(
     name: makeUniqueProjectName(cleanProjName || '导入项目', existingProjectNames),
     description: '由 v1 单脚本工程自动升级导入',
     language: v1.language === 'python' ? 'python' : 'lua',
+    targetProfileId: 'generic-script',
+    enabledCapabilities: inferCapabilitiesFromWorkspaces([v1.workspace]),
     defaultTimerCount: DEFAULT_TIMER_COUNT,
-    enabledExtensions: [],
     sharedModules: [],
     activeHandleId: handleId,
     handles: [
@@ -1520,7 +1806,7 @@ export function parseImportedProject(
         name: 'main_vm',
         color: HANDLE_COLOR_PALETTE[0],
         autoStart: true,
-        timerConfig: normalizeTimerConfig(undefined),
+        capabilityConfigs: {},
         entryScriptId: scriptId,
         activeScriptId: scriptId,
         scripts: [
@@ -1582,7 +1868,13 @@ export function loadWorkspaceStore(): WorkspaceStoreState {
             p.handles.every((h) => Array.isArray(h.scripts) && h.scripts.length > 0),
         )
       ) {
-        return parsed;
+        targetProfileRegistry.ensureInitialized();
+        return {
+          ...parsed,
+          projects: parsed.projects.map((p) =>
+            normalizeLoadedV3Project(p as unknown as Record<string, unknown>),
+          ),
+        };
       }
     }
   } catch {
@@ -1697,12 +1989,15 @@ export function addHandleToProject(
     project.handles.map((h) => h.name),
   );
   const scriptId = createId('scr');
+  const hasTimers = project.enabledCapabilities.includes(CAP_RT_TIMERS);
   const newHandle: RuntimeHandle = {
     id: createId('hdl'),
     name: uniqueName,
     color: HANDLE_COLOR_PALETTE[project.handles.length % HANDLE_COLOR_PALETTE.length],
     autoStart: true,
-    timerConfig: normalizeTimerConfig(undefined, project.defaultTimerCount),
+    capabilityConfigs: hasTimers
+      ? { [CAP_RT_TIMERS]: normalizeTimerConfig(undefined, project.defaultTimerCount) }
+      : {},
     entryScriptId: scriptId,
     activeScriptId: scriptId,
     scripts: [
@@ -1772,7 +2067,7 @@ export function duplicateHandleInProject(
       project.handles.map((h) => h.name),
     ),
     color: HANDLE_COLOR_PALETTE[project.handles.length % HANDLE_COLOR_PALETTE.length],
-    timerConfig: normalizeTimerConfig(target.timerConfig),
+    capabilityConfigs: cloneJson(target.capabilityConfigs ?? {}),
     entryScriptId: scriptIdMap.get(target.entryScriptId) ?? clonedScripts[0].id,
     activeScriptId: scriptIdMap.get(target.activeScriptId) ?? clonedScripts[0].id,
     scripts: clonedScripts,
@@ -1966,7 +2261,7 @@ export function duplicateProjectInStore(
     return {
       ...h,
       id: newHId,
-      timerConfig: normalizeTimerConfig(h.timerConfig),
+      capabilityConfigs: cloneJson(h.capabilityConfigs ?? {}),
       entryScriptId: scriptIdMap.get(h.entryScriptId) ?? clonedScripts[0].id,
       activeScriptId: scriptIdMap.get(h.activeScriptId) ?? clonedScripts[0].id,
       scripts: clonedScripts,
@@ -1981,7 +2276,7 @@ export function duplicateProjectInStore(
       `${target.name} 副本`,
       store.projects.map((p) => p.name),
     ),
-    enabledExtensions: [...target.enabledExtensions],
+    enabledCapabilities: [...target.enabledCapabilities],
     sharedModules: cloneJson(target.sharedModules ?? []),
     activeHandleId: handleIdMap.get(target.activeHandleId) ?? clonedHandles[0].id,
     handles: clonedHandles,

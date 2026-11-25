@@ -1,15 +1,65 @@
 import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { backendRegistry } from '../backends/registry';
+import { getCoreCategoriesForCapabilities } from '../blocks/catalog';
 import { registerPolyBlocks } from '../blocks/definitions';
+import {
+  CAP_RT_LIFECYCLE,
+  CAP_RT_TIMERS,
+  CAP_VIRTUAL_BOARD,
+  SAMPLE_CUSTOM_BOARD_TEMPLATE,
+  targetProfileRegistry,
+  validateTargetProfile,
+} from '../capabilities/registry';
 import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../extensions/builtinPacks';
 import { extensionRegistry, validateExtensionPack } from '../extensions/registry';
 import { instantiateProjectFromTemplate } from '../projects/store';
 
-describe('Declarative Extension Pack System', () => {
+describe('Declarative Extension Pack & Capability-Driven Target Profile System', () => {
   beforeAll(() => {
     registerPolyBlocks();
     extensionRegistry.ensureInitialized();
+    targetProfileRegistry.ensureInitialized();
+  });
+
+  it('strictly gates core toolbox categories & hardware button hats by enabledCapabilities', () => {
+    const pureCats = getCoreCategoriesForCapabilities([]);
+    expect(pureCats.some((c) => c.id === 'timers')).toBe(false);
+    const pureEventBlocks =
+      pureCats.find((c) => c.id === 'event')?.blocks.map((b) => b.type) ?? [];
+    expect(pureEventBlocks).toEqual(['poly_on_start', 'poly_comment']);
+
+    const rtCats = getCoreCategoriesForCapabilities([
+      CAP_RT_LIFECYCLE,
+      CAP_RT_TIMERS,
+    ]);
+    expect(rtCats.some((c) => c.id === 'timers')).toBe(true);
+    const rtEventBlocks =
+      rtCats.find((c) => c.id === 'event')?.blocks.map((b) => b.type) ?? [];
+    expect(rtEventBlocks).toContain('poly_on_run');
+    expect(rtEventBlocks).toContain('poly_on_stop');
+    expect(rtEventBlocks).not.toContain('poly_on_button');
+
+    const vbCats = extensionRegistry.toCategorySpecs([CAP_VIRTUAL_BOARD]);
+    expect(vbCats[0].blocks.some((b) => b.type === 'poly_on_button')).toBe(true);
+  });
+
+  it('validates, imports, and removes custom .polyboard.json target profiles', () => {
+    expect(() => validateTargetProfile({})).toThrow();
+    expect(() =>
+      targetProfileRegistry.importCustomProfile({
+        ...SAMPLE_CUSTOM_BOARD_TEMPLATE,
+        id: 'generic-script',
+      }),
+    ).toThrow(/冲突/);
+
+    const imported = targetProfileRegistry.importCustomProfile(
+      SAMPLE_CUSTOM_BOARD_TEMPLATE,
+    );
+    expect(imported.id).toBe('my-industrial-controller');
+    expect(imported.builtin).toBe(false);
+    expect(targetProfileRegistry.get(imported.id).defaultTimerCount).toBe(16);
+    expect(targetProfileRegistry.removeCustomProfile(imported.id)).toBe(true);
   });
 
   it('registers all 3 built-in packs and converts enabled packs to toolbox categories', () => {
@@ -31,7 +81,7 @@ describe('Declarative Extension Pack System', () => {
 
   it('generates clean deduplicated Lua & Python board code for virtual_board_demo project', () => {
     const proj = instantiateProjectFromTemplate('virtual_board_demo');
-    expect(proj.enabledExtensions).toContain('virtual-board');
+    expect(proj.enabledCapabilities).toContain('virtual-board');
     expect(proj.handles[0].scripts.map((s) => s.name)).toEqual([
       'led_blink',
       'temp_guard',

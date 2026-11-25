@@ -8,6 +8,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
+import { getHandleTimerConfig } from '../core/projects/store';
 import type { ProjectModel } from '../types/project';
 
 interface ProjectExplorerProps {
@@ -15,6 +16,8 @@ interface ProjectExplorerProps {
   activeHandleId: string;
   activeScriptId: string;
   extension: string;
+  hasTimersCapability: boolean;
+  defaultTimerCount: number;
   disabled?: boolean;
   onSelectHandleScript: (handleId: string, scriptId: string) => void;
   onAddHandle: () => void;
@@ -28,6 +31,8 @@ export function ProjectExplorer({
   activeHandleId,
   activeScriptId,
   extension,
+  hasTimersCapability,
+  defaultTimerCount,
   disabled = false,
   onSelectHandleScript,
   onAddHandle,
@@ -94,9 +99,11 @@ export function ProjectExplorer({
                 <span className="explorer-handle-name" title={handle.name}>
                   {handle.name}
                 </span>
-                <span className="explorer-handle-meta">
-                  0~{handle.timerConfig.count - 1}
-                </span>
+                {hasTimersCapability && (
+                  <span className="explorer-handle-meta">
+                    0~{getHandleTimerConfig(handle, defaultTimerCount).count - 1}
+                  </span>
+                )}
                 <div
                   className="explorer-row-actions"
                   onClick={(e) => e.stopPropagation()}

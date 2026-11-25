@@ -2,7 +2,10 @@ import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
-import { setActiveTimerConfig } from '../blocks/timerConfigBridge';
+import {
+  setActiveProjectCapabilities,
+  setActiveTimerConfig,
+} from '../blocks/timerConfigBridge';
 import { extensionRegistry } from '../extensions/registry';
 import {
   getHandleTimerConfig,
@@ -111,7 +114,17 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
       ),
     ).toBe(true);
 
+    // When 'rt-timers' capability is disabled, flag cap-missing-timers diagnostic
+    setActiveProjectCapabilities([]);
+    const resNoCap = backendRegistry.get('lua').generate(ws);
+    expect(
+      resNoCap.diagnostics.some(
+        (d) => d.severity === 'error' && d.id.startsWith('cap-missing-timers'),
+      ),
+    ).toBe(true);
+
     ws.dispose();
+    setActiveProjectCapabilities(null);
     setActiveTimerConfig({ count: 8, aliases: {} });
   });
 

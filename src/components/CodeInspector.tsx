@@ -15,11 +15,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
 import type { GeneratedCodeResult } from '../core/backends/types';
 import { formatTimerLabel } from '../core/blocks/timerConfigBridge';
+import {
+  CAP_RT_LIFECYCLE,
+  CAP_RT_TIMERS,
+  CAP_VIRTUAL_BOARD,
+  hasCapability,
+} from '../core/capabilities/registry';
 import type {
   VirtualBoardInputs,
   VirtualBoardState,
 } from '../core/extensions/types';
 import { highlightCodeLine } from '../core/highlight';
+import { getHandleTimerConfig } from '../core/projects/store';
 import type { RunnerStatus } from '../core/runners/types';
 import type {
   RuntimeHandle,
@@ -39,6 +46,8 @@ interface CodeInspectorProps {
   breakpoints: string[];
   variables: Record<string, string>;
   errorLine: number | null;
+  enabledCapabilities: string[];
+  defaultTimerCount: number;
   showVirtualBoard: boolean;
   virtualBoard: VirtualBoardState;
   mockInputs: VirtualBoardInputs;
@@ -73,6 +82,8 @@ export function CodeInspector({
   breakpoints,
   variables,
   errorLine,
+  enabledCapabilities,
+  defaultTimerCount,
   showVirtualBoard,
   virtualBoard,
   mockInputs,
@@ -104,11 +115,13 @@ export function CodeInspector({
     [runnerStatus, handleTelemetries],
   );
 
-  const showSimTab =
-    showVirtualBoard ||
-    Boolean(generated.isEventDriven) ||
-    anyEventLoopRunning ||
-    projectHandles.length > 1;
+  const hasVirtualBoard =
+    showVirtualBoard || hasCapability(enabledCapabilities, CAP_VIRTUAL_BOARD);
+  const hasRtLifecycle = hasCapability(enabledCapabilities, CAP_RT_LIFECYCLE);
+  const hasRtTimers = hasCapability(enabledCapabilities, CAP_RT_TIMERS);
+  const showRtMonitor = hasRtLifecycle || hasRtTimers || anyEventLoopRunning;
+
+  const showSimTab = hasVirtualBoard || hasRtLifecycle || hasRtTimers || anyEventLoopRunning;
 
   useEffect(() => {
     if (!showSimTab && activeTab === 'board') {
@@ -400,7 +413,7 @@ export function CodeInspector({
               title="点击展开虚拟外设与定时器调度面板"
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                {showVirtualBoard && (
+                {hasVirtualBoard && (
                   <>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       <span
@@ -425,6 +438,11 @@ export function CodeInspector({
                       {mockInputs.temp}°C
                     </span>
                   </>
+                )}
+                {!hasVirtualBoard && (hasRtLifecycle || hasRtTimers) && !anyEventLoopRunning && (
+                  <span style={{ color: 'var(--text-secondary)' }}>
+                    {hasRtTimers ? 'RT 周期与多路定时器' : 'RT 周期调度'}
+                  </span>
                 )}
                 {anyEventLoopRunning && (
                   <span
@@ -453,7 +471,7 @@ export function CodeInspector({
 
       {activeTab === 'board' && showSimTab && (
         <div className="vboard-wrap">
-          {showVirtualBoard && (
+          {hasVirtualBoard && (
             <>
               <div className="vboard-pcb">
                 <div className="vboard-top-row">
@@ -560,111 +578,126 @@ export function CodeInspector({
             </>
           )}
 
-          {/* Per-Handle Runtime & Timer Monitor Card(s) */}
-          {monitoredHandles.map((hdl) => {
-            const tele = handleTelemetries[hdl.id] ?? (hdl.id === activeHandle.id ? activeTelemetry : null);
-            const hRunning =
-              (runnerStatus === 'running' || runnerStatus === 'paused') &&
-              Boolean(tele?.eventLoopActive);
+          {/* Per-Handle Runtime & Timer Monitor Card(s) — ONLY when rt-lifecycle or rt-timers is enabled */}
+          {showRtMonitor &&
+            monitoredHandles.map((hdl) => {
+              const tele =
+                handleTelemetries[hdl.id] ??
+                (hdl.id === activeHandle.id ? activeTelemetry : null);
+              const hRunning =
+                (runnerStatus === 'running' || runnerStatus === 'paused') &&
+                Boolean(tele?.eventLoopActive);
+              const hdlTimerCfg = getHandleTimerConfig(hdl, defaultTimerCount);
 
-            return (
-              <div
-                key={hdl.id}
-                className="vboard-control-card rt-monitor-card"
-                aria-label={`句柄 ${hdl.name} 定时器监控`}
-              >
-                <div className="vboard-slider-head">
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 5,
-                      minWidth: 0,
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    <span
-                      className="lang-dot"
-                      style={{ background: hdl.color, flexShrink: 0 }}
-                    />
-                    <Timer size={12} style={{ flexShrink: 0 }} />
+              return (
+                <div
+                  key={hdl.id}
+                  className="vboard-control-card rt-monitor-card"
+                  aria-label={`句柄 ${hdl.name} 运行时调度监控`}
+                >
+                  <div className="vboard-slider-head">
                     <span
                       style={{
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        minWidth: 0,
+                        whiteSpace: 'nowrap',
                       }}
                     >
-                      {hdl.name} (0~{hdl.timerConfig.count - 1})
+                      <span
+                        className="lang-dot"
+                        style={{ background: hdl.color, flexShrink: 0 }}
+                      />
+                      <Timer size={12} style={{ flexShrink: 0 }} />
+                      <span
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {hdl.name}
+                        {hasRtTimers ? ` (0~${hdlTimerCfg.count - 1})` : ''}
+                      </span>
                     </span>
-                  </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                    <span
-                      className={`status-pill ${hRunning ? 'ok' : 'idle'}`}
-                      style={{ fontSize: 10.5, padding: '1px 7px' }}
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        flexShrink: 0,
+                      }}
                     >
-                      {hRunning ? '事件循环中' : '待机'}
-                    </span>
-                    <button
-                      type="button"
-                      className="script-tab-icon-btn"
-                      title={`配置句柄 ${hdl.name} 定时器`}
-                      onClick={() => onOpenHandleTimerSettings(hdl.id)}
-                    >
-                      <Settings2 size={12} />
-                    </button>
+                      <span
+                        className={`status-pill ${hRunning ? 'ok' : 'idle'}`}
+                        style={{ fontSize: 10.5, padding: '1px 7px' }}
+                      >
+                        {hRunning ? '事件循环中' : '待机'}
+                      </span>
+                      <button
+                        type="button"
+                        className="script-tab-icon-btn"
+                        title={`配置句柄 ${hdl.name}`}
+                        onClick={() => onOpenHandleTimerSettings(hdl.id)}
+                      >
+                        <Settings2 size={12} />
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                <div className="rt-run-meta">
-                  <span>
-                    <code>on_run</code>：
-                    {tele?.hasOnRun
-                      ? tele.runActive
-                        ? `每 ${tele.runPeriodMs}ms（已执行 ${tele.runCount} 次）`
-                        : `已暂停（周期 ${tele.runPeriodMs}ms）`
-                      : '未定义 / 待机'}
-                  </span>
-                </div>
+                  {(hasRtLifecycle || Boolean(tele?.hasOnRun)) && (
+                    <div className="rt-run-meta">
+                      <span>
+                        <code>on_run</code>：
+                        {tele?.hasOnRun
+                          ? tele.runActive
+                            ? `每 ${tele.runPeriodMs}ms（已执行 ${tele.runCount} 次）`
+                            : `已暂停（周期 ${tele.runPeriodMs}ms）`
+                          : '未定义 / 待机'}
+                      </span>
+                    </div>
+                  )}
 
-                {tele && tele.timers.length > 0 ? (
-                  <div className="rt-timer-list">
-                    {tele.timers.map((t) => {
-                      const pct = Math.min(
-                        100,
-                        Math.round((t.elapsedMs / Math.max(1, t.periodMs)) * 100),
-                      );
-                      const repText =
-                        t.repeat === 0
-                          ? `循环 · 第 ${t.firedCount} 次`
-                          : `${t.firedCount}/${t.repeat} 次`;
-                      return (
-                        <div key={t.id} className="rt-timer-row">
-                          <div className="rt-timer-head">
-                            <span className="rt-timer-label">
-                              {formatTimerLabel(t.id, hdl.timerConfig)}
-                            </span>
-                            <span className="rt-timer-meta">
-                              {t.elapsedMs}/{t.periodMs}ms · {repText}
-                            </span>
-                          </div>
-                          <div className="rt-timer-bar-track">
-                            <div
-                              className="rt-timer-bar-fill"
-                              style={{ width: `${pct}%` }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    暂无活跃定时器；启动 <code>rt.start_timer</code> 后在此实时显示各通道进度。
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                  {hasRtTimers &&
+                    (tele && tele.timers.length > 0 ? (
+                      <div className="rt-timer-list">
+                        {tele.timers.map((t) => {
+                          const pct = Math.min(
+                            100,
+                            Math.round((t.elapsedMs / Math.max(1, t.periodMs)) * 100),
+                          );
+                          const repText =
+                            t.repeat === 0
+                              ? `循环 · 第 ${t.firedCount} 次`
+                              : `${t.firedCount}/${t.repeat} 次`;
+                          return (
+                            <div key={t.id} className="rt-timer-row">
+                              <div className="rt-timer-head">
+                                <span className="rt-timer-label">
+                                  {formatTimerLabel(t.id, hdlTimerCfg)}
+                                </span>
+                                <span className="rt-timer-meta">
+                                  {t.elapsedMs}/{t.periodMs}ms · {repText}
+                                </span>
+                              </div>
+                              <div className="rt-timer-bar-track">
+                                <div
+                                  className="rt-timer-bar-fill"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        暂无活跃定时器；启动 <code>rt.start_timer</code> 后在此实时显示各通道进度。
+                      </div>
+                    ))}
+                </div>
+              );
+            })}
         </div>
       )}
 

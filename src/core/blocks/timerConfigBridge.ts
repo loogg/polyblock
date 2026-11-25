@@ -38,6 +38,16 @@ let activeTimerConfig: ProjectTimerConfig = {
   aliases: {},
 };
 
+let activeCapabilities: string[] | null = null;
+
+export function setActiveProjectCapabilities(caps: string[] | null): void {
+  activeCapabilities = caps ? [...caps] : null;
+}
+
+export function getActiveProjectCapabilities(): string[] | null {
+  return activeCapabilities;
+}
+
 let aliasPromptHandler: ((timerId: number) => void) | null = null;
 
 export function registerTimerAliasPromptHandler(

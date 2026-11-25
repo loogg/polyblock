@@ -21,7 +21,7 @@ import type { RunResult, RunnerStatus, ScriptRunner } from './types';
 function compileScriptHeadless(
   workspaceJson: Record<string, unknown>,
   language: ScriptLanguageId,
-  timerConfig: RuntimeHandle['timerConfig'],
+  timerConfig: ReturnType<typeof getHandleTimerConfig>,
 ): { code: string; debugCode: string; isEventDriven: boolean } {
   const prevCfg = getActiveTimerConfig();
   setActiveTimerConfig(timerConfig);
@@ -50,19 +50,21 @@ export function buildHandleScriptModules(
   excludeScriptId: string,
   language: ScriptLanguageId,
   sharedModules: ProjectScript[] = [],
+  defaultTimerCount = 8,
 ): ExtensionSandboxMock[] {
   const modules: ExtensionSandboxMock[] = [];
   const candidates = [
     ...sharedModules,
     ...handle.scripts.filter((s) => s.id !== excludeScriptId),
   ];
+  const timerCfg = getHandleTimerConfig(handle, defaultTimerCount);
 
   for (const script of candidates) {
     try {
       const compiled = compileScriptHeadless(
         script.workspace,
         language,
-        handle.timerConfig,
+        timerCfg,
       );
       modules.push({
         moduleName: script.name,
@@ -128,7 +130,7 @@ export class MultiHandleRunnerOrchestrator {
       const entryScript =
         handle.scripts.find((s) => s.id === handle.entryScriptId) ??
         handle.scripts[0];
-      const timerCfg = getHandleTimerConfig(handle);
+      const timerCfg = getHandleTimerConfig(handle, project.defaultTimerCount);
       const compiled = compileScriptHeadless(
         entryScript.workspace,
         project.language,
@@ -139,6 +141,7 @@ export class MultiHandleRunnerOrchestrator {
         entryScript.id,
         project.language,
         project.sharedModules,
+        project.defaultTimerCount,
       );
 
       const runner: ScriptRunner =

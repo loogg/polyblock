@@ -10,7 +10,13 @@ import {
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import {
+  CAP_RT_TIMERS,
+  hasCapability,
+  targetProfileRegistry,
+} from '../../core/capabilities/registry';
+import {
   countProjectScripts,
+  getHandleTimerConfig,
   MULTI_SCRIPT_PROJECT_TEMPLATES,
   parseImportedProject,
 } from '../../core/projects/store';
@@ -90,7 +96,7 @@ export function ProjectsPage({
           <div>
             <h1 className="subpage-title">项目管理（三层工程 · 多句柄隔离）</h1>
             <p className="subpage-sub">
-              以项目为根管理多个隔离运行句柄（独立 <code>lua_State*</code>）与同句柄模块脚本；点击项目卡片右下「⚙ 配置」调整句柄、定时器通道与扩展包。
+              以项目为根管理目标板型规格、按需装配的能力/外设以及多个隔离运行句柄（独立 <code>lua_State*</code>）；点击项目卡片左下「⚙」配置板型与句柄。
             </p>
           </div>
 
@@ -135,6 +141,8 @@ export function ProjectsPage({
             const isActive = proj.id === activeProjectId;
             const isEditing = editingId === proj.id;
             const totalScripts = countProjectScripts(proj);
+            const profile = targetProfileRegistry.get(proj.targetProfileId);
+            const hasTimers = hasCapability(proj.enabledCapabilities, CAP_RT_TIMERS);
 
             return (
               <div
@@ -179,9 +187,9 @@ export function ProjectsPage({
                 )}
 
                 <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                  {proj.language === 'lua' ? 'Lua 5.4' : 'Python 3'} ·{' '}
+                  {profile.name} · {proj.language === 'lua' ? 'Lua 5.4' : 'Python 3'} ·{' '}
                   {proj.handles.length} 句柄 · {totalScripts} 脚本 ·{' '}
-                  {proj.enabledExtensions.length} 扩展
+                  {proj.enabledCapabilities.length} 能力
                 </div>
 
                 <div className="paused-var-chips">
@@ -193,7 +201,11 @@ export function ProjectsPage({
                       />
                       <span>{h.name}</span>
                       <span style={{ opacity: 0.65 }}>
-                        ({h.scripts.length} · T0~{h.timerConfig.count - 1})
+                        ({h.scripts.length}
+                        {hasTimers
+                          ? ` · T0~${getHandleTimerConfig(h, proj.defaultTimerCount).count - 1}`
+                          : ''}
+                        )
                       </span>
                     </span>
                   ))}
@@ -291,7 +303,8 @@ export function ProjectsPage({
                 <p className="card-desc">{tpl.description}</p>
                 <div className="card-footer">
                   <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                    句柄：{tpl.handles.map((h) => h.name).join(' / ')}
+                    {targetProfileRegistry.get(tpl.targetProfileId).name} · 句柄：
+                    {tpl.handles.map((h) => h.name).join(' / ')}
                   </span>
                   <button
                     type="button"

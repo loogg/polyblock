@@ -299,6 +299,17 @@ class ExtensionRegistry {
         };
       });
 
+      // Attach hardware button edge callback hat directly to the virtual-board peripheral pack
+      // so projects without virtual-board never see button callback blocks.
+      if (pack.id === 'virtual-board') {
+        blocks.push({
+          kind: 'block',
+          type: 'poly_on_button',
+          keywords: '当按键 按下 释放 回调 硬件 事件 on_button key A B board',
+          fields: { KEY: 'A', EDGE: 'press' },
+        });
+      }
+
       return {
         id: `ext_${pack.id}`,
         label: pack.categoryLabel,

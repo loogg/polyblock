@@ -24,8 +24,15 @@ import { backendRegistry } from './core/backends/registry';
 import type { GeneratedCodeResult } from './core/backends/types';
 import {
   normalizeTimerConfig,
+  setActiveProjectCapabilities,
   setActiveTimerConfig,
 } from './core/blocks/timerConfigBridge';
+import {
+  BUILTIN_RUNTIME_CAPABILITIES,
+  CAP_RT_TIMERS,
+  hasCapability,
+  targetProfileRegistry,
+} from './core/capabilities/registry';
 import { extensionRegistry } from './core/extensions/registry';
 import type {
   VirtualBoardInputs,
@@ -34,6 +41,7 @@ import type {
 import {
   addHandleToProject,
   addScriptToHandle,
+  applyTargetProfileToProject,
   countProjectScripts,
   deleteHandleFromProject,
   deleteProjectFromStore,
@@ -51,6 +59,7 @@ import {
   renameHandleInProject,
   renameScriptInHandle,
   saveWorkspaceStore,
+  setHandleTimerConfig,
   STORAGE_STORE_V2_KEY,
   STORAGE_STORE_V3_KEY,
   updateHandleById,
@@ -72,6 +81,7 @@ import type {
   ProjectTimerConfig,
   RuntimeTelemetry,
   ScriptLanguageId,
+  TargetProfile,
   WorkspaceStoreState,
 } from './types/project';
 
@@ -152,6 +162,7 @@ function triggerFileDownload(filename: string, content: string, mime: string) {
 
 export function App() {
   extensionRegistry.ensureInitialized();
+  targetProfileRegistry.ensureInitialized();
 
   const initialStoreRef = useRef<WorkspaceStoreState>(loadWorkspaceStore());
   const workbenchRef = useRef<BlocklyWorkbenchHandle | null>(null);
@@ -161,6 +172,7 @@ export function App() {
   const [activePage, setActivePage] = useState<PageId>(readPageFromHash);
   const [isDirty, setIsDirty] = useState<boolean>(false);
   const [extRevision, setExtRevision] = useState<number>(0);
+  const [profileRevision, setProfileRevision] = useState<number>(0);
 
   const [showCode, setShowCode] = useState<boolean>(true);
   const [showConsole, setShowConsole] = useState<boolean>(true);
@@ -206,10 +218,15 @@ export function App() {
   const activeHandle = getActiveHandle(activeProject);
   const activeScript = getActiveScript(activeHandle);
   const activeTimerConfig = useMemo(
-    () => getHandleTimerConfig(activeHandle),
-    [activeHandle],
+    () => getHandleTimerConfig(activeHandle, activeProject.defaultTimerCount),
+    [activeHandle, activeProject.defaultTimerCount],
+  );
+  const hasTimersCapability = hasCapability(
+    activeProject.enabledCapabilities,
+    CAP_RT_TIMERS,
   );
   setActiveTimerConfig(activeTimerConfig);
+  setActiveProjectCapabilities(activeProject.enabledCapabilities);
 
   const language = activeProject.language;
   const breakpoints = activeScript.breakpoints;
@@ -220,17 +237,22 @@ export function App() {
     [extRevision],
   );
 
+  const allTargetProfiles = useMemo(
+    () => targetProfileRegistry.listAll(),
+    [profileRevision],
+  );
+
   const extraCategories = useMemo(
-    () => extensionRegistry.toCategorySpecs(activeProject.enabledExtensions),
-    [activeProject.enabledExtensions, extRevision],
+    () => extensionRegistry.toCategorySpecs(activeProject.enabledCapabilities),
+    [activeProject.enabledCapabilities, extRevision],
   );
 
   const showVirtualBoard = useMemo(
     () =>
       extensionRegistry
-        .getEnabledPacks(activeProject.enabledExtensions)
+        .getEnabledPacks(activeProject.enabledCapabilities)
         .some((p) => p.hasVirtualBoardUi),
-    [activeProject.enabledExtensions, extRevision],
+    [activeProject.enabledCapabilities, extRevision],
   );
 
   const [generated, setGenerated] = useState<GeneratedCodeResult>({
@@ -383,7 +405,10 @@ export function App() {
       const nextProj = getActiveProject(nextStore);
       const nextHandle = getActiveHandle(nextProj);
       const nextScript = getActiveScript(nextHandle);
-      setActiveTimerConfig(getHandleTimerConfig(nextHandle));
+      setActiveTimerConfig(
+        getHandleTimerConfig(nextHandle, nextProj.defaultTimerCount),
+      );
+      setActiveProjectCapabilities(nextProj.enabledCapabilities);
 
       activeProjectIdRef.current = nextProj.id;
       activeHandleIdRef.current = nextHandle.id;
@@ -456,30 +481,98 @@ export function App() {
   );
 
   /* ========================================================================
-     Extension Pack & Virtual Board Operations
+     Target Profile, Capabilities, Extension Packs & Virtual Board Operations
      ======================================================================== */
-  const handleToggleExtensionForProject = useCallback(
-    (projectId: string, packId: string) => {
-      const pack = extensionRegistry.get(packId);
-      if (!pack) return;
-      setStore((prev) => {
-        const proj = prev.projects.find((p) => p.id === projectId);
-        if (!proj) return prev;
-        const exists = proj.enabledExtensions.includes(packId);
-        const nextExts = exists
-          ? proj.enabledExtensions.filter((id) => id !== packId)
-          : [...proj.enabledExtensions, packId];
-        notify(
-          exists
-            ? `已从「${proj.name}」停用「${pack.name}」`
-            : `已为「${proj.name}」启用「${pack.name}」`,
-        );
-        return updateProjectById(prev, projectId, (p) => ({
+  const handleToggleCapabilityForProject = useCallback(
+    (projectId: string, capId: string) => {
+      const rtCap = BUILTIN_RUNTIME_CAPABILITIES.find((c) => c.id === capId);
+      const extPack = extensionRegistry.get(capId);
+      const displayName = rtCap?.name ?? extPack?.name ?? capId;
+
+      const curProj = storeRef.current.projects.find((p) => p.id === projectId);
+      if (!curProj) return;
+      const exists = curProj.enabledCapabilities.includes(capId);
+      const nextCaps = exists
+        ? curProj.enabledCapabilities.filter((id) => id !== capId)
+        : [...curProj.enabledCapabilities, capId];
+
+      setStore((prev) =>
+        updateProjectById(prev, projectId, (p) => ({
           ...p,
-          enabledExtensions: nextExts,
+          enabledCapabilities: nextCaps,
           updatedAt: new Date().toISOString(),
-        }));
-      });
+        })),
+      );
+
+      if (projectId === activeProjectIdRef.current) {
+        setActiveProjectCapabilities(nextCaps);
+        const ws = workbenchRef.current?.getWorkspace();
+        if (ws) regenerateFromWorkspace(ws, languageRef.current);
+      }
+
+      notify(
+        exists
+          ? `已从「${curProj.name}」停用「${displayName}」`
+          : `已为「${curProj.name}」启用「${displayName}」`,
+      );
+    },
+    [notify, regenerateFromWorkspace],
+  );
+
+  const handleApplyTargetProfile = useCallback(
+    (projectId: string, profileId: string) => {
+      const profile = targetProfileRegistry.get(profileId);
+      const curProj = storeRef.current.projects.find((p) => p.id === projectId);
+      if (!curProj) return;
+
+      setStore((prev) =>
+        updateProjectById(prev, projectId, (p) =>
+          applyTargetProfileToProject(p, profile),
+        ),
+      );
+
+      if (projectId === activeProjectIdRef.current) {
+        setActiveProjectCapabilities(profile.capabilities);
+        const ws = workbenchRef.current?.getWorkspace();
+        if (ws) regenerateFromWorkspace(ws, languageRef.current);
+      }
+
+      notify(`已为「${curProj.name}」应用板型规格「${profile.name}」`);
+    },
+    [notify, regenerateFromWorkspace],
+  );
+
+  const handleImportBoardProfileJson = useCallback(
+    (raw: unknown): TargetProfile | null => {
+      try {
+        const imported = targetProfileRegistry.importCustomProfile(raw);
+        setProfileRevision((r) => r + 1);
+        notify(`已导入自定义板型规格「${imported.name}」`);
+        return imported;
+      } catch (err) {
+        notify(
+          `板型规格校验失败：${err instanceof Error ? err.message : String(err)}`,
+        );
+        return null;
+      }
+    },
+    [notify],
+  );
+
+  const handleRemoveCustomProfile = useCallback(
+    (profileId: string) => {
+      const ok = targetProfileRegistry.removeCustomProfile(profileId);
+      if (!ok) return;
+      setProfileRevision((r) => r + 1);
+      setStore((prev) => ({
+        ...prev,
+        projects: prev.projects.map((p) =>
+          p.targetProfileId === profileId
+            ? { ...p, targetProfileId: 'generic-script' }
+            : p,
+        ),
+      }));
+      notify('已删除自定义板型规格');
     },
     [notify],
   );
@@ -492,9 +585,9 @@ export function App() {
         setStore((prev) =>
           updateProjectById(prev, activeProjectIdRef.current, (p) => ({
             ...p,
-            enabledExtensions: p.enabledExtensions.includes(imported.id)
-              ? p.enabledExtensions
-              : [...p.enabledExtensions, imported.id],
+            enabledCapabilities: p.enabledCapabilities.includes(imported.id)
+              ? p.enabledCapabilities
+              : [...p.enabledCapabilities, imported.id],
             updatedAt: new Date().toISOString(),
           })),
         );
@@ -519,7 +612,7 @@ export function App() {
         ...prev,
         projects: prev.projects.map((p) => ({
           ...p,
-          enabledExtensions: p.enabledExtensions.filter((id) => id !== packId),
+          enabledCapabilities: p.enabledCapabilities.filter((id) => id !== packId),
         })),
       }));
       notify('已删除自定义扩展包');
@@ -672,15 +765,17 @@ export function App() {
         : undefined;
       setStore((prev) =>
         updateProjectById(prev, projectId, (p) =>
-          updateHandleById(p, handleId, (h) => ({
-            ...h,
-            ...(patch.autoStart !== undefined ? { autoStart: patch.autoStart } : {}),
-            ...(patch.description !== undefined
-              ? { description: patch.description }
-              : {}),
-            ...(normalizedTimer ? { timerConfig: normalizedTimer } : {}),
-            updatedAt: new Date().toISOString(),
-          })),
+          updateHandleById(p, handleId, (h) => {
+            const base = normalizedTimer ? setHandleTimerConfig(h, normalizedTimer) : h;
+            return {
+              ...base,
+              ...(patch.autoStart !== undefined ? { autoStart: patch.autoStart } : {}),
+              ...(patch.description !== undefined
+                ? { description: patch.description }
+                : {}),
+              updatedAt: new Date().toISOString(),
+            };
+          }),
         ),
       );
       if (
@@ -700,7 +795,7 @@ export function App() {
     (timerId: number, alias: string) => {
       const proj = getActiveProject(storeRef.current);
       const hdl = getActiveHandle(proj);
-      const curCfg = getHandleTimerConfig(hdl);
+      const curCfg = getHandleTimerConfig(hdl, proj.defaultTimerCount);
       const nextAliases = { ...curCfg.aliases };
       if (alias.trim()) {
         nextAliases[String(timerId)] = alias.trim().slice(0, 16);
@@ -1336,7 +1431,7 @@ export function App() {
         onOpenProjectSettings={() =>
           setSettingsModal({
             projectId: activeProject.id,
-            initialTab: 'handles',
+            initialTab: 'general',
             initialHandleId: activeHandle.id,
           })
         }
@@ -1378,6 +1473,8 @@ export function App() {
                   activeHandleId={activeHandle.id}
                   activeScriptId={activeScript.id}
                   extension={activeBackend.extension}
+                  hasTimersCapability={hasTimersCapability}
+                  defaultTimerCount={activeProject.defaultTimerCount}
                   disabled={runnerStatus === 'running' || runnerStatus === 'paused'}
                   onSelectHandleScript={(hdlId, scrId) =>
                     handleSelectHandleAndScript(hdlId, scrId)
@@ -1403,6 +1500,8 @@ export function App() {
                   activeScriptId={activeScript.id}
                   entryScriptId={activeHandle.entryScriptId}
                   extension={activeBackend.extension}
+                  hasTimersCapability={hasTimersCapability}
+                  defaultTimerCount={activeProject.defaultTimerCount}
                   showExplorer={showExplorer}
                   disabled={runnerStatus === 'running' || runnerStatus === 'paused'}
                   onToggleExplorer={() => setShowExplorer((v) => !v)}
@@ -1433,6 +1532,7 @@ export function App() {
                   executingBlockId={executingBlockId}
                   isPaused={runnerStatus === 'paused'}
                   breakpoints={breakpoints}
+                  enabledCapabilities={activeProject.enabledCapabilities}
                   extraCategories={extraCategories}
                   timerConfig={activeTimerConfig}
                   onWorkspaceChange={handleWorkspaceChange}
@@ -1463,6 +1563,8 @@ export function App() {
                   breakpoints={breakpoints}
                   variables={liveVariables}
                   errorLine={errorLine}
+                  enabledCapabilities={activeProject.enabledCapabilities}
+                  defaultTimerCount={activeProject.defaultTimerCount}
                   showVirtualBoard={showVirtualBoard}
                   virtualBoard={virtualBoard}
                   mockInputs={mockInputs}
@@ -1510,7 +1612,7 @@ export function App() {
               onSaveProjectFile={handleSaveProjectFile}
               onImportProject={handleImportProject}
               onOpenProjectSettings={(pid) =>
-                setSettingsModal({ projectId: pid, initialTab: 'handles' })
+                setSettingsModal({ projectId: pid, initialTab: 'general' })
               }
               onReturnToBlocks={() => navigateTo('blocks')}
               onNotify={notify}
@@ -1527,13 +1629,20 @@ export function App() {
           {activePage === 'extensions' && (
             <ExtensionsPage
               activeProjectName={activeProject.name}
+              activeProfileId={activeProject.targetProfileId}
               allPacks={allExtensionPacks}
-              enabledExtensionIds={activeProject.enabledExtensions}
-              onToggleExtension={(packId) =>
-                handleToggleExtensionForProject(activeProject.id, packId)
+              allTargetProfiles={allTargetProfiles}
+              enabledCapabilityIds={activeProject.enabledCapabilities}
+              onToggleCapability={(capId) =>
+                handleToggleCapabilityForProject(activeProject.id, capId)
+              }
+              onApplyTargetProfile={(profileId) =>
+                handleApplyTargetProfile(activeProject.id, profileId)
               }
               onImportExtensionJson={handleImportExtensionJson}
               onRemoveCustomPack={handleRemoveCustomPack}
+              onImportBoardProfileJson={handleImportBoardProfileJson}
+              onRemoveCustomProfile={handleRemoveCustomProfile}
               onReturnToBlocks={() => navigateTo('blocks')}
               onNotify={notify}
             />
@@ -1572,19 +1681,23 @@ export function App() {
           initialTab={settingsModal.initialTab}
           initialHandleId={settingsModal.initialHandleId}
           allExtensionPacks={allExtensionPacks}
+          allTargetProfiles={allTargetProfiles}
           disableLanguageSwitch={
             settingsModalProject.id === activeProject.id &&
             (runnerStatus === 'running' || runnerStatus === 'paused')
           }
           onClose={() => setSettingsModal(null)}
           onUpdateProjectMeta={handleUpdateProjectMeta}
+          onApplyTargetProfile={handleApplyTargetProfile}
+          onImportBoardProfileJson={handleImportBoardProfileJson}
           onAddHandle={handleAddHandle}
           onRenameHandle={handleRenameHandle}
           onDuplicateHandle={handleDuplicateHandle}
           onDeleteHandle={handleDeleteHandle}
           onUpdateHandleConfig={handleUpdateHandleConfig}
-          onToggleExtensionForProject={handleToggleExtensionForProject}
+          onToggleCapabilityForProject={handleToggleCapabilityForProject}
           onOpenExtensionsPage={() => navigateTo('extensions')}
+          onNotify={notify}
         />
       )}
 

@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CAP_RT_LIFECYCLE,
+  CAP_RT_TIMERS,
+  CAP_VIRTUAL_BOARD,
+  targetProfileRegistry,
+} from '../capabilities/registry';
+import {
   addHandleToProject,
   addScriptToProject,
+  applyTargetProfileToProject,
   deleteHandleFromProject,
   deleteProjectFromStore,
   deleteScriptFromProject,
@@ -9,19 +16,23 @@ import {
   duplicateProjectInStore,
   duplicateScriptInProject,
   getActiveHandle,
+  getHandleTimerConfig,
   instantiateProjectFromTemplate,
   parseImportedProject,
   renameHandleInProject,
   renameScriptInProject,
   sanitizeScriptName,
+  setHandleTimerConfig,
 } from '../projects/store';
 import type { WorkspaceStoreState } from '../../types/project';
 
-describe('v3 Three-Tier Project -> Handle -> Script Store', () => {
-  it('instantiates default starter_suite & multi_handle_robot with isolated handles and distinct IDs', () => {
+describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', () => {
+  it('instantiates templates with differentiated target profiles and isolated per-handle capabilityConfigs', () => {
     const p1 = instantiateProjectFromTemplate('starter_suite');
     expect(p1.version).toBe(3);
     expect(p1.language).toBe('lua');
+    expect(p1.targetProfileId).toBe('generic-script');
+    expect(p1.enabledCapabilities).toEqual([]);
     expect(p1.handles).toHaveLength(1);
     const h1 = getActiveHandle(p1);
     expect(h1.scripts.map((s) => s.name)).toEqual([
@@ -32,6 +43,13 @@ describe('v3 Three-Tier Project -> Handle -> Script Store', () => {
     expect(h1.entryScriptId).toBe(h1.scripts[0].id);
     expect(h1.activeScriptId).toBe(h1.scripts[0].id);
 
+    // Virtual board basic template has virtual-board & dict-json, NO timers!
+    const vb = instantiateProjectFromTemplate('virtual_board_demo');
+    expect(vb.targetProfileId).toBe('virtual-board-basic');
+    expect(vb.enabledCapabilities).toContain(CAP_VIRTUAL_BOARD);
+    expect(vb.enabledCapabilities).not.toContain(CAP_RT_TIMERS);
+    expect(vb.enabledCapabilities).not.toContain(CAP_RT_LIFECYCLE);
+
     const p2 = instantiateProjectFromTemplate('starter_suite', [p1.name]);
     expect(p2.name).toBe('入门演示项目 (2)');
     expect(p2.handles[0].id).not.toBe(p1.handles[0].id);
@@ -39,11 +57,31 @@ describe('v3 Three-Tier Project -> Handle -> Script Store', () => {
 
     // Multi-handle flagship template has 2 isolated handles each with independent T0 alias
     const mh = instantiateProjectFromTemplate('multi_handle_robot');
+    expect(mh.targetProfileId).toBe('virtual-board-rt');
+    expect(mh.enabledCapabilities).toEqual(
+      expect.arrayContaining([CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_VIRTUAL_BOARD]),
+    );
     expect(mh.handles).toHaveLength(2);
     expect(mh.handles[0].name).toBe('led_ctrl');
     expect(mh.handles[1].name).toBe('sensor_hub');
-    expect(mh.handles[0].timerConfig.aliases['0']).toBe('心跳灯');
-    expect(mh.handles[1].timerConfig.aliases['0']).toBe('温度巡检');
+    expect(getHandleTimerConfig(mh.handles[0]).aliases['0']).toBe('心跳灯');
+    expect(getHandleTimerConfig(mh.handles[1]).aliases['0']).toBe('温度巡检');
+
+    // Applying a target profile updates capabilities cleanly without clobbering handles
+    const switched = applyTargetProfileToProject(
+      p1,
+      targetProfileRegistry.get('embedded-rt'),
+    );
+    expect(switched.targetProfileId).toBe('embedded-rt');
+    expect(switched.enabledCapabilities).toEqual([CAP_RT_LIFECYCLE, CAP_RT_TIMERS]);
+    expect(switched.handles).toHaveLength(1);
+
+    const updatedHandle = setHandleTimerConfig(switched.handles[0], {
+      count: 16,
+      aliases: { '2': '电机看门狗' },
+    });
+    expect(getHandleTimerConfig(updatedHandle).count).toBe(16);
+    expect(getHandleTimerConfig(updatedHandle).aliases['2']).toBe('电机看门狗');
   });
 
   it('performs handle CRUD (add, rename, duplicate, safe delete) and script CRUD within a handle', () => {
@@ -154,8 +192,9 @@ describe('v3 Three-Tier Project -> Handle -> Script Store', () => {
     const migratedV2 = parseImportedProject(v2Raw, 'fallback');
     expect(migratedV2.version).toBe(3);
     expect(migratedV2.handles).toHaveLength(1);
-    expect(migratedV2.handles[0].timerConfig.count).toBe(16);
-    expect(migratedV2.handles[0].timerConfig.aliases['0']).toBe('心跳');
+    expect(migratedV2.enabledCapabilities).toContain(CAP_VIRTUAL_BOARD);
+    expect(getHandleTimerConfig(migratedV2.handles[0]).count).toBe(16);
+    expect(getHandleTimerConfig(migratedV2.handles[0]).aliases['0']).toBe('心跳');
     expect(migratedV2.handles[0].scripts[0].breakpoints).toEqual(['b1']);
 
     const v3Orig = instantiateProjectFromTemplate('multi_handle_robot');

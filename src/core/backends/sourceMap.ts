@@ -1,6 +1,14 @@
 import type * as Blockly from 'blockly';
 import type { DiagnosticItem, SourceLineRange } from '../../types/project';
-import { getActiveTimerConfig } from '../blocks/timerConfigBridge';
+import {
+  getActiveProjectCapabilities,
+  getActiveTimerConfig,
+} from '../blocks/timerConfigBridge';
+import {
+  CAP_RT_LIFECYCLE,
+  CAP_RT_TIMERS,
+  CAP_VIRTUAL_BOARD,
+} from '../capabilities/registry';
 import {
   ALL_VALID_TOP_HAT_TYPES,
   TIMER_ID_BLOCK_TYPES,
@@ -173,17 +181,63 @@ export function analyzeWorkspaceDiagnostics(
     }
   }
 
-  // Check out-of-range timer channel IDs across ALL blocks in workspace
+  // Check capability gating & out-of-range timer channel IDs across ALL blocks
+  const activeCaps = getActiveProjectCapabilities();
+  const timersEnabled = activeCaps === null || activeCaps.includes(CAP_RT_TIMERS);
+  const lifecycleEnabled =
+    activeCaps === null || activeCaps.includes(CAP_RT_LIFECYCLE);
+  const vboardEnabled =
+    activeCaps === null || activeCaps.includes(CAP_VIRTUAL_BOARD);
+
   const timerCfg = getActiveTimerConfig();
   for (const blk of workspace.getAllBlocks(false)) {
     if (blk.isShadow() || !blk.isEnabled()) continue;
+
+    if (
+      !lifecycleEnabled &&
+      (blk.type === 'poly_on_run' ||
+        blk.type === 'poly_on_stop' ||
+        blk.type === 'poly_set_run_period' ||
+        blk.type === 'poly_run_control')
+    ) {
+      diagnostics.push({
+        id: `cap-missing-lifecycle-${blk.id}`,
+        severity: 'warning',
+        message:
+          '当前项目未启用「周期事件循环 (on_run / on_stop)」能力，请在项目配置的「能力与外设」中启用。',
+        blockId: blk.id,
+      });
+    }
+
+    if (!vboardEnabled && blk.type === 'poly_on_button') {
+      diagnostics.push({
+        id: `cap-missing-vboard-${blk.id}`,
+        severity: 'warning',
+        message:
+          '当前项目未启用「虚拟硬件外设包」，按键事件回调仅在具备按键外设的项目中生效。',
+        blockId: blk.id,
+      });
+    }
+
     if (!TIMER_ID_BLOCK_TYPES.has(blk.type)) continue;
+
+    if (!timersEnabled) {
+      diagnostics.push({
+        id: `cap-missing-timers-${blk.id}`,
+        severity: 'error',
+        message:
+          '当前项目未启用「多路编号定时器」能力，请在项目配置的「能力与外设」中启用后再使用定时器积木。',
+        blockId: blk.id,
+      });
+      continue;
+    }
+
     const tid = Math.trunc(Number(blk.getFieldValue('TIMER_ID') ?? 0));
     if (!Number.isInteger(tid) || tid < 0 || tid >= timerCfg.count) {
       diagnostics.push({
         id: `timer-oob-${tid}-${blk.id}`,
         severity: 'error',
-        message: `定时器通道 T${tid} 超出当前项目配置范围（0~${timerCfg.count - 1}），请更换通道或在项目管理中调大定时器通道数。`,
+        message: `定时器通道 T${tid} 超出当前句柄配置范围（0~${timerCfg.count - 1}），请更换通道或在句柄配置中调大定时器通道数。`,
         blockId: blk.id,
       });
     }

@@ -254,7 +254,7 @@ select {
 .dropdown-menu {
   position: absolute;
   top: calc(100% + 6px);
-  z-index: 80;
+  z-index: 95;
   background: var(--bg-chrome);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
@@ -359,7 +359,7 @@ select {
   border-bottom: 1px solid var(--border);
   padding: 0 8px 0 6px;
   gap: 4px;
-  z-index: 22;
+  z-index: 45;
 }
 
 .script-list-btn {

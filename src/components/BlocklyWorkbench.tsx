@@ -14,12 +14,13 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 import {
-  BLOCK_CATEGORIES,
   buildFlyoutToolbox,
+  getCoreCategoriesForCapabilities,
   type BlockCategorySpec,
 } from '../core/blocks/catalog';
 import { registerPolyBlocks } from '../core/blocks/definitions';
@@ -34,6 +35,7 @@ import {
 import {
   formatTimerLabel,
   registerTimerAliasPromptHandler,
+  setActiveProjectCapabilities,
   setActiveTimerConfig,
 } from '../core/blocks/timerConfigBridge';
 import { TIMER_ID_BLOCK_TYPES } from '../core/backends/eventMode';
@@ -54,6 +56,7 @@ interface BlocklyWorkbenchProps {
   executingBlockId: string | null;
   isPaused: boolean;
   breakpoints: string[];
+  enabledCapabilities: string[];
   extraCategories: BlockCategorySpec[];
   timerConfig: ProjectTimerConfig;
   onWorkspaceChange: (workspace: Blockly.WorkspaceSvg) => void;
@@ -150,6 +153,7 @@ export const BlocklyWorkbench = forwardRef<
     executingBlockId,
     isPaused,
     breakpoints,
+    enabledCapabilities,
     extraCategories,
     timerConfig,
     onWorkspaceChange,
@@ -167,15 +171,22 @@ export const BlocklyWorkbench = forwardRef<
   const onSelectRef = useRef(onSelectBlock);
   const onOpenTimerCfgRef = useRef(onOpenHandleTimerSettings);
   const initialDataRef = useRef(initialWorkspace);
+  const enabledCapsRef = useRef<string[]>(enabledCapabilities);
   const extraCatsRef = useRef<BlockCategorySpec[]>(extraCategories);
 
   const [activeCat, setActiveCat] = useState<string>('print');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [zoomPct, setZoomPct] = useState<number>(100);
 
+  const coreCategories = useMemo(
+    () => getCoreCategoriesForCapabilities(enabledCapabilities),
+    [enabledCapabilities],
+  );
+
   onChangeRef.current = onWorkspaceChange;
   onSelectRef.current = onSelectBlock;
   onOpenTimerCfgRef.current = onOpenHandleTimerSettings;
+  enabledCapsRef.current = enabledCapabilities;
   extraCatsRef.current = extraCategories;
   currentToggleBpHandler = onToggleBreakpoint;
   currentEditAliasHandler = onEditTimerAlias;
@@ -185,7 +196,13 @@ export const BlocklyWorkbench = forwardRef<
   const refreshFlyout = useCallback((catId: string, query: string) => {
     const ws = workspaceRef.current;
     if (!ws) return;
-    const toolboxDef = buildFlyoutToolbox(ws, catId, query, extraCatsRef.current);
+    const toolboxDef = buildFlyoutToolbox(
+      ws,
+      catId,
+      query,
+      extraCatsRef.current,
+      enabledCapsRef.current,
+    );
     ws.updateToolbox(toolboxDef);
   }, []);
 
@@ -202,7 +219,13 @@ export const BlocklyWorkbench = forwardRef<
       renderer: MICRO_ZELOS_RENDERER_NAME,
       theme: theme === 'dark' ? polyblockDarkTheme : polyblockLightTheme,
       media: './blockly-media/',
-      toolbox: buildFlyoutToolbox(null, 'print', ''),
+      toolbox: buildFlyoutToolbox(
+        null,
+        'print',
+        '',
+        extraCatsRef.current,
+        enabledCapsRef.current,
+      ),
       grid: {
         spacing: 18,
         length: 0,
@@ -327,10 +350,11 @@ export const BlocklyWorkbench = forwardRef<
     }
   }, [timerConfig, activeCat, searchQuery, refreshFlyout]);
 
-  // Sync category, search query, or dynamically enabled extension categories to flyout
+  // Sync category, search query, enabled capabilities, or extension categories to flyout
   useEffect(() => {
+    setActiveProjectCapabilities(enabledCapabilities);
     const allIds = new Set([
-      ...BLOCK_CATEGORIES.map((c) => c.id),
+      ...coreCategories.map((c) => c.id),
       ...extraCategories.map((c) => c.id),
     ]);
     if (!allIds.has(activeCat)) {
@@ -338,7 +362,14 @@ export const BlocklyWorkbench = forwardRef<
       return;
     }
     refreshFlyout(activeCat, searchQuery);
-  }, [activeCat, searchQuery, extraCategories, refreshFlyout]);
+  }, [
+    activeCat,
+    searchQuery,
+    enabledCapabilities,
+    coreCategories,
+    extraCategories,
+    refreshFlyout,
+  ]);
 
   // Resize cleanly whenever blocks page becomes visible again
   useEffect(() => {
@@ -463,7 +494,7 @@ export const BlocklyWorkbench = forwardRef<
   return (
     <div className="blockly-area">
       <nav className="cat-strip" aria-label="积木分类">
-        {BLOCK_CATEGORIES.map((cat) => (
+        {coreCategories.map((cat) => (
           <button
             key={cat.id}
             type="button"

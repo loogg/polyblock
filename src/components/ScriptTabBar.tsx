@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { getHandleTimerConfig } from '../core/projects/store';
 import type { ProjectScript, RuntimeHandle } from '../types/project';
 
 interface ScriptTabBarProps {
@@ -21,6 +22,8 @@ interface ScriptTabBarProps {
   activeScriptId: string;
   entryScriptId: string;
   extension: string;
+  hasTimersCapability: boolean;
+  defaultTimerCount: number;
   showExplorer: boolean;
   disabled?: boolean;
   onToggleExplorer: () => void;
@@ -42,6 +45,8 @@ export function ScriptTabBar({
   activeScriptId,
   entryScriptId,
   extension,
+  hasTimersCapability,
+  defaultTimerCount,
   showExplorer,
   disabled = false,
   onToggleExplorer,
@@ -105,6 +110,7 @@ export function ScriptTabBar({
   const menuScript = menuState
     ? scripts.find((s) => s.id === menuState.scriptId) ?? null
     : null;
+  const activeHandleTimer = getHandleTimerConfig(activeHandle, defaultTimerCount);
 
   return (
     <div
@@ -134,7 +140,9 @@ export function ScriptTabBar({
             setShowHandleMenu((v) => !v);
             setMenuState(null);
           }}
-          title={`当前隔离句柄：${activeHandle.name}（共 ${handles.length} 个句柄 · 定时器 0~${activeHandle.timerConfig.count - 1}），点击切换或新建`}
+          title={`当前隔离句柄：${activeHandle.name}（共 ${handles.length} 个句柄${
+            hasTimersCapability ? ` · 定时器 0~${activeHandleTimer.count - 1}` : ''
+          }），点击切换或新建`}
           aria-label="切换或管理运行句柄"
         >
           <span
@@ -153,27 +161,31 @@ export function ScriptTabBar({
             <div className="dropdown-section-label">
               项目内隔离句柄 ({handles.length} 个独立 VM)
             </div>
-            {handles.map((h) => (
-              <button
-                key={h.id}
-                type="button"
-                className={`dropdown-item ${h.id === activeHandle.id ? 'active' : ''}`}
-                disabled={disabled && h.id !== activeHandle.id}
-                onClick={() => {
-                  onSelectHandle(h.id);
-                  setShowHandleMenu(false);
-                }}
-              >
-                <span
-                  className="lang-dot"
-                  style={{ background: h.color, flexShrink: 0 }}
-                />
-                <span className="dropdown-item-label">{h.name}</span>
-                <span className="count-badge">
-                  {h.scripts.length} 脚本 · T0~{h.timerConfig.count - 1}
-                </span>
-              </button>
-            ))}
+            {handles.map((h) => {
+              const hTimer = getHandleTimerConfig(h, defaultTimerCount);
+              return (
+                <button
+                  key={h.id}
+                  type="button"
+                  className={`dropdown-item ${h.id === activeHandle.id ? 'active' : ''}`}
+                  disabled={disabled && h.id !== activeHandle.id}
+                  onClick={() => {
+                    onSelectHandle(h.id);
+                    setShowHandleMenu(false);
+                  }}
+                >
+                  <span
+                    className="lang-dot"
+                    style={{ background: h.color, flexShrink: 0 }}
+                  />
+                  <span className="dropdown-item-label">{h.name}</span>
+                  <span className="count-badge">
+                    {h.scripts.length} 脚本
+                    {hasTimersCapability ? ` · T0~${hTimer.count - 1}` : ''}
+                  </span>
+                </button>
+              );
+            })}
 
             <div className="dropdown-divider" />
             <div className="dropdown-section-label">
@@ -222,7 +234,7 @@ export function ScriptTabBar({
               }}
             >
               <Settings2 size={13} />
-              <span>配置句柄与定时器...</span>
+              <span>配置句柄与能力...</span>
             </button>
           </div>
         )}

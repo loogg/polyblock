@@ -56,12 +56,37 @@ export interface VariableScopeNode {
   variables: ScopedVariableItem[];
 }
 
-/** Handle-scoped hardware/software timer capability config (integer IDs 0..count-1). */
+/** Per-handle timer capability config stored under handle.capabilityConfigs['rt-timers']. */
 export interface ProjectTimerConfig {
   /** Number of available timer channels for this handle (1..32, default 8 -> IDs 0..7). */
   count: number;
   /** Optional friendly labels keyed by stringified integer ID (e.g. "0": "心跳灯"). */
   aliases: Record<string, string>;
+}
+
+/** Target board / execution environment specification (built-in or imported .polyboard.json). */
+export interface TargetProfile {
+  format: 'polyblock-board';
+  version: 1;
+  id: string;
+  name: string;
+  description: string;
+  defaultLanguage: ScriptLanguageId;
+  maxHandles: number;
+  defaultTimerCount: number;
+  /** Default enabled capability IDs (runtime capabilities + peripheral/extension packs). */
+  capabilities: string[];
+  builtin?: boolean;
+}
+
+/** Built-in runtime capability metadata (e.g., rt-lifecycle, rt-timers). */
+export interface RuntimeCapabilitySpec {
+  id: string;
+  name: string;
+  shortLabel: string;
+  color: string;
+  scope: 'project' | 'handle';
+  description: string;
 }
 
 /** Live runtime telemetry emitted by the cooperative WASM event-loop scheduler. */
@@ -100,14 +125,15 @@ export interface RuntimeHandle {
   description?: string;
   color: string;
   autoStart: boolean;
-  timerConfig: ProjectTimerConfig;
+  /** Generic per-handle capability config store (e.g., capabilityConfigs['rt-timers']). */
+  capabilityConfigs: Record<string, unknown>;
   entryScriptId: string;
   activeScriptId: string;
   scripts: ProjectScript[];
   updatedAt: string;
 }
 
-/** v3 Three-tier Project -> Handle[] -> Script[] model. */
+/** v3 Three-tier Capability-Driven Project -> Handle[] -> Script[] model. */
 export interface ProjectModel {
   format: 'polyblock-project';
   version: 3;
@@ -115,9 +141,12 @@ export interface ProjectModel {
   name: string;
   description?: string;
   language: ScriptLanguageId;
-  /** Project default timer channel count for newly added handles (1..32). */
+  /** Bound target environment / board specification ID (e.g. 'generic-script', 'embedded-rt', 'virtual-board-rt'). */
+  targetProfileId: string;
+  /** Unified list of enabled runtime capabilities & peripheral/extension pack IDs for this project. */
+  enabledCapabilities: string[];
+  /** Project default timer channel count when rt-timers is enabled (1..32). */
   defaultTimerCount: number;
-  enabledExtensions: string[];
   /** Forward-compatible reserved pure-script shared libraries (single source, isolated load per handle). */
   sharedModules: ProjectScript[];
   activeHandleId: string;
