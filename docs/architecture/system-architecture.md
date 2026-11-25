@@ -242,3 +242,9 @@ flowchart TD
    - **按需呈现原则**：未启用 `rt-timers` 的项目不显示「定时」分类、设置弹窗不显示定时器配置、监控区不显示定时器；未启用 `virtual-board` 的项目不显示 `on_button` 积木与虚拟板卡模拟面板；纯脚本项目完全隐藏「模拟」页签。
 4. **Layer 3 · 句柄级通用能力配置（`RuntimeHandle.capabilityConfigs`）**：
    - `RuntimeHandle` 不再硬编码 `timerConfig`，改为通用 `capabilityConfigs: Record<string, unknown>`（如启用 `rt-timers` 时存取 `capabilityConfigs['rt-timers']`），未来接入更多每句柄隔离能力（如串口/PWM/状态机配置）零修改核心模型。
+
+### 10.1 外设扩展包双层作用域与确定性便携导出
+为防止单项目定制外设包污染全局库，同时保证导出项目发给他人 100% 开箱即用，`.polyext.json` 严格划分为两层作用域：
+- **项目内嵌外设包（`ProjectModel.localExtensions`）**：在「项目配置 → 能力与外设」导入，仅保存在当前项目 JSON 内，**不出现在左侧全局「扩展」页**；同 ID 时**无条件优先覆盖全局包**（切换项目自动同步重绑 Blockly 积木与 Lua/Python 代码生成器）；支持一键导出 `.polyext.json` 或复制保存到全局库。
+- **全局扩展库（`ExtensionRegistry` · `localStorage`）**：在左侧「扩展」页导入与管理（内置包 + 跨项目复用 SDK），所有项目可按需勾选启用，自定义包支持导出 `.polyext.json` 分享给团队。
+- **确定性便携快照（`bundledExtensions`）**：导出 `.polyblock.json` 时，自动把项目已启用的非内置全局包快照附带至 `bundledExtensions`。接收方导入时，**不依赖脆弱的版本号比对，直接将 `bundledExtensions` 无条件吸收为该项目的内嵌包并覆盖同名全局包**，既确保跨环境行为 100% 一致，又绝不污染接收方全局库；接收方随时可一键移除内嵌覆盖以切回自己的全局库版本。

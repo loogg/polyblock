@@ -2,6 +2,7 @@ import {
   Copy,
   Cpu,
   Download,
+  Globe,
   Plus,
   Puzzle,
   Settings2,
@@ -20,6 +21,7 @@ import {
   SAMPLE_CUSTOM_BOARD_TEMPLATE,
   targetProfileRegistry,
 } from '../core/capabilities/registry';
+import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../core/extensions/builtinPacks';
 import type { PolyExtensionPack } from '../core/extensions/types';
 import {
   countProjectScripts,
@@ -68,6 +70,9 @@ interface ProjectSettingsModalProps {
     },
   ) => void;
   onToggleCapabilityForProject: (projectId: string, capId: string) => void;
+  onImportLocalExtensionJson: (projectId: string, raw: unknown) => void;
+  onRemoveLocalExtension: (projectId: string, packId: string) => void;
+  onPromoteLocalExtensionToGlobal: (pack: PolyExtensionPack) => void;
   onOpenExtensionsPage: () => void;
   onNotify: (msg: string) => void;
 }
@@ -89,6 +94,9 @@ export function ProjectSettingsModal({
   onDeleteHandle,
   onUpdateHandleConfig,
   onToggleCapabilityForProject,
+  onImportLocalExtensionJson,
+  onRemoveLocalExtension,
+  onPromoteLocalExtensionToGlobal,
   onOpenExtensionsPage,
   onNotify,
 }: ProjectSettingsModalProps) {
@@ -102,6 +110,7 @@ export function ProjectSettingsModal({
   const [aliasSlotId, setAliasSlotId] = useState('0');
   const [aliasDraft, setAliasDraft] = useState('');
   const profileFileRef = useRef<HTMLInputElement | null>(null);
+  const localExtFileRef = useRef<HTMLInputElement | null>(null);
 
   const selectedHandle: RuntimeHandle =
     project.handles.find((h) => h.id === selectedHandleId) ?? project.handles[0];
@@ -133,6 +142,42 @@ export function ProjectSettingsModal({
 
   const backends = backendRegistry.list();
   const enabledSet = new Set(project.enabledCapabilities);
+  const localPacks = project.localExtensions ?? [];
+  const localPackIds = new Set(localPacks.map((p) => p.id));
+  const globalPackIds = new Set(allExtensionPacks.map((p) => p.id));
+
+  const downloadPackJson = (fileName: string, data: unknown, toastText: string) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    onNotify(toastText);
+  };
+
+  const handleLocalExtFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result)) as unknown;
+        onImportLocalExtensionJson(project.id, parsed);
+      } catch (err) {
+        onNotify(
+          `导入项目内嵌外设包失败：${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    };
+    reader.readAsText(file, 'utf-8');
+    e.target.value = '';
+  };
 
   const handleSetCount = (nextCount: number) => {
     if (!selectedHandle) return;
@@ -481,10 +526,179 @@ export function ProjectSettingsModal({
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       gap: 8,
+                      flexWrap: 'wrap',
                     }}
                   >
                     <label className="settings-label">
-                      硬件外设与扩展积木包（C 层 / 固件原生 API）
+                      本项目内嵌外设包（{localPacks.length} · 随工程文件导出，不污染全局库）
+                    </label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        style={{ fontSize: 11.5, padding: '4px 9px', flexShrink: 0 }}
+                        onClick={() => localExtFileRef.current?.click()}
+                      >
+                        <Upload size={11} />
+                        <span>导入到本项目 (.polyext.json)</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        style={{ fontSize: 11.5, padding: '4px 7px', flexShrink: 0 }}
+                        title="下载自定义外设包示例模板"
+                        onClick={() =>
+                          downloadPackJson(
+                            'my-robot-api.polyext.json',
+                            SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+                            '已下载自定义外设包模板 my-robot-api.polyext.json',
+                          )
+                        }
+                      >
+                        <Download size={11} />
+                        <span>模板</span>
+                      </button>
+                      <input
+                        ref={localExtFileRef}
+                        type="file"
+                        accept=".json,.polyext.json"
+                        style={{ display: 'none' }}
+                        onChange={handleLocalExtFileImport}
+                      />
+                    </div>
+                  </div>
+                  <p className="settings-hint">
+                    适合当前项目专用的板载/业务 C 接口描述。仅保存在本项目 <code>.polyblock.json</code> 内，发给他人开箱即用；同名 ID 时优先覆盖全局包。
+                  </p>
+                  {localPacks.length === 0 ? (
+                    <div
+                      className="settings-ext-row"
+                      style={{
+                        background: 'var(--bg-subtle)',
+                        borderStyle: 'dashed',
+                        fontSize: 11.5,
+                        color: 'var(--text-muted)',
+                      }}
+                    >
+                      当前项目暂无内嵌外设包。点击右上角「导入到本项目」即可按项目隔离挂载，不会出现在左侧全局「扩展」页。
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {localPacks.map((pack) => {
+                        const enabled = enabledSet.has(pack.id);
+                        const overridesGlobal = globalPackIds.has(pack.id);
+                        return (
+                          <div key={pack.id} className="settings-ext-row">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <span
+                                className="card-icon"
+                                style={{
+                                  background: pack.color,
+                                  width: 32,
+                                  height: 28,
+                                  fontSize: 10.5,
+                                  borderRadius: 7,
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {pack.categoryLabel}
+                              </span>
+                              <div>
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    fontWeight: 600,
+                                    fontSize: 12.5,
+                                    flexWrap: 'wrap',
+                                  }}
+                                >
+                                  <span>{pack.name}</span>
+                                  <span className="count-badge">项目内嵌</span>
+                                  {overridesGlobal && (
+                                    <span
+                                      className="count-badge"
+                                      style={{
+                                        color: 'var(--warning)',
+                                        borderColor: 'var(--warning)',
+                                      }}
+                                    >
+                                      覆盖同名全局包
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                  v{pack.packVersion} · {pack.blocks.length} 个积木 · ID: {pack.id}
+                                </div>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                              <button
+                                type="button"
+                                className="btn-ghost"
+                                style={{ padding: '4px 6px' }}
+                                title="复制一份保存到全局扩展库（供其他项目复用）"
+                                aria-label={`将 ${pack.name} 保存到全局扩展库`}
+                                onClick={() => onPromoteLocalExtensionToGlobal(pack)}
+                              >
+                                <Globe size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-ghost"
+                                style={{ padding: '4px 6px' }}
+                                title="导出为独立 .polyext.json"
+                                aria-label={`导出 ${pack.name}`}
+                                onClick={() =>
+                                  downloadPackJson(
+                                    `${pack.id}.polyext.json`,
+                                    pack,
+                                    `已导出项目内嵌包 ${pack.id}.polyext.json`,
+                                  )
+                                }
+                              >
+                                <Download size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-ghost"
+                                style={{ padding: '4px 6px', color: 'var(--danger)' }}
+                                title="从当前项目移除此内嵌包"
+                                aria-label={`移除项目内嵌包 ${pack.name}`}
+                                onClick={() => onRemoveLocalExtension(project.id, pack.id)}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                className={`ext-toggle-btn ${enabled ? 'enabled' : 'disabled'}`}
+                                style={{ padding: '4px 10px', fontSize: 11.5 }}
+                                onClick={() =>
+                                  onToggleCapabilityForProject(project.id, pack.id)
+                                }
+                              >
+                                {enabled ? '已启用' : '启用'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="settings-field-group" style={{ marginTop: 4 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                    }}
+                  >
+                    <label className="settings-label">
+                      全局扩展库（内置 + 全局导入 · 多项目共享）
                     </label>
                     <button
                       type="button"
@@ -495,17 +709,22 @@ export function ProjectSettingsModal({
                         onOpenExtensionsPage();
                       }}
                     >
-                      导入自定义包 →
+                      管理全局扩展库 →
                     </button>
                   </div>
                   <p className="settings-hint">
-                    对应板端固件直接注册的原生模块（如示例虚拟板 <code>board</code> 或自定义 <code>.polyext.json</code>），所有句柄共用项目启用清单。
+                    通用 SDK / 协议包统一在全局扩展页维护，此处按项目勾选启用；导出项目时若使用了全局自定义包，会自动附带快照保证他人打开开箱即用。
                   </p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {allExtensionPacks.map((pack) => {
                       const enabled = enabledSet.has(pack.id);
+                      const overridden = localPackIds.has(pack.id);
                       return (
-                        <div key={pack.id} className="settings-ext-row">
+                        <div
+                          key={pack.id}
+                          className="settings-ext-row"
+                          style={overridden ? { opacity: 0.65 } : undefined}
+                        >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <span
                               className="card-icon"
@@ -526,7 +745,10 @@ export function ProjectSettingsModal({
                               </div>
                               <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                                 {pack.blocks.length} 个积木 ·{' '}
-                                {pack.builtin ? '内置外设/扩展包' : '自定义包'}
+                                {pack.builtin
+                                  ? '内置包'
+                                  : '全局自定义包（导出项目自动附带快照）'}
+                                {overridden ? ' · 已被本项目内嵌包覆盖' : ''}
                               </div>
                             </div>
                           </div>
@@ -534,11 +756,17 @@ export function ProjectSettingsModal({
                             type="button"
                             className={`ext-toggle-btn ${enabled ? 'enabled' : 'disabled'}`}
                             style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
+                            disabled={overridden}
+                            title={
+                              overridden
+                                ? '已被上方同名项目内嵌包覆盖，请操作上方条目'
+                                : undefined
+                            }
                             onClick={() =>
                               onToggleCapabilityForProject(project.id, pack.id)
                             }
                           >
-                            {enabled ? '已启用' : '启用'}
+                            {overridden ? '已覆盖' : enabled ? '已启用' : '启用'}
                           </button>
                         </div>
                       );

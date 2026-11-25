@@ -1,3 +1,5 @@
+import type { PolyExtensionPack } from '../core/extensions/types';
+
 export type ScriptLanguageId = 'lua' | 'python';
 
 export type PageId = 'blocks' | 'projects' | 'devices' | 'extensions' | 'settings';
@@ -145,6 +147,18 @@ export interface ProjectModel {
   targetProfileId: string;
   /** Unified list of enabled runtime capabilities & peripheral/extension pack IDs for this project. */
   enabledCapabilities: string[];
+  /**
+   * Project-embedded custom extension packs (.polyext.json imported inside this project).
+   * Scoped strictly to this project (never pollutes the global Extensions page), exported with
+   * .polyblock.json, and overrides global packs of the same ID when active.
+   */
+  localExtensions?: PolyExtensionPack[];
+  /**
+   * Export-only portability snapshot: non-builtin global packs used by this project are
+   * auto-snapshotted here when exporting .polyblock.json so recipients get out-of-the-box
+   * loading without polluting their global library.
+   */
+  bundledExtensions?: PolyExtensionPack[];
   /** Project default timer channel count when rt-timers is enabled (1..32). */
   defaultTimerCount: number;
   /** Forward-compatible reserved pure-script shared libraries (single source, isolated load per handle). */

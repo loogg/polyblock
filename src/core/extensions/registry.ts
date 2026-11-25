@@ -182,7 +182,10 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
 }
 
 class ExtensionRegistry {
+  /** Built-in + user-imported GLOBAL packs (persisted in localStorage, shared across projects). */
   private readonly packs = new Map<string, PolyExtensionPack>();
+  /** Currently active project's embedded local packs (override same-ID global packs without polluting global). */
+  private readonly activeLocalPacks = new Map<string, PolyExtensionPack>();
   private initialized = false;
 
   ensureInitialized(): void {
@@ -193,7 +196,7 @@ class ExtensionRegistry {
       this.register(pack, false);
     }
 
-    // Restore user-imported custom extension packs from localStorage
+    // Restore user-imported custom GLOBAL extension packs from localStorage
     try {
       const raw = localStorage.getItem(STORAGE_CUSTOM_EXTENSIONS_KEY);
       if (raw) {
@@ -216,10 +219,49 @@ class ExtensionRegistry {
 
   register(pack: PolyExtensionPack, persistCustom = true): void {
     this.packs.set(pack.id, pack);
-    registerPackIntoBlocklyAndGenerators(pack);
+    // Only bind into Blockly immediately if not currently overridden by an active project-local pack
+    if (!this.activeLocalPacks.has(pack.id)) {
+      registerPackIntoBlocklyAndGenerators(pack);
+    }
     if (persistCustom && !pack.builtin) {
       this.persistCustomPacks();
     }
+  }
+
+  /**
+   * Synchronizes the currently active project's embedded packs into Blockly & Lua/Python generators.
+   * Restores global definitions for any previously overridden IDs, then applies project-local overrides.
+   */
+  setActiveProjectLocalPacks(localPacks: PolyExtensionPack[] = []): void {
+    this.ensureInitialized();
+    const prevOverriddenIds = Array.from(this.activeLocalPacks.keys());
+    this.activeLocalPacks.clear();
+
+    // Restore any global pack whose ID was previously overridden by the previous project
+    for (const oldId of prevOverriddenIds) {
+      const globalPack = this.packs.get(oldId);
+      if (globalPack) {
+        registerPackIntoBlocklyAndGenerators(globalPack);
+      }
+    }
+
+    // Register current project's embedded packs (overriding same-ID global packs)
+    for (const rawPack of localPacks) {
+      const normalized: PolyExtensionPack = { ...rawPack, builtin: false };
+      this.activeLocalPacks.set(normalized.id, normalized);
+      registerPackIntoBlocklyAndGenerators(normalized);
+    }
+  }
+
+  /** Validates a project-embedded .polyext.json (disallows overriding built-in packs, allows overriding global custom packs). */
+  validateProjectLocalPack(raw: unknown): PolyExtensionPack {
+    this.ensureInitialized();
+    const valid = validateExtensionPack(raw);
+    const existingGlobal = this.packs.get(valid.id);
+    if (existingGlobal?.builtin) {
+      throw new Error(`扩展包 ID "${valid.id}" 与系统内置包冲突，请更换自定义 ID`);
+    }
+    return { ...valid, builtin: false };
   }
 
   importCustomPack(raw: unknown): PolyExtensionPack {
@@ -252,34 +294,66 @@ class ExtensionRegistry {
     }
   }
 
+  /** Lists ONLY built-in + global custom packs (never includes project-embedded packs). */
   listAll(): PolyExtensionPack[] {
     this.ensureInitialized();
     return Array.from(this.packs.values());
   }
 
+  /** Looks up a pack in global library only. */
   get(packId: string): PolyExtensionPack | undefined {
     this.ensureInitialized();
     return this.packs.get(packId);
   }
 
-  getEnabledPacks(enabledIds: string[]): PolyExtensionPack[] {
+  /** Resolves a pack with project-local precedence over global library. */
+  resolvePack(
+    packId: string,
+    localPacks?: PolyExtensionPack[],
+  ): PolyExtensionPack | undefined {
+    this.ensureInitialized();
+    if (localPacks) {
+      const localMatch = localPacks.find((p) => p.id === packId);
+      if (localMatch) return localMatch;
+    } else {
+      const activeLocal = this.activeLocalPacks.get(packId);
+      if (activeLocal) return activeLocal;
+    }
+    return this.packs.get(packId);
+  }
+
+  getEnabledPacks(
+    enabledIds: string[],
+    localPacks?: PolyExtensionPack[],
+  ): PolyExtensionPack[] {
     this.ensureInitialized();
     const out: PolyExtensionPack[] = [];
+    const seen = new Set<string>();
     for (const id of enabledIds) {
-      const pack = this.packs.get(id);
-      if (pack) out.push(pack);
+      if (seen.has(id)) continue;
+      const pack = this.resolvePack(id, localPacks);
+      if (pack) {
+        seen.add(id);
+        out.push(pack);
+      }
     }
     return out;
   }
 
-  getSandboxMocks(enabledIds: string[]): ExtensionSandboxMock[] {
-    return this.getEnabledPacks(enabledIds)
+  getSandboxMocks(
+    enabledIds: string[],
+    localPacks?: PolyExtensionPack[],
+  ): ExtensionSandboxMock[] {
+    return this.getEnabledPacks(enabledIds, localPacks)
       .map((p) => p.sandboxMock)
       .filter((m): m is ExtensionSandboxMock => Boolean(m));
   }
 
-  toCategorySpecs(enabledIds: string[]): BlockCategorySpec[] {
-    return this.getEnabledPacks(enabledIds).map((pack) => {
+  toCategorySpecs(
+    enabledIds: string[],
+    localPacks?: PolyExtensionPack[],
+  ): BlockCategorySpec[] {
+    return this.getEnabledPacks(enabledIds, localPacks).map((pack) => {
       const blocks: ToolboxBlockSpec[] = pack.blocks.map((b) => {
         const inputs: Record<string, { shadow?: Record<string, unknown> }> = {};
         for (const [argName, sh] of Object.entries(b.shadows ?? {})) {

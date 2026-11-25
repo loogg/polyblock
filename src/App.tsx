@@ -35,6 +35,7 @@ import {
 } from './core/capabilities/registry';
 import { extensionRegistry } from './core/extensions/registry';
 import type {
+  PolyExtensionPack,
   VirtualBoardInputs,
   VirtualBoardState,
 } from './core/extensions/types';
@@ -42,6 +43,7 @@ import {
   addHandleToProject,
   addScriptToHandle,
   applyTargetProfileToProject,
+  buildExportableProjectJson,
   countProjectScripts,
   deleteHandleFromProject,
   deleteProjectFromStore,
@@ -227,6 +229,7 @@ export function App() {
   );
   setActiveTimerConfig(activeTimerConfig);
   setActiveProjectCapabilities(activeProject.enabledCapabilities);
+  extensionRegistry.setActiveProjectLocalPacks(activeProject.localExtensions ?? []);
 
   const language = activeProject.language;
   const breakpoints = activeScript.breakpoints;
@@ -243,16 +246,23 @@ export function App() {
   );
 
   const extraCategories = useMemo(
-    () => extensionRegistry.toCategorySpecs(activeProject.enabledCapabilities),
-    [activeProject.enabledCapabilities, extRevision],
+    () =>
+      extensionRegistry.toCategorySpecs(
+        activeProject.enabledCapabilities,
+        activeProject.localExtensions,
+      ),
+    [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
   );
 
   const showVirtualBoard = useMemo(
     () =>
       extensionRegistry
-        .getEnabledPacks(activeProject.enabledCapabilities)
+        .getEnabledPacks(
+          activeProject.enabledCapabilities,
+          activeProject.localExtensions,
+        )
         .some((p) => p.hasVirtualBoardUi),
-    [activeProject.enabledCapabilities, extRevision],
+    [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
   );
 
   const [generated, setGenerated] = useState<GeneratedCodeResult>({
@@ -409,6 +419,7 @@ export function App() {
         getHandleTimerConfig(nextHandle, nextProj.defaultTimerCount),
       );
       setActiveProjectCapabilities(nextProj.enabledCapabilities);
+      extensionRegistry.setActiveProjectLocalPacks(nextProj.localExtensions ?? []);
 
       activeProjectIdRef.current = nextProj.id;
       activeHandleIdRef.current = nextHandle.id;
@@ -485,12 +496,12 @@ export function App() {
      ======================================================================== */
   const handleToggleCapabilityForProject = useCallback(
     (projectId: string, capId: string) => {
-      const rtCap = BUILTIN_RUNTIME_CAPABILITIES.find((c) => c.id === capId);
-      const extPack = extensionRegistry.get(capId);
-      const displayName = rtCap?.name ?? extPack?.name ?? capId;
-
       const curProj = storeRef.current.projects.find((p) => p.id === projectId);
       if (!curProj) return;
+      const rtCap = BUILTIN_RUNTIME_CAPABILITIES.find((c) => c.id === capId);
+      const extPack = extensionRegistry.resolvePack(capId, curProj.localExtensions);
+      const displayName = rtCap?.name ?? extPack?.name ?? capId;
+
       const exists = curProj.enabledCapabilities.includes(capId);
       const nextCaps = exists
         ? curProj.enabledCapabilities.filter((id) => id !== capId)
@@ -517,6 +528,100 @@ export function App() {
       );
     },
     [notify, regenerateFromWorkspace],
+  );
+
+  const handleImportProjectLocalExtension = useCallback(
+    (projectId: string, raw: unknown) => {
+      try {
+        const pack = extensionRegistry.validateProjectLocalPack(raw);
+        const curProj = storeRef.current.projects.find((p) => p.id === projectId);
+        if (!curProj) return;
+
+        const existingLocal = curProj.localExtensions ?? [];
+        const replaced = existingLocal.some((p) => p.id === pack.id);
+        const nextLocal = replaced
+          ? existingLocal.map((p) => (p.id === pack.id ? pack : p))
+          : [...existingLocal, pack];
+        const nextCaps = curProj.enabledCapabilities.includes(pack.id)
+          ? curProj.enabledCapabilities
+          : [...curProj.enabledCapabilities, pack.id];
+
+        setStore((prev) =>
+          updateProjectById(prev, projectId, (p) => ({
+            ...p,
+            localExtensions: nextLocal,
+            enabledCapabilities: nextCaps,
+            updatedAt: new Date().toISOString(),
+          })),
+        );
+
+        if (projectId === activeProjectIdRef.current) {
+          extensionRegistry.setActiveProjectLocalPacks(nextLocal);
+          setActiveProjectCapabilities(nextCaps);
+          const ws = workbenchRef.current?.getWorkspace();
+          if (ws) regenerateFromWorkspace(ws, languageRef.current);
+        }
+
+        notify(
+          `已将「${pack.name}」内嵌到项目「${curProj.name}」（仅本项目可见，不写入全局扩展库）`,
+        );
+      } catch (err) {
+        notify(
+          `项目内嵌外设包校验失败：${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+    [notify, regenerateFromWorkspace],
+  );
+
+  const handleRemoveProjectLocalExtension = useCallback(
+    (projectId: string, packId: string) => {
+      const curProj = storeRef.current.projects.find((p) => p.id === projectId);
+      if (!curProj) return;
+      const nextLocal = (curProj.localExtensions ?? []).filter((p) => p.id !== packId);
+      const hasGlobalFallback = Boolean(extensionRegistry.get(packId));
+      const nextCaps = hasGlobalFallback
+        ? curProj.enabledCapabilities
+        : curProj.enabledCapabilities.filter((id) => id !== packId);
+
+      setStore((prev) =>
+        updateProjectById(prev, projectId, (p) => ({
+          ...p,
+          localExtensions: nextLocal,
+          enabledCapabilities: nextCaps,
+          updatedAt: new Date().toISOString(),
+        })),
+      );
+
+      if (projectId === activeProjectIdRef.current) {
+        extensionRegistry.setActiveProjectLocalPacks(nextLocal);
+        setActiveProjectCapabilities(nextCaps);
+        const ws = workbenchRef.current?.getWorkspace();
+        if (ws) regenerateFromWorkspace(ws, languageRef.current);
+      }
+
+      notify(
+        hasGlobalFallback
+          ? '已移除项目内嵌覆盖包，自动恢复使用全局扩展库版本'
+          : '已从当前项目移除内嵌外设包',
+      );
+    },
+    [notify, regenerateFromWorkspace],
+  );
+
+  const handlePromoteLocalExtensionToGlobal = useCallback(
+    (pack: PolyExtensionPack) => {
+      try {
+        extensionRegistry.importCustomPack(pack);
+        setExtRevision((r) => r + 1);
+        notify(`已将「${pack.name}」复制保存到全局扩展库，其他项目现可直接启用`);
+      } catch (err) {
+        notify(
+          `保存到全局库失败：${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+    [notify],
   );
 
   const handleApplyTargetProfile = useCallback(
@@ -1047,21 +1152,31 @@ export function App() {
         ) ?? getActiveProject(flushed);
       const safeName = target.name.replace(/[\\/:*?"<>|]+/g, '_');
       const fileName = `${safeName || 'project'}.polyblock.json`;
+      const exportPayload = buildExportableProjectJson(
+        target,
+        extensionRegistry.listAll(),
+      );
       triggerFileDownload(
         fileName,
-        JSON.stringify(target, null, 2),
+        JSON.stringify(exportPayload, null, 2),
         'application/json;charset=utf-8',
       );
       setIsDirty(false);
+      const bundledCount = exportPayload.bundledExtensions?.length ?? 0;
+      const localCount = exportPayload.localExtensions?.length ?? 0;
+      const packHint =
+        bundledCount > 0 || localCount > 0
+          ? ` · 含 ${localCount + bundledCount} 个随工程打包外设（开箱即用）`
+          : '';
       notify(
-        `已保存整项目工程 ${fileName}（${target.handles.length} 句柄 · ${countProjectScripts(target)} 脚本）`,
+        `已保存整项目工程 ${fileName}（${target.handles.length} 句柄 · ${countProjectScripts(target)} 脚本${packHint}）`,
       );
     },
     [flushActiveCanvasIntoStore, notify],
   );
 
   const handleImportProject = useCallback(
-    (imported: ProjectModel) => {
+    (imported: ProjectModel, absorbedPackNames: string[] = []) => {
       stopIfRunning();
       const flushed = flushActiveCanvasIntoStore(storeRef.current);
       const nextStore: WorkspaceStoreState = {
@@ -1075,7 +1190,9 @@ export function App() {
       setIsDirty(false);
       navigateTo('blocks');
       notify(
-        `已导入项目：${imported.name}（${imported.handles.length} 句柄 · ${countProjectScripts(imported)} 脚本）`,
+        absorbedPackNames.length > 0
+          ? `已导入项目「${imported.name}」，并将随工程附带的外设快照（${absorbedPackNames.join('、')}）直接加载为项目内嵌包（优先覆盖全局、不污染全局库）`
+          : `已导入项目：${imported.name}（${imported.handles.length} 句柄 · ${countProjectScripts(imported)} 脚本）`,
       );
     },
     [stopIfRunning, flushActiveCanvasIntoStore, mountScriptIntoCanvas, navigateTo, notify],
@@ -1172,15 +1289,16 @@ export function App() {
       const runner = runnerManager.getForLanguage(language);
       runnerManager.setActive(runner);
 
-      const extensionMocks = extensionRegistry
-        .listAll()
-        .map((p) => p.sandboxMock)
-        .filter((m): m is NonNullable<typeof m> => Boolean(m));
+      const extensionMocks = extensionRegistry.getSandboxMocks(
+        activeProject.enabledCapabilities,
+        activeProject.localExtensions,
+      );
       const siblingMocks = buildHandleScriptModules(
         activeHandle,
         activeScript.id,
         language,
         activeProject.sharedModules,
+        activeProject.defaultTimerCount,
       );
 
       const speedDelay = SPEED_DELAY_MS[settings.executionSpeed];
@@ -1279,6 +1397,9 @@ export function App() {
       activeHandle,
       activeScript.id,
       activeScript.name,
+      activeProject.enabledCapabilities,
+      activeProject.localExtensions,
+      activeProject.defaultTimerCount,
       activeProject.sharedModules,
       generated,
       appendLog,
@@ -1302,10 +1423,10 @@ export function App() {
     setHandleTelemetries({});
     setMultiHandleRunning(true);
 
-    const extensionMocks = extensionRegistry
-      .listAll()
-      .map((p) => p.sandboxMock)
-      .filter((m): m is NonNullable<typeof m> => Boolean(m));
+    const extensionMocks = extensionRegistry.getSandboxMocks(
+      proj.enabledCapabilities,
+      proj.localExtensions,
+    );
 
     setLogs([
       {
@@ -1696,6 +1817,9 @@ export function App() {
           onDeleteHandle={handleDeleteHandle}
           onUpdateHandleConfig={handleUpdateHandleConfig}
           onToggleCapabilityForProject={handleToggleCapabilityForProject}
+          onImportLocalExtensionJson={handleImportProjectLocalExtension}
+          onRemoveLocalExtension={handleRemoveProjectLocalExtension}
+          onPromoteLocalExtensionToGlobal={handlePromoteLocalExtensionToGlobal}
           onOpenExtensionsPage={() => navigateTo('extensions')}
           onNotify={notify}
         />

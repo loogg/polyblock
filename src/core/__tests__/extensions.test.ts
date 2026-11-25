@@ -13,7 +13,11 @@ import {
 } from '../capabilities/registry';
 import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../extensions/builtinPacks';
 import { extensionRegistry, validateExtensionPack } from '../extensions/registry';
-import { instantiateProjectFromTemplate } from '../projects/store';
+import {
+  buildExportableProjectJson,
+  instantiateProjectFromTemplate,
+  parseImportedProject,
+} from '../projects/store';
 
 describe('Declarative Extension Pack & Capability-Driven Target Profile System', () => {
   beforeAll(() => {
@@ -171,5 +175,160 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
 
     expect(extensionRegistry.removeCustomPack('my-robot-api')).toBe(true);
     expect(extensionRegistry.get('my-robot-api')).toBeUndefined();
+  });
+
+  it('isolates project-local packs from global library, overrides same-ID global packs, and auto-bundles on export', () => {
+    // 1. Register a global custom pack v2.0.0
+    const globalV2 = extensionRegistry.importCustomPack({
+      ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+      packVersion: '2.0.0',
+      blocks: [
+        {
+          ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE.blocks[0],
+          lua: {
+            imports: ['local robot = require("robot_v2")'],
+            template: 'robot.move_v2({{DIR:json}}, {{SPEED}})',
+          },
+        },
+      ],
+    });
+    expect(extensionRegistry.listAll().some((p) => p.id === globalV2.id)).toBe(true);
+
+    // 2. Create a project-local pack with SAME ID (v1.0.0) + a pure local-only pack
+    const localV1 = extensionRegistry.validateProjectLocalPack({
+      ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+      packVersion: '1.0.0',
+      blocks: [
+        {
+          ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE.blocks[0],
+          lua: {
+            imports: ['local robot = require("robot_v1")'],
+            template: 'robot.move_v1({{DIR:json}}, {{SPEED}})',
+          },
+        },
+      ],
+    });
+    const privatePack = extensionRegistry.validateProjectLocalPack({
+      ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+      id: 'proj-only-servo',
+      name: '项目专属舵机包',
+      categoryLabel: '舵机',
+      blocks: [
+        {
+          type: 'ext_servo_angle',
+          kind: 'statement',
+          message0: '设置舵机角度 %1',
+          args0: [{ type: 'field_number', name: 'DEG', value: 90 }],
+          lua: {
+            imports: ['local servo = require("servo")'],
+            template: 'servo.angle({{DEG}})',
+          },
+          python: {
+            imports: ['import servo'],
+            template: 'servo.angle({{DEG}})',
+          },
+        },
+      ],
+    });
+
+    // Project-local pack must NOT pollute global listAll()
+    extensionRegistry.setActiveProjectLocalPacks([localV1, privatePack]);
+    expect(extensionRegistry.listAll().some((p) => p.id === 'proj-only-servo')).toBe(
+      false,
+    );
+    expect(
+      extensionRegistry
+        .toCategorySpecs(['my-robot-api', 'proj-only-servo'], [localV1, privatePack])
+        .map((c) => c.label),
+    ).toEqual(['机器人', '舵机']);
+
+    // Local v1 must override global v2 in codegen when active
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_start',
+              id: 's_ovr',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'ext_robot_move',
+                    id: 'm_ovr',
+                    fields: { DIR: 'forward' },
+                    inputs: {
+                      SPEED: {
+                        block: {
+                          type: 'math_number',
+                          id: 'sp_ovr',
+                          fields: { NUM: 50 },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      ws,
+    );
+    expect(backendRegistry.get('lua').generate(ws).code).toContain(
+      'robot.move_v1("forward", 50)',
+    );
+
+    // Switching to another project with NO local packs must restore global v2 cleanly
+    extensionRegistry.setActiveProjectLocalPacks([]);
+    expect(backendRegistry.get('lua').generate(ws).code).toContain(
+      'robot.move_v2("forward", 50)',
+    );
+    ws.dispose();
+
+    // 3. Exporting a project using a global custom pack auto-attaches bundledExtensions
+    const projUsingGlobal = {
+      ...instantiateProjectFromTemplate('blank_project'),
+      enabledCapabilities: [globalV2.id],
+      localExtensions: [],
+    };
+    const exported = buildExportableProjectJson(
+      projUsingGlobal,
+      extensionRegistry.listAll(),
+    );
+    expect(exported.bundledExtensions).toHaveLength(1);
+    expect(exported.bundledExtensions![0].id).toBe(globalV2.id);
+
+    // 3a. Recipient with NO global pack -> unconditionally absorbed into localExtensions
+    const importedClean = parseImportedProject(exported, 'fallback', []);
+    expect(importedClean.localExtensions?.map((p) => p.id)).toEqual([globalV2.id]);
+    expect(importedClean.localExtensions?.map((p) => p.packVersion)).toEqual(['2.0.0']);
+
+    // 3b. Even when recipient already has a global pack with the EXACT same ID & version
+    //     (which may have different block definitions!), bundled pack is still unconditionally
+    //     absorbed as project-local override so imported project always behaves identically.
+    expect(extensionRegistry.get(globalV2.id)?.packVersion).toBe('2.0.0');
+    const importedWithExistingGlobal = parseImportedProject(exported, 'fallback', []);
+    expect(importedWithExistingGlobal.localExtensions?.map((p) => p.id)).toEqual([
+      globalV2.id,
+    ]);
+
+    // 4. Project-local pack always remains local (and does not duplicate into bundledExtensions)
+    const projWithLocal = {
+      ...instantiateProjectFromTemplate('blank_project'),
+      enabledCapabilities: [localV1.id],
+      localExtensions: [localV1],
+    };
+    const exportedLocal = buildExportableProjectJson(
+      projWithLocal,
+      extensionRegistry.listAll(),
+    );
+    expect(exportedLocal.bundledExtensions).toBeUndefined();
+    const importedLocal = parseImportedProject(exportedLocal, 'fallback', []);
+    expect(importedLocal.localExtensions?.map((p) => p.packVersion)).toEqual(['1.0.0']);
+
+    extensionRegistry.removeCustomPack(globalV2.id);
+    extensionRegistry.setActiveProjectLocalPacks([]);
   });
 });

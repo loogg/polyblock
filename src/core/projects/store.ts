@@ -11,6 +11,11 @@ import {
   CAP_VIRTUAL_BOARD,
   targetProfileRegistry,
 } from '../capabilities/registry';
+import {
+  extensionRegistry,
+  validateExtensionPack,
+} from '../extensions/registry';
+import type { PolyExtensionPack } from '../extensions/types';
 import type {
   LegacyProjectFileV1,
   LegacyProjectModelV2,
@@ -184,6 +189,75 @@ export function setHandleTimerConfig(
     },
     updatedAt: new Date().toISOString(),
   };
+}
+
+function normalizeLocalExtensions(raw: unknown): PolyExtensionPack[] {
+  if (!Array.isArray(raw)) return [];
+  const map = new Map<string, PolyExtensionPack>();
+  for (const item of raw) {
+    try {
+      const valid = validateExtensionPack(item);
+      map.set(valid.id, { ...valid, builtin: false });
+    } catch {
+      // ignore malformed extension entry
+    }
+  }
+  return Array.from(map.values());
+}
+
+/**
+ * Prepares a portable .polyblock.json export payload:
+ * - Preserves project-embedded `localExtensions`.
+ * - Auto-snapshots any non-builtin GLOBAL packs referenced in `enabledCapabilities`
+ *   into `bundledExtensions` so recipients open the project out-of-the-box.
+ */
+export function buildExportableProjectJson(
+  project: ProjectModel,
+  globalPacks: PolyExtensionPack[] = extensionRegistry.listAll(),
+): ProjectModel {
+  const localPacks = project.localExtensions ?? [];
+  const localIds = new Set(localPacks.map((p) => p.id));
+  const bundled: PolyExtensionPack[] = [];
+
+  for (const capId of project.enabledCapabilities) {
+    if (localIds.has(capId)) continue;
+    const globalPack = globalPacks.find((p) => p.id === capId);
+    if (globalPack && !globalPack.builtin) {
+      bundled.push(cloneJson({ ...globalPack, builtin: false }));
+    }
+  }
+
+  const base: ProjectModel = cloneJson(project);
+  delete base.bundledExtensions;
+  if (localPacks.length > 0) {
+    base.localExtensions = cloneJson(localPacks);
+  } else {
+    delete base.localExtensions;
+  }
+  if (bundled.length > 0) {
+    base.bundledExtensions = bundled;
+  }
+  return base;
+}
+
+/**
+ * Computes which bundled global snapshots in an imported JSON should be absorbed
+ * unconditionally as project-local embedded packs:
+ * - Always absorb every bundled pack not already present in `localExtensions`
+ *   (regardless of whether the recipient's global library has the same ID/version,
+ *   because two files with the same ID+version can still have different block definitions).
+ * - Guarantees 100% deterministic reproduction with zero global-library pollution;
+ *   the user can remove the local override at any time to fall back to their global pack.
+ */
+export function getAbsorbedBundledExtensions(
+  raw: unknown,
+): PolyExtensionPack[] {
+  if (!raw || typeof raw !== 'object') return [];
+  const obj = raw as Record<string, unknown>;
+  const localIds = new Set(normalizeLocalExtensions(obj.localExtensions).map((p) => p.id));
+  return normalizeLocalExtensions(obj.bundledExtensions).filter(
+    (p) => !localIds.has(p.id),
+  );
 }
 
 export function applyTargetProfileToProject(
@@ -1380,6 +1454,7 @@ export function instantiateProjectFromTemplate(
     language: tpl.language,
     targetProfileId: tpl.targetProfileId,
     enabledCapabilities: [...tpl.enabledCapabilities],
+    localExtensions: [],
     defaultTimerCount,
     sharedModules: [],
     activeHandleId: handles[0].id,
@@ -1420,6 +1495,7 @@ export function instantiateProjectFromProfile(
     language: profile.defaultLanguage,
     targetProfileId: profile.id,
     enabledCapabilities: [...profile.capabilities],
+    localExtensions: [],
     defaultTimerCount: profile.defaultTimerCount || DEFAULT_TIMER_COUNT,
     sharedModules: [],
     activeHandleId: handle.id,
@@ -1523,6 +1599,7 @@ export function migrateProjectV2ToV3(
     language: v2.language === 'python' ? 'python' : 'lua',
     targetProfileId: inferProfileId(mergedCaps),
     enabledCapabilities: mergedCaps,
+    localExtensions: [],
     defaultTimerCount: timerCfg.count,
     sharedModules: [],
     activeHandleId: handle.id,
@@ -1635,6 +1712,7 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
     language: raw.language === 'python' ? 'python' : 'lua',
     targetProfileId: profileId,
     enabledCapabilities,
+    localExtensions: normalizeLocalExtensions(raw.localExtensions),
     defaultTimerCount: defaultCount,
     sharedModules: Array.isArray(raw.sharedModules)
       ? (raw.sharedModules as ProjectScript[])
@@ -1736,6 +1814,10 @@ export function parseImportedProject(
         ? obj.targetProfileId
         : inferProfileId(enabledCapabilities);
 
+    const localPacks = normalizeLocalExtensions(obj.localExtensions);
+    const absorbedBundled = getAbsorbedBundledExtensions(obj);
+    const mergedLocalExtensions = [...localPacks, ...absorbedBundled];
+
     return {
       format: 'polyblock-project',
       version: 3,
@@ -1748,6 +1830,7 @@ export function parseImportedProject(
       language: obj.language === 'python' ? 'python' : 'lua',
       targetProfileId,
       enabledCapabilities,
+      localExtensions: mergedLocalExtensions,
       defaultTimerCount: defaultCount,
       sharedModules: Array.isArray(obj.sharedModules)
         ? normalizeScriptsArray(
@@ -1797,6 +1880,7 @@ export function parseImportedProject(
     language: v1.language === 'python' ? 'python' : 'lua',
     targetProfileId: 'generic-script',
     enabledCapabilities: inferCapabilitiesFromWorkspaces([v1.workspace]),
+    localExtensions: [],
     defaultTimerCount: DEFAULT_TIMER_COUNT,
     sharedModules: [],
     activeHandleId: handleId,
@@ -2277,6 +2361,7 @@ export function duplicateProjectInStore(
       store.projects.map((p) => p.name),
     ),
     enabledCapabilities: [...target.enabledCapabilities],
+    localExtensions: cloneJson(target.localExtensions ?? []),
     sharedModules: cloneJson(target.sharedModules ?? []),
     activeHandleId: handleIdMap.get(target.activeHandleId) ?? clonedHandles[0].id,
     handles: clonedHandles,

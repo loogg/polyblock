@@ -100,10 +100,9 @@ export function ExtensionsPage({
       <div className="subpage-inner">
         <div className="subpage-header">
           <div>
-            <h1 className="subpage-title">能力模块、硬件外设与目标板型库</h1>
+            <h1 className="subpage-title">全局扩展库、能力模块与板型预设</h1>
             <p className="subpage-sub">
-              为当前项目 <strong>{activeProjectName}</strong> 按需装配运行时能力与硬件外设包，或导入自定义{' '}
-              <code>.polyext.json</code> / <code>.polyboard.json</code>。
+              此处管理<strong>跨项目共享的全局扩展库</strong>（可为当前项目 <strong>{activeProjectName}</strong> 勾选启用）。若外设包仅归属单个项目，请在「项目配置 → 能力与外设」导入为<strong>项目内嵌包</strong>，不会污染此页。
             </p>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -113,7 +112,7 @@ export function ExtensionsPage({
               onClick={() => extFileInputRef.current?.click()}
             >
               <Upload size={14} />
-              <span>导入外设包 (.polyext.json)</span>
+              <span>导入到全局库 (.polyext.json)</span>
             </button>
             <button
               type="button"
@@ -227,9 +226,11 @@ export function ExtensionsPage({
                   <button
                     type="button"
                     className={`ext-toggle-btn ${isEnabled ? 'enabled' : 'disabled'}`}
+                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    title={isEnabled ? '点击从当前项目停用' : '启用到当前项目'}
                     onClick={() => onToggleCapability(cap.id)}
                   >
-                    {isEnabled ? '已启用（点击停用）' : '+ 启用到当前项目'}
+                    {isEnabled ? '已启用' : '+ 启用'}
                   </button>
                 </div>
               </div>
@@ -238,7 +239,7 @@ export function ExtensionsPage({
         </div>
 
         <h2 className="section-heading">
-          硬件外设与扩展积木包（已为当前项目启用{' '}
+          全局硬件外设与扩展积木包（多项目复用 · 当前项目启用{' '}
           {allPacks.filter((p) => enabledSet.has(p.id)).length} / {allPacks.length}）
         </h2>
         <div className="card-grid">
@@ -302,24 +303,40 @@ export function ExtensionsPage({
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     {!pack.builtin && (
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        style={{ padding: '4px 6px', color: 'var(--danger)' }}
-                        title="删除自定义扩展包"
-                        onClick={() => onRemoveCustomPack(pack.id)}
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          style={{ padding: '4px 6px' }}
+                          title="导出此全局外设包 (.polyext.json) 分享给他人"
+                          onClick={() => {
+                            downloadJsonFile(`${pack.id}.polyext.json`, pack);
+                            onNotify(`已导出全局扩展包 ${pack.id}.polyext.json`);
+                          }}
+                        >
+                          <Download size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          style={{ padding: '4px 6px', color: 'var(--danger)' }}
+                          title="删除自定义扩展包"
+                          onClick={() => onRemoveCustomPack(pack.id)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </>
                     )}
                     <button
                       type="button"
                       className={`ext-toggle-btn ${
                         isEnabled ? 'enabled' : 'disabled'
                       }`}
+                      style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                      title={isEnabled ? '点击从当前项目停用' : '启用到当前项目'}
                       onClick={() => onToggleCapability(pack.id)}
                     >
-                      {isEnabled ? '已启用（点击停用）' : '+ 启用到当前项目'}
+                      {isEnabled ? '已启用' : '+ 启用'}
                     </button>
                   </div>
                 </div>
@@ -376,15 +393,29 @@ export function ExtensionsPage({
                   </span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     {!prof.builtin && (
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        style={{ padding: '4px 6px', color: 'var(--danger)' }}
-                        title="删除自定义板型"
-                        onClick={() => onRemoveCustomProfile(prof.id)}
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          style={{ padding: '4px 6px' }}
+                          title="导出此目标板型规格 (.polyboard.json)"
+                          onClick={() => {
+                            downloadJsonFile(`${prof.id}.polyboard.json`, prof);
+                            onNotify(`已导出板型规格 ${prof.id}.polyboard.json`);
+                          }}
+                        >
+                          <Download size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          style={{ padding: '4px 6px', color: 'var(--danger)' }}
+                          title="删除自定义板型"
+                          onClick={() => onRemoveCustomProfile(prof.id)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </>
                     )}
                     <button
                       type="button"

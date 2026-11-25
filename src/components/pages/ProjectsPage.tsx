@@ -16,6 +16,7 @@ import {
 } from '../../core/capabilities/registry';
 import {
   countProjectScripts,
+  getAbsorbedBundledExtensions,
   getHandleTimerConfig,
   MULTI_SCRIPT_PROJECT_TEMPLATES,
   parseImportedProject,
@@ -32,7 +33,7 @@ interface ProjectsPageProps {
   onDuplicateProject: (projectId: string) => void;
   onDeleteProject: (projectId: string) => void;
   onSaveProjectFile: (projectId: string) => void;
-  onImportProject: (project: ProjectModel) => void;
+  onImportProject: (project: ProjectModel, absorbedPackNames?: string[]) => void;
   onOpenProjectSettings: (projectId: string) => void;
   onReturnToBlocks: () => void;
   onNotify: (msg: string) => void;
@@ -64,12 +65,16 @@ export function ProjectsPage({
     reader.onload = () => {
       try {
         const raw = JSON.parse(String(reader.result)) as unknown;
+        const absorbed = getAbsorbedBundledExtensions(raw);
         const imported = parseImportedProject(
           raw,
           file.name.replace(/\.polyblock\.json$|\.json$/i, ''),
           projects.map((p) => p.name),
         );
-        onImportProject(imported);
+        onImportProject(
+          imported,
+          absorbed.map((p) => p.name),
+        );
       } catch (err) {
         onNotify(
           `导入失败：无效的 .polyblock.json 文件 (${
@@ -190,6 +195,9 @@ export function ProjectsPage({
                   {profile.name} · {proj.language === 'lua' ? 'Lua 5.4' : 'Python 3'} ·{' '}
                   {proj.handles.length} 句柄 · {totalScripts} 脚本 ·{' '}
                   {proj.enabledCapabilities.length} 能力
+                  {(proj.localExtensions?.length ?? 0) > 0
+                    ? ` · ${proj.localExtensions!.length} 内嵌包`
+                    : ''}
                 </div>
 
                 <div className="paused-var-chips">
