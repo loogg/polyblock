@@ -407,9 +407,15 @@ export function buildFlyoutToolbox(
   );
   const q = searchQuery.trim().toLowerCase();
 
+  // Scale-compensated top spacer so the docked search bar never overlaps the flyout heading at any zoom (50%..160%)
+  const wsScale =
+    workspace && Number.isFinite(workspace.scale) && workspace.scale > 0
+      ? workspace.scale
+      : 0.92;
+  const desiredClearancePx = wsScale < 0.72 ? 40 : 46;
   const topSpacer: Blockly.utils.toolbox.FlyoutItemInfo = {
     kind: 'sep',
-    gap: '44',
+    gap: String(Math.ceil(desiredClearancePx / wsScale)),
   };
 
   if (q) {

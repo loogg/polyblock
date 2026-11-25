@@ -156,7 +156,8 @@ select {
   background: var(--bg-chrome);
   border-bottom: 1px solid var(--border);
   gap: 10px;
-  z-index: 30;
+  /* Strict stacking order: canvas(1..26) < script-tab-bar(45) < blocklyDropDown(90) < app-topbar(100) < toast(150) < modal(180) */
+  z-index: 100;
 }
 
 .topbar-group {
@@ -254,7 +255,7 @@ select {
 .dropdown-menu {
   position: absolute;
   top: calc(100% + 6px);
-  z-index: 95;
+  z-index: 110;
   background: var(--bg-chrome);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
@@ -1418,22 +1419,33 @@ select {
   height: 100%;
 }
 
-/* Search bar docked cleanly at top of Blockly flyout */
+/* Search bar docked cleanly inside Blockly flyout (width synced dynamically to flyout width across zoom levels) */
 .flyout-search-dock {
   position: absolute;
   top: 8px;
-  left: 10px;
+  left: 8px;
   width: 214px;
+  max-width: calc(100% - 16px);
+  height: 30px;
   z-index: 26;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 9px;
+  padding: 4px 9px;
   border-radius: 8px;
   background: var(--bg-chrome);
   border: 1px solid var(--border-strong);
   box-shadow: var(--shadow-sm);
   color: var(--text-muted);
+  box-sizing: border-box;
+  transition: width 0.1s ease;
+}
+
+.flyout-search-dock.compact {
+  height: 25px;
+  padding: 2px 7px;
+  gap: 4px;
+  border-radius: 6px;
 }
 
 .flyout-search-dock:focus-within {
@@ -1443,11 +1455,16 @@ select {
 
 .flyout-search-dock input {
   width: 100%;
+  min-width: 0;
   border: none;
   outline: none;
   background: transparent;
   font-size: 12px;
   color: var(--text-primary);
+}
+
+.flyout-search-dock.compact input {
+  font-size: 11px;
 }
 
 .flyout-search-clear {
@@ -1580,7 +1597,30 @@ select {
 
 .blocklyWidgetDiv,
 .blocklyDropDownDiv {
-  z-index: 90 !important;
+  z-index: 120 !important;
+}
+
+.blocklyContextMenu {
+  width: max-content !important;
+  max-width: 260px;
+}
+
+.blocklyMenuItemContent {
+  white-space: nowrap;
+}
+
+@media (max-width: 1120px) {
+  .app-topbar {
+    gap: 6px;
+    padding: 0 8px;
+  }
+  .topbar-group {
+    gap: 5px;
+  }
+  .project-switcher-btn {
+    max-width: 165px;
+    padding: 0 7px;
+  }
 }
 
 /* ============================================================================

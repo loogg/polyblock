@@ -276,7 +276,7 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
   categoryLabel: '硬件',
   color: '#0ea5e9',
   description:
-    '提供板载 LED、RGB 彩灯、OLED 文本屏、温度传感器与按键 A/B 回调积木；导出标准 board 模块代码供真机运行，浏览器沙箱内置实时交互模拟。',
+    '提供板载 LED、三色灯（红/绿/蓝）、OLED 文本屏、温度传感器与按键 A/B 回调积木；导出标准 board 模块代码供真机运行，浏览器沙箱内置实时交互模拟。',
   builtin: true,
   toolboxOrder: 100,
   tags: ['示例板卡'],
@@ -311,24 +311,23 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
     {
       type: 'ext_board_rgb',
       kind: 'statement',
-      message0: '设置 RGB 彩灯 %1',
+      message0: '设置板载三色灯 %1',
       args0: [
         {
           type: 'field_dropdown',
           name: 'COLOR',
           options: [
-            ['翠绿 (#10b981)', '#10b981'],
-            ['天蓝 (#3b82f6)', '#3b82f6'],
-            ['警示红 (#ef4444)', '#ef4444'],
-            ['琥珀黄 (#f59e0b)', '#f59e0b'],
-            ['炫紫 (#8b5cf6)', '#8b5cf6'],
-            ['关闭 (#1e293b)', '#1e293b'],
+            ['红灯 (Red)', '#ef4444'],
+            ['绿灯 (Green)', '#10b981'],
+            ['蓝灯 (Blue)', '#3b82f6'],
+            ['关闭 (OFF)', '#1e293b'],
           ],
         },
       ],
       inputsInline: true,
-      tooltip: '设置板载 RGB 彩灯的发光颜色。',
-      keywords: 'rgb 彩灯 颜色 led 硬件 board',
+      tooltip:
+        '设置板载三色指示灯（仅红 / 绿 / 蓝三色 + 关闭；需要 256 级全彩调色时请使用全彩 RGB 控件）。',
+      keywords: '三色灯 指示灯 红 绿 蓝 tricolor rgb led 硬件 board',
       lua: {
         imports: ['local board = require("board")'],
         template: 'board.rgb({{COLOR:json}})',
@@ -463,8 +462,17 @@ local M = {}
 function M.led(on)
   __poly_sim_set("led", on and true or false)
 end
-function M.rgb(hex)
-  __poly_sim_set("rgb", tostring(hex))
+function M.rgb(color)
+  local c = string.lower(tostring(color or ""))
+  if c == "red" or c == "#ef4444" or c == "#ff0000" then
+    __poly_sim_set("rgb", "#ef4444")
+  elseif c == "green" or c == "#10b981" or c == "#00ff00" then
+    __poly_sim_set("rgb", "#10b981")
+  elseif c == "blue" or c == "#3b82f6" or c == "#0000ff" then
+    __poly_sim_set("rgb", "#3b82f6")
+  else
+    __poly_sim_set("rgb", "#1e293b")
+  end
 end
 function M.oled_show(text)
   __poly_sim_set("oled:append", tostring(text))
@@ -486,8 +494,16 @@ return M
 import _poly
 def led(on):
     _poly.sim_set("led", bool(on))
-def rgb(hex_color):
-    _poly.sim_set("rgb", str(hex_color))
+def rgb(color):
+    c = str(color or "").lower()
+    if c in ("red", "#ef4444", "#ff0000"):
+        _poly.sim_set("rgb", "#ef4444")
+    elif c in ("green", "#10b981", "#00ff00"):
+        _poly.sim_set("rgb", "#10b981")
+    elif c in ("blue", "#3b82f6", "#0000ff"):
+        _poly.sim_set("rgb", "#3b82f6")
+    else:
+        _poly.sim_set("rgb", "#1e293b")
 def oled_show(text):
     _poly.sim_set("oled:append", str(text))
 def oled_clear():
@@ -509,9 +525,9 @@ def is_pressed(btn):
       default: false,
     },
     {
-      kind: 'rgb',
+      kind: 'tricolor',
       key: 'rgb',
-      label: 'RGB',
+      label: '三色灯',
       default: '#1e293b',
     },
     {

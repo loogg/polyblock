@@ -64,7 +64,7 @@ export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
     id: 'virtual-board-rt',
     name: '虚拟硬件 RT 演示板',
     description:
-      '完整演示多句柄并发 + 周期调度 + 多路编号定时器 + 示例虚拟板外设（LED / RGB / OLED / 温度 / 按键回调）。',
+      '完整演示多句柄并发 + 周期调度 + 多路编号定时器 + 示例虚拟板外设（LED / 三色灯 / OLED / 温度 / 按键回调）。',
     defaultLanguage: 'lua',
     maxHandles: 8,
     defaultTimerCount: 8,

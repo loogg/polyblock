@@ -18,6 +18,34 @@ export function qualifySimKey(packId: string, rawKey: string): string {
   return `${packId}::${rawKey}`;
 }
 
+export interface ResolvedTricolorState {
+  color: 'red' | 'green' | 'blue' | 'off';
+  hex: string;
+  labelZh: string;
+  active: boolean;
+}
+
+/**
+ * Strictly normalizes a `tricolor` indicator value to one of the 3 discrete colors
+ * (Red / Green / Blue) or OFF. Rejects arbitrary full-spectrum hex colors so hardware
+ * 3-color lamps behave authentically and stay distinct from full-color `rgb` widgets.
+ */
+export function resolveTricolorState(raw: unknown): ResolvedTricolorState {
+  const s = String(raw ?? '')
+    .trim()
+    .toLowerCase();
+  if (s === 'red' || s === 'r' || s === '#ef4444' || s === '#ff0000') {
+    return { color: 'red', hex: '#ef4444', labelZh: '红', active: true };
+  }
+  if (s === 'green' || s === 'g' || s === '#10b981' || s === '#22c55e' || s === '#00ff00') {
+    return { color: 'green', hex: '#10b981', labelZh: '绿', active: true };
+  }
+  if (s === 'blue' || s === 'b' || s === '#3b82f6' || s === '#0000ff') {
+    return { color: 'blue', hex: '#3b82f6', labelZh: '蓝', active: true };
+  }
+  return { color: 'off', hex: '#1e293b', labelZh: '关', active: false };
+}
+
 export function getWidgetDefaultValue(w: SimWidgetSpec): unknown {
   if (w.default !== undefined) {
     return Array.isArray(w.default) ? [...w.default] : w.default;
@@ -27,6 +55,7 @@ export function getWidgetDefaultValue(w: SimWidgetSpec): unknown {
     case 'toggle':
     case 'button':
       return false;
+    case 'tricolor':
     case 'rgb':
       return '#1e293b';
     case 'bar':

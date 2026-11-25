@@ -3,6 +3,7 @@ import { useState } from 'react';
 import {
   qualifySimKey,
   readPackWidgetValue,
+  resolveTricolorState,
   resolveWidgetEventArgs,
 } from '../core/extensions/simState';
 import type {
@@ -29,7 +30,7 @@ function groupWidgets(widgets: SimWidgetSpec[]): WidgetGroup[] {
   const groups: WidgetGroup[] = [];
   for (const w of widgets) {
     const last = groups[groups.length - 1];
-    if (w.kind === 'led' || w.kind === 'rgb') {
+    if (w.kind === 'led' || w.kind === 'tricolor' || w.kind === 'rgb') {
       if (last && last.kind === 'lamps') {
         last.widgets.push(w);
       } else {
@@ -159,12 +160,42 @@ export function SimWidgetPanel({
                               </div>
                             );
                           }
+                          if (w.kind === 'tricolor') {
+                            const tri = resolveTricolorState(
+                              readPackWidgetValue(simState, pack.id, w),
+                            );
+                            return (
+                              <div
+                                key={w.key}
+                                className="vboard-lamp-item"
+                                title="三色指示灯（仅红 / 绿 / 蓝三色 + 关闭）"
+                              >
+                                <span
+                                  className="vboard-rgb vboard-tricolor"
+                                  style={{
+                                    background: tri.hex,
+                                    boxShadow: tri.active
+                                      ? `0 0 14px ${tri.hex}, 0 0 4px #ffffff`
+                                      : 'none',
+                                  }}
+                                  aria-label={`${w.label}：${tri.labelZh}`}
+                                />
+                                <span>
+                                  {w.label}：{tri.labelZh}
+                                </span>
+                              </div>
+                            );
+                          }
                           const hex = String(
                             readPackWidgetValue(simState, pack.id, w) || '#1e293b',
                           );
                           const active = hex !== '#1e293b' && hex !== '#334155';
                           return (
-                            <div key={w.key} className="vboard-lamp-item">
+                            <div
+                              key={w.key}
+                              className="vboard-lamp-item"
+                              title={`全彩 RGB 灯：${hex}`}
+                            >
                               <span
                                 className="vboard-rgb"
                                 style={{
@@ -173,7 +204,7 @@ export function SimWidgetPanel({
                                     ? `0 0 14px ${hex}, 0 0 4px #ffffff`
                                     : 'none',
                                 }}
-                                aria-label={`${w.label}：${hex}`}
+                                aria-label={`${w.label}（全彩）：${hex}`}
                               />
                               <span>{w.label}</span>
                             </div>

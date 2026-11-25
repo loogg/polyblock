@@ -450,7 +450,7 @@ const VIRTUAL_BOARD_LED_WS: Record<string, unknown> = {
                                           block: {
                                             type: 'text',
                                             id: 'vb_oled_t2',
-                                            fields: { TEXT: 'RGB => Sky Blue' },
+                                            fields: { TEXT: 'TriColor => Blue' },
                                           },
                                         },
                                       },
@@ -464,7 +464,7 @@ const VIRTUAL_BOARD_LED_WS: Record<string, unknown> = {
                                               block: {
                                                 type: 'text',
                                                 id: 'vb_done_t',
-                                                fields: { TEXT: '板载 LED / RGB / OLED 自检通过！' },
+                                                fields: { TEXT: '板载 LED / 三色灯 / OLED 自检通过！' },
                                               },
                                             },
                                           },
@@ -591,7 +591,7 @@ const VIRTUAL_BOARD_TEMP_WS: Record<string, unknown> = {
                                                   type: 'text',
                                                   id: 'vt_warn_txt',
                                                   fields: {
-                                                    TEXT: '高温告警！已点亮红色 RGB 灯',
+                                                    TEXT: '高温告警！已点亮板载三色灯（红）',
                                                   },
                                                 },
                                               },
@@ -672,8 +672,8 @@ const EVENT_LOOP_MAIN_WS: Record<string, unknown> = {
       {
         type: 'poly_on_start',
         id: 'ev_start',
-        x: 32,
-        y: 24,
+        x: 36,
+        y: 28,
         inputs: {
           BODY: {
             block: {
@@ -774,8 +774,8 @@ const EVENT_LOOP_MAIN_WS: Record<string, unknown> = {
       {
         type: 'poly_on_run',
         id: 'ev_on_run',
-        x: 32,
-        y: 440,
+        x: 36,
+        y: 520,
         fields: { PERIOD_MS: 100 },
         inputs: {
           BODY: {
@@ -841,8 +841,8 @@ const EVENT_LOOP_MAIN_WS: Record<string, unknown> = {
       {
         type: 'poly_on_timer',
         id: 'ev_on_t0',
-        x: 560,
-        y: 24,
+        x: 700,
+        y: 28,
         fields: { TIMER_ID: '0' },
         inputs: {
           BODY: {
@@ -904,8 +904,8 @@ const EVENT_LOOP_MAIN_WS: Record<string, unknown> = {
       {
         type: 'poly_on_button',
         id: 'ev_on_btn_a',
-        x: 560,
-        y: 410,
+        x: 700,
+        y: 460,
         fields: { KEY: 'A', EDGE: 'press' },
         inputs: {
           BODY: {
@@ -952,8 +952,8 @@ const EVENT_LOOP_MAIN_WS: Record<string, unknown> = {
       {
         type: 'poly_on_timer',
         id: 'ev_on_t1',
-        x: 560,
-        y: 670,
+        x: 700,
+        y: 780,
         fields: { TIMER_ID: '1' },
         inputs: {
           BODY: {
@@ -993,8 +993,8 @@ const EVENT_LOOP_MAIN_WS: Record<string, unknown> = {
       {
         type: 'poly_on_stop',
         id: 'ev_on_stop',
-        x: 32,
-        y: 830,
+        x: 36,
+        y: 940,
         inputs: {
           BODY: {
             block: {
@@ -1016,7 +1016,7 @@ const EVENT_LOOP_MAIN_WS: Record<string, unknown> = {
                           block: {
                             type: 'text',
                             id: 'ev_stop_txt',
-                            fields: { TEXT: 'on_stop 已安全关闭 LED 与 RGB 彩灯' },
+                            fields: { TEXT: 'on_stop 已安全关闭 LED 与三色灯' },
                           },
                         },
                       },
@@ -1107,7 +1107,7 @@ const TIMER_ONESHOT_WS: Record<string, unknown> = {
         type: 'poly_on_timer',
         id: 'ts_on_t0',
         x: 36,
-        y: 250,
+        y: 360,
         fields: { TIMER_ID: '0' },
         inputs: {
           BODY: {
@@ -1148,7 +1148,7 @@ const TIMER_ONESHOT_WS: Record<string, unknown> = {
         type: 'poly_on_stop',
         id: 'ts_on_stop',
         x: 36,
-        y: 440,
+        y: 640,
         inputs: {
           BODY: {
             block: {
@@ -1206,7 +1206,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     id: 'virtual_board_demo',
     name: '智能温控与虚拟板联动',
     description:
-      '中等难度（Python 3 + 外设与工具库）：启用虚拟硬件外设包、字典与秒表包；含 LED/RGB/OLED 开机自检、交互式温度滑块告警（temp_guard）与字典配置耗时统计（dict_config）。',
+      '中等难度（Python 3 + 外设与工具库）：启用虚拟硬件外设包、字典与秒表包；含 LED/三色灯/OLED 开机自检、交互式温度滑块告警（temp_guard）与字典配置耗时统计（dict_config）。',
     language: 'python',
     targetProfileId: 'virtual-board-basic',
     defaultTimerCount: 8,
@@ -1214,7 +1214,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     difficulty: {
       level: 'L2',
       label: 'L2 中等 · 外设联动',
-      highlights: ['LED / RGB / OLED', '温度滑块交互', '字典与毫秒秒表'],
+      highlights: ['LED / 三色灯 / OLED', '温度滑块交互', '字典与毫秒秒表'],
     },
     handles: [
       {

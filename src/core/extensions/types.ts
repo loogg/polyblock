@@ -76,9 +76,15 @@ export interface ExtensionSandboxMock {
   packId?: string;
 }
 
-/** Built-in generic declarative simulation widget types rendered in the right-hand Simulator tab. */
+/**
+ * Built-in generic declarative simulation widget types rendered in the right-hand Simulator tab:
+ * - `led`: single-color on/off LED
+ * - `tricolor`: 3-color discrete indicator lamp (ONLY Red / Green / Blue + OFF)
+ * - `rgb`: full-color RGB LED (arbitrary #RRGGBB color, e.g. WS2812 / PWM RGB)
+ */
 export type SimWidgetKind =
   | 'led'
+  | 'tricolor'
   | 'rgb'
   | 'bar'
   | 'screen'

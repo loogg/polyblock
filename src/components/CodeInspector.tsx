@@ -19,7 +19,10 @@ import {
   CAP_RT_TIMERS,
   hasCapability,
 } from '../core/capabilities/registry';
-import { readPackWidgetValue } from '../core/extensions/simState';
+import {
+  readPackWidgetValue,
+  resolveTricolorState,
+} from '../core/extensions/simState';
 import type {
   PolyExtensionPack,
   SimStateMap,
@@ -145,7 +148,7 @@ export function CodeInspector({
     const picked: Array<{ pack: PolyExtensionPack; widget: SimWidgetSpec }> = [];
     for (const item of allSimWidgets) {
       const k = item.widget.kind;
-      if (k === 'led' || k === 'rgb' || k === 'bar' || k === 'slider') {
+      if (k === 'led' || k === 'tricolor' || k === 'rgb' || k === 'bar' || k === 'slider') {
         picked.push(item);
         if (picked.length >= 3) break;
       }
@@ -468,6 +471,27 @@ export function CodeInspector({
                           }}
                         />
                         {w.label.slice(0, 6)}
+                      </span>
+                    );
+                  }
+                  if (w.kind === 'tricolor') {
+                    const tri = resolveTricolorState(val);
+                    return (
+                      <span
+                        key={itemKey}
+                        title={`${tip}：${tri.labelZh}（三色灯）`}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                      >
+                        <span
+                          className="vboard-rgb"
+                          style={{
+                            width: 10,
+                            height: 10,
+                            background: tri.hex,
+                            boxShadow: tri.active ? `0 0 8px ${tri.hex}` : 'none',
+                          }}
+                        />
+                        {w.label.slice(0, 4)}
                       </span>
                     );
                   }

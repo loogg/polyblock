@@ -99,6 +99,7 @@ const PLACEHOLDER_RE = /\{\{([A-Za-z0-9_]+)(?::([a-z0-9_]+)(?::([A-Za-z0-9_]+))?
 
 const VALID_SIM_WIDGET_KINDS = new Set<SimWidgetKind>([
   'led',
+  'tricolor',
   'rgb',
   'bar',
   'screen',
@@ -577,7 +578,7 @@ function validateSimWidgets(raw: unknown): SimWidgetSpec[] | undefined {
       !VALID_SIM_WIDGET_KINDS.has(w.kind as SimWidgetKind)
     ) {
       throw new Error(
-        `无效的模拟控件类型 "${String(w.kind)}"，支持：led / rgb / bar / screen / slider / toggle / button`,
+        `无效的模拟控件类型 "${String(w.kind)}"，支持：led / tricolor / rgb / bar / screen / slider / toggle / button`,
       );
     }
     if (typeof w.key !== 'string' || !w.key.trim()) {

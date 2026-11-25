@@ -515,8 +515,8 @@ export const FLAGSHIP_DRIVE_CTRL_WS: Record<string, unknown> = {
       {
         type: 'poly_on_start',
         id: 'fg_d_start',
-        x: 28,
-        y: 24,
+        x: 36,
+        y: 28,
         inputs: {
           BODY: {
             block: {
@@ -586,8 +586,8 @@ export const FLAGSHIP_DRIVE_CTRL_WS: Record<string, unknown> = {
       {
         type: 'poly_on_run',
         id: 'fg_d_on_run',
-        x: 28,
-        y: 330,
+        x: 36,
+        y: 540,
         fields: { PERIOD_MS: 250 },
         inputs: {
           BODY: {
@@ -662,8 +662,8 @@ export const FLAGSHIP_DRIVE_CTRL_WS: Record<string, unknown> = {
       {
         type: 'poly_on_timer',
         id: 'fg_d_on_t0',
-        x: 470,
-        y: 24,
+        x: 720,
+        y: 28,
         fields: { TIMER_ID: '0' },
         inputs: {
           BODY: {
@@ -727,8 +727,8 @@ export const FLAGSHIP_DRIVE_CTRL_WS: Record<string, unknown> = {
       {
         type: 'poly_on_timer',
         id: 'fg_d_on_t1',
-        x: 470,
-        y: 280,
+        x: 720,
+        y: 500,
         fields: { TIMER_ID: '1' },
         inputs: {
           BODY: {
@@ -754,8 +754,8 @@ export const FLAGSHIP_DRIVE_CTRL_WS: Record<string, unknown> = {
       {
         type: 'poly_on_button',
         id: 'fg_d_btn_a',
-        x: 470,
-        y: 430,
+        x: 720,
+        y: 780,
         fields: { KEY: 'A', EDGE: 'press' },
         inputs: {
           BODY: {
@@ -792,8 +792,8 @@ export const FLAGSHIP_DRIVE_CTRL_WS: Record<string, unknown> = {
       {
         type: 'ext_drive_on_estop',
         id: 'fg_d_estop_on',
-        x: 890,
-        y: 24,
+        x: 1380,
+        y: 28,
         fields: { STATE: 'press' },
         inputs: {
           BODY: {
@@ -833,8 +833,8 @@ export const FLAGSHIP_DRIVE_CTRL_WS: Record<string, unknown> = {
       {
         type: 'ext_drive_on_estop',
         id: 'fg_d_estop_off',
-        x: 890,
-        y: 230,
+        x: 1380,
+        y: 420,
         fields: { STATE: 'release' },
         inputs: {
           BODY: {
@@ -868,8 +868,8 @@ export const FLAGSHIP_DRIVE_CTRL_WS: Record<string, unknown> = {
       {
         type: 'poly_on_stop',
         id: 'fg_d_on_stop',
-        x: 890,
-        y: 430,
+        x: 1380,
+        y: 760,
         inputs: {
           BODY: {
             block: {
@@ -1040,7 +1040,7 @@ export const FLAGSHIP_SENSOR_GUARD_WS: Record<string, unknown> = {
       {
         type: 'poly_on_timer',
         id: 'fg_s_on_t0',
-        x: 470,
+        x: 720,
         y: 28,
         fields: { TIMER_ID: '0' },
         inputs: {
@@ -1148,8 +1148,8 @@ export const FLAGSHIP_SENSOR_GUARD_WS: Record<string, unknown> = {
       {
         type: 'poly_on_stop',
         id: 'fg_s_stop',
-        x: 32,
-        y: 320,
+        x: 36,
+        y: 540,
         inputs: {
           BODY: {
             block: {
@@ -1247,7 +1247,7 @@ export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
       {
         type: 'poly_on_timer',
         id: 'fg_t_on_t0',
-        x: 470,
+        x: 720,
         y: 28,
         fields: { TIMER_ID: '0' },
         inputs: {
@@ -1334,8 +1334,8 @@ export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
       {
         type: 'poly_on_stop',
         id: 'fg_t_stop',
-        x: 32,
-        y: 280,
+        x: 36,
+        y: 500,
         inputs: {
           BODY: {
             block: {

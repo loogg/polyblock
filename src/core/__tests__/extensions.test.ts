@@ -36,6 +36,7 @@ import {
   buildPackResetPatch,
   qualifySimKey,
   readPackWidgetValue,
+  resolveTricolorState,
   resolveWidgetEventArgs,
 } from '../extensions/simState';
 import {
@@ -522,6 +523,22 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     dualState = applySimDeviceEvent(dualState, 'global:vbus', 24, [motorA, motorB]).next;
     expect(readPackWidgetValue(dualState, 'motor-a', motorA.simWidgets![1])).toBe(24);
     expect(readPackWidgetValue(dualState, 'motor-b', motorB.simWidgets![1])).toBe(24);
+
+    // Distinct tricolor (ONLY Red/Green/Blue + OFF) vs full-color rgb widgets
+    const boardLampBlock = VIRTUAL_BOARD_PACK.blocks.find((b) => b.type === 'ext_board_rgb')!;
+    const colorOptions = (boardLampBlock.args0![0].options as Array<[string, string]>).map(
+      ([, val]) => val,
+    );
+    expect(colorOptions).toEqual(['#ef4444', '#10b981', '#3b82f6', '#1e293b']);
+    expect(VIRTUAL_BOARD_PACK.simWidgets!.find((w) => w.key === 'rgb')?.kind).toBe(
+      'tricolor',
+    );
+    expect(resolveTricolorState('#ef4444')).toMatchObject({ color: 'red', active: true });
+    expect(resolveTricolorState('green')).toMatchObject({ color: 'green', active: true });
+    expect(resolveTricolorState('blue')).toMatchObject({ color: 'blue', active: true });
+    // Non-tricolor arbitrary hex colors (purple/yellow) are rejected to OFF on tricolor lamps
+    expect(resolveTricolorState('#8b5cf6')).toMatchObject({ color: 'off', active: false });
+    expect(resolveTricolorState('#f59e0b')).toMatchObject({ color: 'off', active: false });
   });
 
   it('supports declarative kind:"hat" callbacks in custom .polyext.json packs with codegen, scope tree, duplicate diagnostics, and emitEvent arg resolution', () => {

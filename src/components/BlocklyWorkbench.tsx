@@ -1,6 +1,7 @@
 import * as Blockly from 'blockly';
 import {
   Crosshair,
+  LayoutGrid,
   Minus,
   Plus,
   Puzzle,
@@ -56,6 +57,97 @@ function findChannelFieldOnBlock(
     }
   }
   return null;
+}
+
+/**
+ * Arranges all top-level blocks into clean, strictly non-overlapping columns
+ * using their real rendered bounding dimensions (`getHeightWidth()`).
+ */
+function arrangeTopBlocksCleanly(ws: Blockly.WorkspaceSvg, undoable = true): void {
+  const tops = ws
+    .getTopBlocks(true)
+    .filter((b) => !b.isShadow()) as Blockly.BlockSvg[];
+  if (tops.length <= 1) return;
+
+  const colCount = tops.length <= 2 ? 1 : tops.length <= 6 ? 2 : 3;
+  const perCol = Math.ceil(tops.length / colCount);
+  const gapX = 68;
+  const gapY = 48;
+  const startX = 36;
+  const startY = 28;
+
+  const columns: Blockly.BlockSvg[][] = Array.from({ length: colCount }, () => []);
+  tops.forEach((blk, idx) => {
+    const colIdx = Math.min(colCount - 1, Math.floor(idx / perCol));
+    columns[colIdx].push(blk);
+  });
+
+  if (undoable) {
+    Blockly.Events.setGroup(true);
+  }
+  try {
+    let cursorX = startX;
+    for (const col of columns) {
+      let cursorY = startY;
+      let maxColWidth = 0;
+      for (const blk of col) {
+        const hw = blk.getHeightWidth();
+        const xy = blk.getRelativeToSurfaceXY();
+        const dx = cursorX - xy.x;
+        const dy = cursorY - xy.y;
+        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+          blk.moveBy(dx, dy);
+        }
+        cursorY += hw.height + gapY;
+        maxColWidth = Math.max(maxColWidth, hw.width);
+      }
+      cursorX += maxColWidth + gapX;
+    }
+  } finally {
+    if (undoable) {
+      Blockly.Events.setGroup(false);
+    }
+  }
+}
+
+/**
+ * Checks whether any two top-level blocks overlap after loading; if and only if
+ * an actual intersection exists, cleanly separates them via `arrangeTopBlocksCleanly`.
+ */
+function declutterIfOverlapping(ws: Blockly.WorkspaceSvg): void {
+  const tops = ws
+    .getTopBlocks(true)
+    .filter((b) => !b.isShadow()) as Blockly.BlockSvg[];
+  if (tops.length <= 1) return;
+
+  const rects = tops.map((blk) => {
+    const xy = blk.getRelativeToSurfaceXY();
+    const hw = blk.getHeightWidth();
+    return {
+      left: xy.x,
+      top: xy.y,
+      right: xy.x + hw.width,
+      bottom: xy.y + hw.height,
+    };
+  });
+
+  let hasOverlap = false;
+  for (let i = 0; i < rects.length && !hasOverlap; i++) {
+    for (let j = i + 1; j < rects.length; j++) {
+      const a = rects[i];
+      const b = rects[j];
+      const overlapX = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      const overlapY = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      if (overlapX > 2 && overlapY > 2) {
+        hasOverlap = true;
+        break;
+      }
+    }
+  }
+
+  if (hasOverlap) {
+    arrangeTopBlocksCleanly(ws, false);
+  }
 }
 
 export interface BlocklyWorkbenchHandle {
@@ -153,6 +245,34 @@ function registerBreakpointContextMenu(): void {
     },
   };
 
+  const extractSingleMenuItem: Blockly.ContextMenuRegistry.RegistryItem = {
+    id: 'polyblock_extract_single_block',
+    scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+    weight: -4,
+    displayText: () => '仅抽出此积木 (Ctrl+拖)',
+    preconditionFn: (scope) => {
+      const blk = scope.block;
+      if (!blk || blk.isInFlyout || !blk.previousConnection || !blk.nextConnection) {
+        return 'hidden';
+      }
+      if (!blk.previousConnection.isConnected() && !blk.nextConnection.isConnected()) {
+        return 'hidden';
+      }
+      return 'enabled';
+    },
+    callback: (scope) => {
+      const blk = scope.block as Blockly.BlockSvg | undefined;
+      if (!blk) return;
+      Blockly.Events.setGroup(true);
+      try {
+        blk.unplug(true);
+        blk.moveBy(28, 18);
+      } finally {
+        Blockly.Events.setGroup(false);
+      }
+    },
+  };
+
   try {
     Blockly.ContextMenuRegistry.registry.register(bpMenuItem);
   } catch {
@@ -160,6 +280,11 @@ function registerBreakpointContextMenu(): void {
   }
   try {
     Blockly.ContextMenuRegistry.registry.register(aliasMenuItem);
+  } catch {
+    // Already registered in HMR
+  }
+  try {
+    Blockly.ContextMenuRegistry.registry.register(extractSingleMenuItem);
   } catch {
     // Already registered in HMR
   }
@@ -201,6 +326,21 @@ export const BlocklyWorkbench = forwardRef<
   const [activeCat, setActiveCat] = useState<string>('print');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [zoomPct, setZoomPct] = useState<number>(100);
+  const [flyoutWidth, setFlyoutWidth] = useState<number>(230);
+  const activeCatRef = useRef<string>(activeCat);
+  const searchQueryRef = useRef<string>(searchQuery);
+  const lastScaleRef = useRef<number>(0.92);
+
+  activeCatRef.current = activeCat;
+  searchQueryRef.current = searchQuery;
+
+  const syncFlyoutWidth = useCallback((ws: Blockly.WorkspaceSvg | null) => {
+    if (!ws) return;
+    const rawW = ws.getFlyout()?.getWidth?.();
+    if (typeof rawW === 'number' && Number.isFinite(rawW) && rawW > 40) {
+      setFlyoutWidth(Math.round(rawW));
+    }
+  }, []);
 
   const orderedCategories = useMemo(
     () => getOrderedToolboxCategories(enabledCapabilities, extraCategories),
@@ -217,18 +357,22 @@ export const BlocklyWorkbench = forwardRef<
   registerChannelAliasPromptHandler(onEditChannelAlias);
   currentBreakpointsSet = new Set(breakpoints);
 
-  const refreshFlyout = useCallback((catId: string, query: string) => {
-    const ws = workspaceRef.current;
-    if (!ws) return;
-    const toolboxDef = buildFlyoutToolbox(
-      ws,
-      catId,
-      query,
-      extraCatsRef.current,
-      enabledCapsRef.current,
-    );
-    ws.updateToolbox(toolboxDef);
-  }, []);
+  const refreshFlyout = useCallback(
+    (catId: string, query: string) => {
+      const ws = workspaceRef.current;
+      if (!ws) return;
+      const toolboxDef = buildFlyoutToolbox(
+        ws,
+        catId,
+        query,
+        extraCatsRef.current,
+        enabledCapsRef.current,
+      );
+      ws.updateToolbox(toolboxDef);
+      requestAnimationFrame(() => syncFlyoutWidth(ws));
+    },
+    [syncFlyoutWidth],
+  );
 
   // Initialize Blockly workspace once
   useEffect(() => {
@@ -289,15 +433,24 @@ export const BlocklyWorkbench = forwardRef<
     });
 
     try {
-      Blockly.serialization.workspaces.load(initialDataRef.current, ws);
+      Blockly.Events.disable();
+      try {
+        Blockly.serialization.workspaces.load(initialDataRef.current, ws);
+        declutterIfOverlapping(ws);
+      } finally {
+        Blockly.Events.enable();
+      }
     } catch {
       ws.clear();
     }
 
+    lastScaleRef.current = ws.getScale();
     setZoomPct(Math.round(ws.getScale() * 100));
+    requestAnimationFrame(() => syncFlyoutWidth(ws));
     onChangeRef.current(ws);
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let zoomRafId: number | null = null;
 
     const listener = (event: Blockly.Events.Abstract) => {
       if (event.type === Blockly.Events.SELECTED) {
@@ -307,7 +460,16 @@ export const BlocklyWorkbench = forwardRef<
       }
 
       if (event.type === Blockly.Events.VIEWPORT_CHANGE) {
-        setZoomPct(Math.round(ws.getScale() * 100));
+        const nextScale = ws.getScale();
+        setZoomPct(Math.round(nextScale * 100));
+        if (Math.abs(nextScale - lastScaleRef.current) > 0.005) {
+          lastScaleRef.current = nextScale;
+          if (zoomRafId !== null) cancelAnimationFrame(zoomRafId);
+          zoomRafId = requestAnimationFrame(() => {
+            zoomRafId = null;
+            refreshFlyout(activeCatRef.current, searchQueryRef.current);
+          });
+        }
         return;
       }
 
@@ -337,18 +499,20 @@ export const BlocklyWorkbench = forwardRef<
     const ro = new ResizeObserver(() => {
       if (workspaceRef.current) {
         Blockly.svgResize(workspaceRef.current);
+        syncFlyoutWidth(workspaceRef.current);
       }
     });
     ro.observe(el);
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
+      if (zoomRafId !== null) cancelAnimationFrame(zoomRafId);
       ro.disconnect();
       ws.removeChangeListener(listener);
       ws.dispose();
       workspaceRef.current = null;
     };
-  }, [refreshFlyout]);
+  }, [refreshFlyout, syncFlyoutWidth]);
 
   // Sync theme updates live
   useEffect(() => {
@@ -461,6 +625,7 @@ export const BlocklyWorkbench = forwardRef<
         try {
           ws.clear();
           Blockly.serialization.workspaces.load(state, ws);
+          declutterIfOverlapping(ws);
           ws.clearUndo();
           ws.scroll(0, 0);
         } finally {
@@ -498,6 +663,13 @@ export const BlocklyWorkbench = forwardRef<
     if (!ws) return;
     ws.zoomCenter(delta);
     setZoomPct(Math.round(ws.getScale() * 100));
+  };
+
+  const handleArrangeBlocks = () => {
+    const ws = workspaceRef.current;
+    if (!ws) return;
+    arrangeTopBlocksCleanly(ws, true);
+    ws.scroll(0, 0);
   };
 
   const handleCenter = () => {
@@ -554,12 +726,19 @@ export const BlocklyWorkbench = forwardRef<
       </nav>
 
       <div className="canvas-container">
-        <div className="flyout-search-dock">
-          <Search size={13} />
+        <div
+          className={`flyout-search-dock ${flyoutWidth < 185 ? 'compact' : ''}`}
+          style={{
+            width: Math.max(96, Math.min(248, flyoutWidth - 16)),
+          }}
+        >
+          <Search size={flyoutWidth < 185 ? 11 : 13} style={{ flexShrink: 0 }} />
           <input
             type="text"
             aria-label="搜索积木"
-            placeholder="搜索积木 (打印 / 等待 / 循环)"
+            placeholder={
+              flyoutWidth < 185 ? '搜索积木' : '搜索积木 (打印 / 等待 / 循环)'
+            }
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -625,6 +804,15 @@ export const BlocklyWorkbench = forwardRef<
             aria-label="放大画布"
           >
             <Plus size={13} />
+          </button>
+          <button
+            type="button"
+            className="canvas-ctrl-btn"
+            onClick={handleArrangeBlocks}
+            title="自动整理画布积木（消除重叠）"
+          >
+            <LayoutGrid size={12} />
+            <span>整理</span>
           </button>
           <button
             type="button"
