@@ -19,6 +19,15 @@ import type {
   HandleChannelPoolSpec,
   PolyExtensionPack,
 } from '../extensions/types';
+import {
+  FLAGSHIP_DRIVE_CTRL_WS,
+  FLAGSHIP_PATROL_TEST_WS,
+  FLAGSHIP_PWM_SERVO_PACK,
+  FLAGSHIP_ROBOT_DRIVE_PACK,
+  FLAGSHIP_SENSOR_GUARD_WS,
+  FLAGSHIP_TELEMETRY_HUB_WS,
+  MEDIUM_DICT_CONFIG_WS,
+} from './flagshipDemo';
 import type {
   LegacyProjectFileV1,
   LegacyProjectModelV2,
@@ -50,11 +59,19 @@ export interface HandleTemplateSpec {
   color?: string;
   autoStart?: boolean;
   timerConfig?: Partial<ProjectTimerConfig>;
+  /** Additional per-handle channel pool configs (e.g. `pwm-servo` isolated from `rt-timers`). */
+  capabilityConfigs?: Record<string, Partial<ProjectTimerConfig>>;
   scripts: Array<{
     name: string;
     isEntry?: boolean;
     workspace: Record<string, unknown>;
   }>;
+}
+
+export interface ProjectDifficultyMeta {
+  level: 'L1' | 'L2' | 'L3' | 'L4';
+  label: string;
+  highlights: string[];
 }
 
 export interface MultiHandleProjectTemplate {
@@ -65,6 +82,12 @@ export interface MultiHandleProjectTemplate {
   targetProfileId: string;
   defaultTimerCount?: number;
   enabledCapabilities: string[];
+  /** Optional project-embedded custom .polyext.json packs shipped with this template. */
+  localExtensions?: PolyExtensionPack[];
+  /** Progressive difficulty tier badge & feature highlights displayed in ProjectsPage. */
+  difficulty?: ProjectDifficultyMeta;
+  /** Internal templates (like blank_project) that have dedicated UI buttons instead of demo cards. */
+  hiddenFromDemoList?: boolean;
   handles: HandleTemplateSpec[];
 }
 
@@ -1150,166 +1173,21 @@ const TIMER_ONESHOT_WS: Record<string, unknown> = {
   variables: [{ name: 'count', id: 'var_ts_n' }],
 };
 
-// Handle 2 workspace for multi-handle showcase: uses its OWN isolated T0 (300ms) + on_run(150ms)
-const MULTI_HANDLE_SENSOR_WS: Record<string, unknown> = {
-  blocks: {
-    languageVersion: 0,
-    blocks: [
-      {
-        type: 'poly_on_start',
-        id: 'mh_s_start',
-        x: 32,
-        y: 24,
-        inputs: {
-          BODY: {
-            block: {
-              type: 'variables_set',
-              id: 'mh_s_init',
-              fields: { VAR: { id: 'var_mh_samples' } },
-              inputs: {
-                VALUE: {
-                  block: {
-                    type: 'math_number',
-                    id: 'mh_s_zero',
-                    fields: { NUM: 0 },
-                  },
-                },
-              },
-              next: {
-                block: {
-                  type: 'poly_start_timer',
-                  id: 'mh_s_t0',
-                  fields: { TIMER_ID: '0' },
-                  inputs: {
-                    PERIOD_MS: {
-                      shadow: {
-                        type: 'math_number',
-                        id: 'mh_s_ms',
-                        fields: { NUM: 600 },
-                      },
-                    },
-                    REPEAT: {
-                      shadow: {
-                        type: 'math_number',
-                        id: 'mh_s_rep',
-                        fields: { NUM: 0 },
-                      },
-                    },
-                  },
-                  next: {
-                    block: {
-                      type: 'poly_log',
-                      id: 'mh_s_log',
-                      fields: { LEVEL: 'INFO' },
-                      inputs: {
-                        MESSAGE: {
-                          block: {
-                            type: 'text',
-                            id: 'mh_s_txt',
-                            fields: { TEXT: '传感句柄已启动：独立 T0(600ms) 巡检温度' },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      {
-        type: 'poly_on_timer',
-        id: 'mh_s_on_t0',
-        x: 32,
-        y: 270,
-        fields: { TIMER_ID: '0' },
-        inputs: {
-          BODY: {
-            block: {
-              type: 'math_change',
-              id: 'mh_s_inc',
-              fields: { VAR: { id: 'var_mh_samples' } },
-              inputs: {
-                DELTA: {
-                  shadow: {
-                    type: 'math_number',
-                    id: 'mh_s_one',
-                    fields: { NUM: 1 },
-                  },
-                },
-              },
-              next: {
-                block: {
-                  type: 'poly_local_set',
-                  id: 'mh_s_read',
-                  fields: { NAME: 't_now' },
-                  inputs: {
-                    VALUE: {
-                      block: { type: 'ext_board_temp', id: 'mh_s_temp' },
-                    },
-                  },
-                  next: {
-                    block: {
-                      type: 'poly_print_kv',
-                      id: 'mh_s_print',
-                      fields: { LABEL: '巡检温度 °C' },
-                      inputs: {
-                        VALUE: {
-                          block: {
-                            type: 'poly_local_get',
-                            id: 'mh_s_get_t',
-                            fields: { NAME: 't_now' },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      {
-        type: 'poly_on_stop',
-        id: 'mh_s_stop',
-        x: 32,
-        y: 520,
-        inputs: {
-          BODY: {
-            block: {
-              type: 'poly_log',
-              id: 'mh_s_stop_log',
-              fields: { LEVEL: 'OK' },
-              inputs: {
-                MESSAGE: {
-                  block: {
-                    type: 'text',
-                    id: 'mh_s_stop_txt',
-                    fields: { TEXT: '传感句柄已优雅停止' },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    ],
-  },
-  variables: [{ name: 'samples', id: 'var_mh_samples' }],
-};
-
 export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
   {
     id: 'starter_suite',
     name: '入门演示项目',
     description:
-      '纯脚本环境（无硬件、无定时器）：含主累加日志（main）、延时与断点单步（step_debug）、随机采样告警（threshold_alarm）。',
+      '纯脚本环境（零外设、零定时器）：含顺序累加日志（main）、延时与断点单步（step_debug）、随机采样阈值告警（threshold_alarm），适合快速熟悉积木与双语代码导出。',
     language: 'lua',
     targetProfileId: 'generic-script',
     defaultTimerCount: 8,
     enabledCapabilities: [],
+    difficulty: {
+      level: 'L1',
+      label: 'L1 入门 · 纯脚本',
+      highlights: ['零外设纯净内核', '循环与条件', '断点单步调试'],
+    },
     handles: [
       {
         name: 'main_vm',
@@ -1325,18 +1203,51 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     ],
   },
   {
-    id: 'multi_handle_robot',
-    name: '多句柄协同仿真项目',
+    id: 'virtual_board_demo',
+    name: '智能温控与虚拟板联动',
     description:
-      '虚拟硬件 RT 演示板（2 个独立隔离句柄）：led_ctrl 与 sensor_hub 各自独享 T0 定时器与局部变量，可一键并发模拟且互不窜扰。',
+      '中等难度（Python 3 + 外设与工具库）：启用虚拟硬件外设包、字典与秒表包；含 LED/RGB/OLED 开机自检、交互式温度滑块告警（temp_guard）与字典配置耗时统计（dict_config）。',
+    language: 'python',
+    targetProfileId: 'virtual-board-basic',
+    defaultTimerCount: 8,
+    enabledCapabilities: [CAP_VIRTUAL_BOARD, 'dict-json', 'clock-timer'],
+    difficulty: {
+      level: 'L2',
+      label: 'L2 中等 · 外设联动',
+      highlights: ['LED / RGB / OLED', '温度滑块交互', '字典与毫秒秒表'],
+    },
+    handles: [
+      {
+        name: 'board_vm',
+        description: 'Python 虚拟硬件联动句柄',
+        color: '#0ea5e9',
+        autoStart: true,
+        scripts: [
+          { name: 'led_blink', isEntry: true, workspace: VIRTUAL_BOARD_LED_WS },
+          { name: 'temp_guard', workspace: VIRTUAL_BOARD_TEMP_WS },
+          { name: 'dict_config', workspace: MEDIUM_DICT_CONFIG_WS },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'event_timer_demo',
+    name: '事件回调与多路定时器示例',
+    description:
+      '进阶事件驱动（Lua 5.4 顶层零闭包 ABI）：启用周期循环、多路编号定时与虚拟硬件按键中断；支持 T0 常驻心跳灯、on_run 实时温检、按键 A 触发 T1 三次告警与 on_stop 安全停机。',
     language: 'lua',
     targetProfileId: 'virtual-board-rt',
     defaultTimerCount: 8,
     enabledCapabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_VIRTUAL_BOARD],
+    difficulty: {
+      level: 'L3',
+      label: 'L3 进阶 · 事件定时',
+      highlights: ['on_run / on_stop', '多路编号定时器', '按键边沿回调', '局部变量作用域'],
+    },
     handles: [
       {
-        name: 'led_ctrl',
-        description: '灯效与按键告警控制句柄（独立 lua_State #1）',
+        name: 'board_vm',
+        description: '板载事件循环控制句柄',
         color: '#4f46e5',
         autoStart: true,
         timerConfig: {
@@ -1351,9 +1262,67 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
           { name: 'timer_oneshot', workspace: TIMER_ONESHOT_WS },
         ],
       },
+    ],
+  },
+  {
+    id: 'multi_handle_robot',
+    name: '智能双轮机器人全栈仿真',
+    description:
+      '旗舰全栈综合（3 隔离句柄并发 + 2 个项目内嵌自定义外设包 + 全部内置包）：展示多卡片模拟面板、自定义声明式急停中断（on_drive_estop）、双独立通道池（T0~T7 与 PWM0~PWM3）、自定义工具箱序号（#35）及秒表字典遥测。',
+    language: 'lua',
+    targetProfileId: 'virtual-board-rt',
+    defaultTimerCount: 8,
+    enabledCapabilities: [
+      CAP_RT_LIFECYCLE,
+      CAP_RT_TIMERS,
+      CAP_VIRTUAL_BOARD,
+      'dict-json',
+      'clock-timer',
+      FLAGSHIP_ROBOT_DRIVE_PACK.id,
+      FLAGSHIP_PWM_SERVO_PACK.id,
+    ],
+    localExtensions: [FLAGSHIP_ROBOT_DRIVE_PACK, FLAGSHIP_PWM_SERVO_PACK],
+    difficulty: {
+      level: 'L4',
+      label: 'L4 旗舰 · 全栈综合',
+      highlights: [
+        '3 句柄并发模拟',
+        '2 内嵌自定义外设',
+        '自定义急停中断',
+        '双通道池 (T + PWM)',
+        '字典 + 秒表遥测',
+      ],
+    },
+    handles: [
       {
-        name: 'sensor_hub',
-        description: '温度巡检采集句柄（独立 lua_State #2，独享 T0）',
+        name: 'drive_ctrl',
+        description: '运动、云台与急停控制句柄（独立 lua_State #1）',
+        color: '#4f46e5',
+        autoStart: true,
+        timerConfig: {
+          count: 8,
+          aliases: {
+            '0': '云台扫描',
+            '1': '疾速倒计时',
+          },
+        },
+        capabilityConfigs: {
+          'pwm-servo': {
+            count: 4,
+            aliases: {
+              '0': '云台偏航',
+              '1': '云台俯仰',
+            },
+          },
+        },
+        scripts: [
+          { name: 'motion_ctrl', isEntry: true, workspace: FLAGSHIP_DRIVE_CTRL_WS },
+          { name: 'patrol_test', workspace: FLAGSHIP_PATROL_TEST_WS },
+        ],
+      },
+      {
+        name: 'sensor_guard',
+        description: '安防温控告警句柄（独立 lua_State #2，独享 T0）',
         color: '#0ea5e9',
         autoStart: true,
         timerConfig: {
@@ -1363,57 +1332,22 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
           },
         },
         scripts: [
-          { name: 'main', isEntry: true, workspace: MULTI_HANDLE_SENSOR_WS },
+          { name: 'thermal_watch', isEntry: true, workspace: FLAGSHIP_SENSOR_GUARD_WS },
         ],
       },
-    ],
-  },
-  {
-    id: 'event_timer_demo',
-    name: '事件回调与多路定时器示例',
-    description:
-      '虚拟硬件 RT 演示板（单句柄零闭包 ABI）：常驻心跳灯、实时滑块响应与按键触发 T1 三次告警定时器。',
-    language: 'lua',
-    targetProfileId: 'virtual-board-rt',
-    defaultTimerCount: 8,
-    enabledCapabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_VIRTUAL_BOARD],
-    handles: [
       {
-        name: 'board_vm',
-        description: '板载主控制句柄',
-        color: '#4f46e5',
+        name: 'telemetry_hub',
+        description: '字典与秒表遥测统计句柄（独立 lua_State #3，独享 T0）',
+        color: '#10b981',
         autoStart: true,
         timerConfig: {
           count: 8,
           aliases: {
-            '0': '心跳灯',
-            '1': '告警倒计时',
+            '0': '遥测上报',
           },
         },
         scripts: [
-          { name: 'event_loop', isEntry: true, workspace: EVENT_LOOP_MAIN_WS },
-          { name: 'timer_oneshot', workspace: TIMER_ONESHOT_WS },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'virtual_board_demo',
-    name: '虚拟硬件联动演示项目',
-    description:
-      '虚拟硬件基础板（无定时器）：预装示例虚拟硬件外设包与字典进阶包，含 LED/RGB/OLED 自检与交互式温度告警。',
-    language: 'python',
-    targetProfileId: 'virtual-board-basic',
-    defaultTimerCount: 8,
-    enabledCapabilities: [CAP_VIRTUAL_BOARD, 'dict-json'],
-    handles: [
-      {
-        name: 'main_vm',
-        color: '#0ea5e9',
-        autoStart: true,
-        scripts: [
-          { name: 'led_blink', isEntry: true, workspace: VIRTUAL_BOARD_LED_WS },
-          { name: 'temp_guard', workspace: VIRTUAL_BOARD_TEMP_WS },
+          { name: 'metrics_report', isEntry: true, workspace: FLAGSHIP_TELEMETRY_HUB_WS },
         ],
       },
     ],
@@ -1426,6 +1360,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     targetProfileId: 'generic-script',
     defaultTimerCount: 8,
     enabledCapabilities: [],
+    hiddenFromDemoList: true,
     handles: [
       {
         name: 'main_vm',
@@ -1436,6 +1371,10 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     ],
   },
 ];
+
+/** Curated 4-tier progressive showcase templates (L1 Simple -> L4 Full-Stack Flagship). */
+export const DEMO_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] =
+  MULTI_SCRIPT_PROJECT_TEMPLATES.filter((t) => !t.hiddenFromDemoList);
 
 function instantiateHandleSpec(
   spec: HandleTemplateSpec,
@@ -1462,6 +1401,11 @@ function instantiateHandleSpec(
       spec.timerConfig,
       defaultTimerCount,
     );
+  }
+  if (spec.capabilityConfigs) {
+    for (const [cfgKey, rawCfg] of Object.entries(spec.capabilityConfigs)) {
+      capabilityConfigs[cfgKey] = normalizeTimerConfig(rawCfg);
+    }
   }
 
   return {
@@ -1503,13 +1447,31 @@ export function instantiateProjectFromTemplate(
     language: tpl.language,
     targetProfileId: tpl.targetProfileId,
     enabledCapabilities: [...tpl.enabledCapabilities],
-    localExtensions: [],
+    localExtensions: tpl.localExtensions ? cloneJson(tpl.localExtensions) : [],
     defaultTimerCount,
     sharedModules: [],
     activeHandleId: handles[0].id,
     handles,
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+/** Creates the clean initial workspace store preloaded with the 4 progressive demo projects (L1 active). */
+export function createDefaultWorkspaceStore(): WorkspaceStoreState {
+  const projects: ProjectModel[] = [];
+  for (const tpl of DEMO_PROJECT_TEMPLATES) {
+    projects.push(
+      instantiateProjectFromTemplate(
+        tpl.id,
+        projects.map((p) => p.name),
+      ),
+    );
+  }
+  return {
+    version: 3,
+    activeProjectId: projects[0].id,
+    projects,
   };
 }
 
@@ -2046,18 +2008,22 @@ export function loadWorkspaceStore(): WorkspaceStoreState {
     // fall through
   }
 
-  // 3. Migrate legacy v1 single workspace if present
-  const starter = instantiateProjectFromTemplate('starter_suite');
+  // 3. Migrate legacy v1 single workspace if present, otherwise preload 4 progressive demos
+  const defaultStore = createDefaultWorkspaceStore();
   try {
     const rawV1 = localStorage.getItem(STORAGE_LEGACY_V1_KEY);
     if (rawV1) {
       const parsedV1 = JSON.parse(rawV1) as LegacyProjectFileV1;
       if (parsedV1 && parsedV1.workspace && typeof parsedV1.workspace === 'object') {
-        const migrated = parseImportedProject(parsedV1, '历史项目', [starter.name]);
+        const migrated = parseImportedProject(
+          parsedV1,
+          '历史项目',
+          defaultStore.projects.map((p) => p.name),
+        );
         return {
           version: 3,
-          activeProjectId: starter.id,
-          projects: [starter, migrated],
+          activeProjectId: defaultStore.activeProjectId,
+          projects: [...defaultStore.projects, migrated],
         };
       }
     }
@@ -2065,11 +2031,7 @@ export function loadWorkspaceStore(): WorkspaceStoreState {
     // ignore invalid v1 cache
   }
 
-  return {
-    version: 3,
-    activeProjectId: starter.id,
-    projects: [starter],
-  };
+  return defaultStore;
 }
 
 export function saveWorkspaceStore(store: WorkspaceStoreState): void {

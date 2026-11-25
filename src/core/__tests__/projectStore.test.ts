@@ -9,13 +9,16 @@ import {
   addHandleToProject,
   addScriptToProject,
   applyTargetProfileToProject,
+  createDefaultWorkspaceStore,
   deleteHandleFromProject,
   deleteProjectFromStore,
   deleteScriptFromProject,
+  DEMO_PROJECT_TEMPLATES,
   duplicateHandleInProject,
   duplicateProjectInStore,
   duplicateScriptInProject,
   getActiveHandle,
+  getHandleChannelPoolConfig,
   getHandleTimerConfig,
   instantiateProjectFromTemplate,
   parseImportedProject,
@@ -55,17 +58,43 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     expect(p2.handles[0].id).not.toBe(p1.handles[0].id);
     expect(p2.handles[0].scripts[0].id).not.toBe(p1.handles[0].scripts[0].id);
 
-    // Multi-handle flagship template has 2 isolated handles each with independent T0 alias
+    // Curated demo list has exactly 4 progressive tiers (L1 -> L4)
+    expect(DEMO_PROJECT_TEMPLATES.map((t) => t.difficulty?.level)).toEqual([
+      'L1',
+      'L2',
+      'L3',
+      'L4',
+    ]);
+    const defaultStore = createDefaultWorkspaceStore();
+    expect(defaultStore.projects).toHaveLength(4);
+
+    // L4 Multi-handle flagship template has 3 isolated handles + 2 embedded local packs + dual channel pools
     const mh = instantiateProjectFromTemplate('multi_handle_robot');
     expect(mh.targetProfileId).toBe('virtual-board-rt');
     expect(mh.enabledCapabilities).toEqual(
-      expect.arrayContaining([CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_VIRTUAL_BOARD]),
+      expect.arrayContaining([
+        CAP_RT_LIFECYCLE,
+        CAP_RT_TIMERS,
+        CAP_VIRTUAL_BOARD,
+        'dict-json',
+        'clock-timer',
+        'robot-drive',
+        'pwm-servo',
+      ]),
     );
-    expect(mh.handles).toHaveLength(2);
-    expect(mh.handles[0].name).toBe('led_ctrl');
-    expect(mh.handles[1].name).toBe('sensor_hub');
-    expect(getHandleTimerConfig(mh.handles[0]).aliases['0']).toBe('心跳灯');
+    expect(mh.localExtensions?.map((p) => p.id)).toEqual(['robot-drive', 'pwm-servo']);
+    expect(mh.handles).toHaveLength(3);
+    expect(mh.handles.map((h) => h.name)).toEqual([
+      'drive_ctrl',
+      'sensor_guard',
+      'telemetry_hub',
+    ]);
+    expect(getHandleTimerConfig(mh.handles[0]).aliases['0']).toBe('云台扫描');
+    expect(getHandleChannelPoolConfig(mh.handles[0], 'pwm-servo', 4).aliases['0']).toBe(
+      '云台偏航',
+    );
     expect(getHandleTimerConfig(mh.handles[1]).aliases['0']).toBe('温度巡检');
+    expect(getHandleTimerConfig(mh.handles[2]).aliases['0']).toBe('遥测上报');
 
     // Applying a target profile updates capabilities cleanly without clobbering handles
     const switched = applyTargetProfileToProject(
@@ -147,7 +176,7 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     store = duplicateProjectInStore(store, base.id);
     expect(store.projects).toHaveLength(2);
     expect(store.projects[0].name).toContain('副本');
-    expect(store.projects[0].handles).toHaveLength(2);
+    expect(store.projects[0].handles).toHaveLength(3);
     expect(store.projects[0].handles[0].id).not.toBe(base.handles[0].id);
 
     store = deleteProjectFromStore(store, store.activeProjectId);
@@ -200,7 +229,7 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     const v3Orig = instantiateProjectFromTemplate('multi_handle_robot');
     const reimported = parseImportedProject(v3Orig, 'fallback', [v3Orig.name]);
     expect(reimported.version).toBe(3);
-    expect(reimported.name).toBe('多句柄协同仿真项目 (2)');
-    expect(reimported.handles).toHaveLength(2);
+    expect(reimported.name).toBe('智能双轮机器人全栈仿真 (2)');
+    expect(reimported.handles).toHaveLength(3);
   });
 });

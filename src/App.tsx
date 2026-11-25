@@ -50,6 +50,7 @@ import {
   applyTargetProfileToProject,
   buildExportableProjectJson,
   countProjectScripts,
+  createDefaultWorkspaceStore,
   deleteHandleFromProject,
   deleteProjectFromStore,
   deleteScriptFromHandle,
@@ -1317,18 +1318,13 @@ export function App() {
     stopIfRunning();
     localStorage.removeItem(STORAGE_STORE_V3_KEY);
     localStorage.removeItem(STORAGE_STORE_V2_KEY);
-    const starter = instantiateProjectFromTemplate('starter_suite');
-    const freshStore: WorkspaceStoreState = {
-      version: 3,
-      activeProjectId: starter.id,
-      projects: [starter],
-    };
+    const freshStore = createDefaultWorkspaceStore();
     setStore(freshStore);
     mountScriptIntoCanvas(freshStore);
     setSimStatesByProject({});
     setIsDirty(false);
     navigateTo('blocks');
-    notify('已恢复默认示例项目');
+    notify('已恢复 4 个渐进式内置演示项目（L1 入门 ~ L4 旗舰）');
   }, [stopIfRunning, mountScriptIntoCanvas, navigateTo, notify]);
 
   /* ========================================================================

@@ -9,11 +9,14 @@ import type {
 } from '../../types/project';
 import { backendRegistry } from '../backends/registry';
 import {
-  getActiveTimerConfig,
-  setActiveTimerConfig,
+  setActiveChannelPoolConfigs,
 } from '../blocks/timerConfigBridge';
+import { extensionRegistry } from '../extensions/registry';
 import type { ExtensionSandboxMock } from '../extensions/types';
-import { getHandleTimerConfig } from '../projects/store';
+import {
+  getAllHandleChannelPoolConfigs,
+  getHandleTimerConfig,
+} from '../projects/store';
 import { WasmoonLuaRunner } from './luaRunner';
 import { MicroPythonWasmRunner } from './pythonRunner';
 import type { RunResult, RunnerStatus, ScriptRunner } from './types';
@@ -21,10 +24,9 @@ import type { RunResult, RunnerStatus, ScriptRunner } from './types';
 function compileScriptHeadless(
   workspaceJson: Record<string, unknown>,
   language: ScriptLanguageId,
-  timerConfig: ReturnType<typeof getHandleTimerConfig>,
+  channelPoolConfigs: Record<string, ReturnType<typeof getHandleTimerConfig>>,
 ): { code: string; debugCode: string; isEventDriven: boolean } {
-  const prevCfg = getActiveTimerConfig();
-  setActiveTimerConfig(timerConfig);
+  setActiveChannelPoolConfigs(channelPoolConfigs);
   const ws = new Blockly.Workspace();
   try {
     Blockly.serialization.workspaces.load(workspaceJson, ws);
@@ -36,7 +38,6 @@ function compileScriptHeadless(
     };
   } finally {
     ws.dispose();
-    setActiveTimerConfig(prevCfg);
   }
 }
 
@@ -51,20 +52,23 @@ export function buildHandleScriptModules(
   language: ScriptLanguageId,
   sharedModules: ProjectScript[] = [],
   defaultTimerCount = 8,
+  channelPoolConfigs?: Record<string, ReturnType<typeof getHandleTimerConfig>>,
 ): ExtensionSandboxMock[] {
   const modules: ExtensionSandboxMock[] = [];
   const candidates = [
     ...sharedModules,
     ...handle.scripts.filter((s) => s.id !== excludeScriptId),
   ];
-  const timerCfg = getHandleTimerConfig(handle, defaultTimerCount);
+  const poolCfgs = channelPoolConfigs ?? {
+    'rt-timers': getHandleTimerConfig(handle, defaultTimerCount),
+  };
 
   for (const script of candidates) {
     try {
       const compiled = compileScriptHeadless(
         script.workspace,
         language,
-        timerCfg,
+        poolCfgs,
       );
       modules.push({
         moduleName: script.name,
@@ -131,15 +135,25 @@ export class MultiHandleRunnerOrchestrator {
     this.running = true;
     callbacks.onStatusChange('running');
 
+    const channelPoolPacks = extensionRegistry.getChannelPoolPacks(
+      project.enabledCapabilities,
+      project.localExtensions,
+    );
+
     const tasks = handlesToRun.map(async (handle) => {
       const entryScript =
         handle.scripts.find((s) => s.id === handle.entryScriptId) ??
         handle.scripts[0];
       const timerCfg = getHandleTimerConfig(handle, project.defaultTimerCount);
+      const poolCfgs = getAllHandleChannelPoolConfigs(
+        handle,
+        channelPoolPacks,
+        project.defaultTimerCount,
+      );
       const compiled = compileScriptHeadless(
         entryScript.workspace,
         project.language,
-        timerCfg,
+        poolCfgs,
       );
       const handleAuxMocks = buildHandleScriptModules(
         handle,
@@ -147,6 +161,7 @@ export class MultiHandleRunnerOrchestrator {
         project.language,
         project.sharedModules,
         project.defaultTimerCount,
+        poolCfgs,
       );
 
       const runner: ScriptRunner =

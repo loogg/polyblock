@@ -16,9 +16,9 @@ import {
 } from '../../core/capabilities/registry';
 import {
   countProjectScripts,
+  DEMO_PROJECT_TEMPLATES,
   getAbsorbedBundledExtensions,
   getHandleTimerConfig,
-  MULTI_SCRIPT_PROJECT_TEMPLATES,
   parseImportedProject,
 } from '../../core/projects/store';
 import type { ProjectModel } from '../../types/project';
@@ -292,31 +292,54 @@ export function ProjectsPage({
           })}
         </div>
 
-        <h2 className="section-heading">从内置多句柄 / 多脚本模板新建项目</h2>
+        <h2 className="section-heading">
+          内置演示项目模板（由浅入深 · {DEMO_PROJECT_TEMPLATES.length} 个精选示例）
+        </h2>
         <div className="card-grid">
-          {MULTI_SCRIPT_PROJECT_TEMPLATES.map((tpl) => {
+          {DEMO_PROJECT_TEMPLATES.map((tpl) => {
             const scriptTotal = tpl.handles.reduce(
               (acc, h) => acc + h.scripts.length,
               0,
             );
+            const diff = tpl.difficulty;
             return (
               <div key={tpl.id} className="ui-card">
                 <div className="card-top">
-                  <div style={{ fontWeight: 700, fontSize: 13.5 }}>{tpl.name}</div>
-                  <span className="status-pill accent">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                    {diff && (
+                      <span className={`tier-pill tier-${diff.level}`}>
+                        {diff.label}
+                      </span>
+                    )}
+                    <div style={{ fontWeight: 700, fontSize: 13.5 }}>{tpl.name}</div>
+                  </div>
+                  <span className="status-pill accent" style={{ flexShrink: 0 }}>
                     {tpl.handles.length} 句柄 · {scriptTotal} 脚本 ·{' '}
                     {tpl.language === 'lua' ? 'Lua' : 'Python'}
                   </span>
                 </div>
                 <p className="card-desc">{tpl.description}</p>
+                {diff && diff.highlights.length > 0 && (
+                  <div className="pack-attr-row">
+                    {diff.highlights.map((hl) => (
+                      <span key={hl} className="pack-attr-badge tone-tag">
+                        {hl}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className="card-footer">
                   <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
                     {targetProfileRegistry.get(tpl.targetProfileId).name} · 句柄：
                     {tpl.handles.map((h) => h.name).join(' / ')}
+                    {(tpl.localExtensions?.length ?? 0) > 0
+                      ? ` · 含 ${tpl.localExtensions!.length} 内嵌外设包`
+                      : ''}
                   </span>
                   <button
                     type="button"
                     className="btn-outline"
+                    style={{ flexShrink: 0 }}
                     onClick={() => {
                       onCreateFromTemplate(tpl.id);
                       onReturnToBlocks();

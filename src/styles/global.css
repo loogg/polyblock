@@ -2857,3 +2857,56 @@ select {
 [data-theme='dark'] .pack-attr-badge.tone-lib {
   color: #34d399;
 }
+
+
+/* Progressive Demo Project Difficulty Pills (L1 -> L4) */
+.tier-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.tier-pill.tier-L1 {
+  background: rgba(16, 185, 129, 0.14);
+  color: #047857;
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.tier-pill.tier-L2 {
+  background: rgba(14, 165, 233, 0.14);
+  color: #0369a1;
+  border-color: rgba(14, 165, 233, 0.35);
+}
+
+.tier-pill.tier-L3 {
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+  border-color: rgba(245, 158, 11, 0.38);
+}
+
+.tier-pill.tier-L4 {
+  background: rgba(236, 72, 153, 0.15);
+  color: #be185d;
+  border-color: rgba(236, 72, 153, 0.38);
+}
+
+[data-theme='dark'] .tier-pill.tier-L1 {
+  color: #34d399;
+}
+
+[data-theme='dark'] .tier-pill.tier-L2 {
+  color: #38bdf8;
+}
+
+[data-theme='dark'] .tier-pill.tier-L3 {
+  color: #fbbf24;
+}
+
+[data-theme='dark'] .tier-pill.tier-L4 {
+  color: #f472b6;
+}

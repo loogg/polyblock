@@ -40,6 +40,8 @@ import {
 } from '../extensions/simState';
 import {
   buildExportableProjectJson,
+  DEMO_PROJECT_TEMPLATES,
+  getAllHandleChannelPoolConfigs,
   instantiateProjectFromTemplate,
   parseImportedProject,
 } from '../projects/store';
@@ -174,6 +176,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(proj.handles[0].scripts.map((s) => s.name)).toEqual([
       'led_blink',
       'temp_guard',
+      'dict_config',
     ]);
 
     const ws = new Blockly.Workspace();
@@ -802,6 +805,60 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(backendRegistry.get('lua').generate(ws).diagnostics).toHaveLength(0);
 
     ws.dispose();
+    setActiveProjectCapabilities(null);
+    setActiveChannelPoolConfigs({ 'rt-timers': { count: 8, aliases: {} } });
+    extensionRegistry.setActiveProjectLocalPacks([]);
+  });
+
+  it('compiles every handle and script across all 4 progressive demo projects (L1-L4) cleanly in BOTH Lua 5.4 and Python 3 with 0 diagnostics', () => {
+    expect(DEMO_PROJECT_TEMPLATES).toHaveLength(4);
+
+    for (const tpl of DEMO_PROJECT_TEMPLATES) {
+      const proj = instantiateProjectFromTemplate(tpl.id);
+      extensionRegistry.setActiveProjectLocalPacks(proj.localExtensions ?? []);
+      setActiveProjectCapabilities(proj.enabledCapabilities);
+      const poolPacks = extensionRegistry.getChannelPoolPacks(
+        proj.enabledCapabilities,
+        proj.localExtensions,
+      );
+
+      for (const hdl of proj.handles) {
+        const poolCfgs = getAllHandleChannelPoolConfigs(
+          hdl,
+          poolPacks,
+          proj.defaultTimerCount,
+        );
+        setActiveChannelPoolConfigs(poolCfgs);
+
+        for (const scr of hdl.scripts) {
+          const ws = new Blockly.Workspace();
+          Blockly.serialization.workspaces.load(scr.workspace, ws);
+
+          const luaRes = backendRegistry.get('lua').generate(ws);
+          const pyRes = backendRegistry.get('python').generate(ws);
+
+          expect(
+            luaRes.diagnostics,
+            `${tpl.id}/${hdl.name}/${scr.name} Lua diagnostics`,
+          ).toHaveLength(0);
+          expect(
+            pyRes.diagnostics,
+            `${tpl.id}/${hdl.name}/${scr.name} Python diagnostics`,
+          ).toHaveLength(0);
+
+          if (tpl.id === 'multi_handle_robot' && scr.name === 'motion_ctrl') {
+            expect(luaRes.code).toContain('function on_drive_estop(active)');
+            expect(luaRes.code).toContain('-- PWM0: 云台偏航');
+            expect(luaRes.code).toContain('-- T0: 云台扫描');
+            expect(pyRes.code).toContain('def on_drive_estop(active):');
+            expect(pyRes.code).toContain('# PWM0: 云台偏航');
+          }
+
+          ws.dispose();
+        }
+      }
+    }
+
     setActiveProjectCapabilities(null);
     setActiveChannelPoolConfigs({ 'rt-timers': { count: 8, aliases: {} } });
     extensionRegistry.setActiveProjectLocalPacks([]);
