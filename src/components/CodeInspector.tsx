@@ -1,11 +1,14 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Code2,
   Copy,
   Cpu,
   Eye,
   RotateCcw,
+  Settings2,
   Timer,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -19,7 +22,7 @@ import type {
 import { highlightCodeLine } from '../core/highlight';
 import type { RunnerStatus } from '../core/runners/types';
 import type {
-  ProjectTimerConfig,
+  RuntimeHandle,
   RuntimeTelemetry,
   ScriptLanguageId,
 } from '../types/project';
@@ -32,21 +35,31 @@ interface CodeInspectorProps {
   executingBlockId: string | null;
   isPaused: boolean;
   runnerStatus: RunnerStatus;
+  multiHandleRunning: boolean;
   breakpoints: string[];
   variables: Record<string, string>;
   errorLine: number | null;
   showVirtualBoard: boolean;
   virtualBoard: VirtualBoardState;
   mockInputs: VirtualBoardInputs;
-  timerConfig: ProjectTimerConfig;
-  runtimeTelemetry: RuntimeTelemetry | null;
+  projectHandles: RuntimeHandle[];
+  activeHandle: RuntimeHandle;
+  handleTelemetries: Record<string, RuntimeTelemetry>;
   onUpdateMockInputs: (patch: Partial<VirtualBoardInputs>) => void;
   onResetVirtualBoard: () => void;
+  onOpenHandleTimerSettings: (handleId: string) => void;
   onSelectBlockFromLine: (blockId: string) => void;
   onToggleBreakpoint: (blockId: string) => void;
   onClearBreakpoints: () => void;
   onCopyCode: () => void;
 }
+
+const KIND_BADGE: Record<string, { text: string; cls: string }> = {
+  shared: { text: '共享', cls: 'scope-tag shared' },
+  local: { text: 'local', cls: 'scope-tag local' },
+  param: { text: '形参', cls: 'scope-tag param' },
+  'scope-global': { text: '本域', cls: 'scope-tag single' },
+};
 
 export function CodeInspector({
   language,
@@ -56,16 +69,19 @@ export function CodeInspector({
   executingBlockId,
   isPaused,
   runnerStatus,
+  multiHandleRunning,
   breakpoints,
   variables,
   errorLine,
   showVirtualBoard,
   virtualBoard,
   mockInputs,
-  timerConfig,
-  runtimeTelemetry,
+  projectHandles,
+  activeHandle,
+  handleTelemetries,
   onUpdateMockInputs,
   onResetVirtualBoard,
+  onOpenHandleTimerSettings,
   onSelectBlockFromLine,
   onToggleBreakpoint,
   onClearBreakpoints,
@@ -74,16 +90,26 @@ export function CodeInspector({
   const [activeTab, setActiveTab] = useState<
     'code' | 'vars' | 'board' | 'diagnostics'
   >('code');
+  const [collapsedScopes, setCollapsedScopes] = useState<Record<string, boolean>>({});
   const codeScrollRef = useRef<HTMLDivElement | null>(null);
   const backend = backendRegistry.get(language);
   const displayFileName = `${scriptName}.${backend.extension}`;
   const breakpointSet = useMemo(() => new Set(breakpoints), [breakpoints]);
+
+  const activeTelemetry = handleTelemetries[activeHandle.id] ?? null;
+  const anyEventLoopRunning = useMemo(
+    () =>
+      (runnerStatus === 'running' || runnerStatus === 'paused') &&
+      Object.values(handleTelemetries).some((t) => t.eventLoopActive),
+    [runnerStatus, handleTelemetries],
+  );
+
   const showSimTab =
     showVirtualBoard ||
     Boolean(generated.isEventDriven) ||
-    Boolean(runtimeTelemetry?.eventLoopActive);
+    anyEventLoopRunning ||
+    projectHandles.length > 1;
 
-  // Fall back to code tab if neither virtual board nor event/timer runtime applies
   useEffect(() => {
     if (!showSimTab && activeTab === 'board') {
       setActiveTab('code');
@@ -124,24 +150,16 @@ export function CodeInspector({
     return map;
   }, [generated.sourceMap, generated.lineToBlock, lines]);
 
-  const displayVariables = useMemo(() => {
-    const merged: Array<{ name: string; value: string; live: boolean }> = [];
-    const seen = new Set<string>();
-    for (const name of generated.variableNames) {
-      seen.add(name);
-      if (Object.prototype.hasOwnProperty.call(variables, name)) {
-        merged.push({ name, value: variables[name], live: true });
-      } else {
-        merged.push({ name, value: '未运行 / 未赋值', live: false });
+  const scopeNodes = generated.variableScopes ?? [];
+  const totalScopedVarCount = useMemo(() => {
+    const uniqueNames = new Set<string>();
+    for (const node of scopeNodes) {
+      for (const v of node.variables) {
+        uniqueNames.add(`${node.id}:${v.name}`);
       }
     }
-    for (const [name, value] of Object.entries(variables)) {
-      if (!seen.has(name)) {
-        merged.push({ name, value, live: true });
-      }
-    }
-    return merged;
-  }, [generated.variableNames, variables]);
+    return uniqueNames.size || generated.variableNames.length;
+  }, [scopeNodes, generated.variableNames.length]);
 
   const liveVarEntries = useMemo(() => Object.entries(variables), [variables]);
 
@@ -156,9 +174,15 @@ export function CodeInspector({
   }, [activeTab, execRange, activeRange]);
 
   const rgbActive = virtualBoard.rgb !== '#1e293b' && virtualBoard.rgb !== '#334155';
-  const isEventLoopRunning =
-    (runnerStatus === 'running' || runnerStatus === 'paused') &&
-    Boolean(runtimeTelemetry?.eventLoopActive);
+
+  // Determine which handles to display in the Runtime Monitor card
+  const monitoredHandles = useMemo(() => {
+    if (multiHandleRunning) {
+      const running = projectHandles.filter((h) => h.autoStart);
+      return running.length > 0 ? running : [activeHandle];
+    }
+    return [activeHandle];
+  }, [multiHandleRunning, projectHandles, activeHandle]);
 
   return (
     <aside className="inspector-pane" aria-label="实时代码、模拟外设、变量与校验面板">
@@ -188,11 +212,11 @@ export function CodeInspector({
               type="button"
               className={`pane-tab ${activeTab === 'board' ? 'active' : ''}`}
               onClick={() => setActiveTab('board')}
-              title="虚拟硬件外设与事件定时器模拟面板"
+              title="虚拟硬件外设与多句柄事件定时器模拟面板"
             >
               <Cpu size={12} style={{ flexShrink: 0 }} />
               <span>模拟</span>
-              {(virtualBoard.led || isEventLoopRunning) && (
+              {(virtualBoard.led || anyEventLoopRunning) && (
                 <span
                   style={{
                     width: 6,
@@ -214,7 +238,7 @@ export function CodeInspector({
           >
             <Eye size={12} style={{ flexShrink: 0 }} />
             <span>变量</span>
-            <span className="count-badge">{displayVariables.length}</span>
+            <span className="count-badge">{totalScopedVarCount}</span>
           </button>
 
           <button
@@ -283,12 +307,12 @@ export function CodeInspector({
               const lineClass = isError
                 ? 'error-line'
                 : isExec
-                ? isPaused
-                  ? 'paused-line'
-                  : 'exec-line'
-                : isSelected
-                ? 'active-line'
-                : '';
+                  ? isPaused
+                    ? 'paused-line'
+                    : 'exec-line'
+                  : isSelected
+                    ? 'active-line'
+                    : '';
 
               return (
                 <div
@@ -303,12 +327,15 @@ export function CodeInspector({
                 >
                   <button
                     type="button"
-                    className={`bp-gutter ${hasBp ? 'has-bp' : ''} ${
-                      bpBlockId ? '' : 'disabled'
+                    className={`bp-gutter ${bpBlockId ? 'can-bp' : ''} ${
+                      hasBp ? 'has-bp' : ''
                     }`}
+                    disabled={!bpBlockId}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (bpBlockId) onToggleBreakpoint(bpBlockId);
+                      if (bpBlockId) {
+                        onToggleBreakpoint(bpBlockId);
+                      }
                     }}
                     title={
                       bpBlockId
@@ -399,13 +426,20 @@ export function CodeInspector({
                     </span>
                   </>
                 )}
-                {isEventLoopRunning && (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--success)', fontWeight: 600 }}>
+                {anyEventLoopRunning && (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      color: 'var(--success)',
+                      fontWeight: 600,
+                    }}
+                  >
                     <span className="rt-pulse-dot" />
-                    事件循环
-                    {runtimeTelemetry && runtimeTelemetry.timers.length > 0
-                      ? ` · ${runtimeTelemetry.timers.length}定时`
-                      : ''}
+                    {multiHandleRunning
+                      ? `${monitoredHandles.length}句柄并发`
+                      : '事件循环'}
                   </span>
                 )}
               </div>
@@ -526,95 +560,204 @@ export function CodeInspector({
             </>
           )}
 
-          <div className="vboard-control-card rt-monitor-card" aria-label="运行时事件循环与定时器监控">
-            <div className="vboard-slider-head">
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
-                <Timer size={13} style={{ flexShrink: 0 }} />
-                <span>事件与定时器 (rt 0~{timerConfig.count - 1})</span>
-              </span>
-              <span
-                className={`status-pill ${isEventLoopRunning ? 'ok' : 'idle'}`}
-                style={{ fontSize: 10.5, padding: '1px 7px' }}
+          {/* Per-Handle Runtime & Timer Monitor Card(s) */}
+          {monitoredHandles.map((hdl) => {
+            const tele = handleTelemetries[hdl.id] ?? (hdl.id === activeHandle.id ? activeTelemetry : null);
+            const hRunning =
+              (runnerStatus === 'running' || runnerStatus === 'paused') &&
+              Boolean(tele?.eventLoopActive);
+
+            return (
+              <div
+                key={hdl.id}
+                className="vboard-control-card rt-monitor-card"
+                aria-label={`句柄 ${hdl.name} 定时器监控`}
               >
-                {isEventLoopRunning ? '事件循环中' : generated.isEventDriven ? '待机' : '单次模式'}
-              </span>
-            </div>
+                <div className="vboard-slider-head">
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      minWidth: 0,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    <span
+                      className="lang-dot"
+                      style={{ background: hdl.color, flexShrink: 0 }}
+                    />
+                    <Timer size={12} style={{ flexShrink: 0 }} />
+                    <span
+                      style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {hdl.name} (0~{hdl.timerConfig.count - 1})
+                    </span>
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <span
+                      className={`status-pill ${hRunning ? 'ok' : 'idle'}`}
+                      style={{ fontSize: 10.5, padding: '1px 7px' }}
+                    >
+                      {hRunning ? '事件循环中' : '待机'}
+                    </span>
+                    <button
+                      type="button"
+                      className="script-tab-icon-btn"
+                      title={`配置句柄 ${hdl.name} 定时器`}
+                      onClick={() => onOpenHandleTimerSettings(hdl.id)}
+                    >
+                      <Settings2 size={12} />
+                    </button>
+                  </div>
+                </div>
 
-            <div className="rt-run-meta">
-              <span>
-                <code>on_run</code>：
-                {runtimeTelemetry?.hasOnRun
-                  ? runtimeTelemetry.runActive
-                    ? `每 ${runtimeTelemetry.runPeriodMs}ms（已执行 ${runtimeTelemetry.runCount} 次）`
-                    : `已暂停（周期 ${runtimeTelemetry.runPeriodMs}ms）`
-                  : generated.isEventDriven
-                    ? '等待启动'
-                    : '未定义'}
-              </span>
-            </div>
+                <div className="rt-run-meta">
+                  <span>
+                    <code>on_run</code>：
+                    {tele?.hasOnRun
+                      ? tele.runActive
+                        ? `每 ${tele.runPeriodMs}ms（已执行 ${tele.runCount} 次）`
+                        : `已暂停（周期 ${tele.runPeriodMs}ms）`
+                      : '未定义 / 待机'}
+                  </span>
+                </div>
 
-            {runtimeTelemetry && runtimeTelemetry.timers.length > 0 ? (
-              <div className="rt-timer-list">
-                {runtimeTelemetry.timers.map((t) => {
-                  const pct = Math.min(
-                    100,
-                    Math.round((t.elapsedMs / Math.max(1, t.periodMs)) * 100),
-                  );
-                  const repText =
-                    t.repeat === 0
-                      ? `循环 · 第 ${t.firedCount} 次`
-                      : `${t.firedCount}/${t.repeat} 次`;
-                  return (
-                    <div key={t.id} className="rt-timer-row">
-                      <div className="rt-timer-head">
-                        <span className="rt-timer-label">
-                          {formatTimerLabel(t.id, timerConfig)}
-                        </span>
-                        <span className="rt-timer-meta">
-                          {t.elapsedMs}/{t.periodMs}ms · {repText}
-                        </span>
-                      </div>
-                      <div className="rt-timer-bar-track">
-                        <div
-                          className="rt-timer-bar-fill"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
+                {tele && tele.timers.length > 0 ? (
+                  <div className="rt-timer-list">
+                    {tele.timers.map((t) => {
+                      const pct = Math.min(
+                        100,
+                        Math.round((t.elapsedMs / Math.max(1, t.periodMs)) * 100),
+                      );
+                      const repText =
+                        t.repeat === 0
+                          ? `循环 · 第 ${t.firedCount} 次`
+                          : `${t.firedCount}/${t.repeat} 次`;
+                      return (
+                        <div key={t.id} className="rt-timer-row">
+                          <div className="rt-timer-head">
+                            <span className="rt-timer-label">
+                              {formatTimerLabel(t.id, hdl.timerConfig)}
+                            </span>
+                            <span className="rt-timer-meta">
+                              {t.elapsedMs}/{t.periodMs}ms · {repText}
+                            </span>
+                          </div>
+                          <div className="rt-timer-bar-track">
+                            <div
+                              className="rt-timer-bar-fill"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    暂无活跃定时器；启动 <code>rt.start_timer</code> 后在此实时显示各通道进度。
+                  </div>
+                )}
               </div>
-            ) : (
-              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                当前无活跃定时器；在积木中调用 <code>rt.start_timer(id, ms, repeat)</code> 后将在此实时展示进度。
-              </div>
-            )}
-          </div>
+            );
+          })}
         </div>
       )}
 
       {activeTab === 'vars' && (
-        <div className="var-table">
-          {displayVariables.length === 0 ? (
+        <div className="var-tree" aria-label="作用域树形变量监视器">
+          {scopeNodes.length === 0 ? (
             <div className="console-empty" style={{ padding: 24 }}>
-              当前画布暂无变量；拖入变量积木并运行/单步调试后，可在此实时监视变量值。
+              当前脚本暂无变量或回调作用域；拖入「共享变量」或「局部变量 (local)」积木后将在此按作用域树形展示。
             </div>
           ) : (
-            displayVariables.map((item) => (
-              <div key={item.name} className="var-row">
-                <span className="var-row-name">{item.name}</span>
-                <span
-                  className="var-row-val"
-                  style={
-                    item.live
-                      ? undefined
-                      : { color: 'var(--text-muted)', fontWeight: 400 }
-                  }
-                >
-                  {item.value}
-                </span>
-              </div>
-            ))
+            scopeNodes.map((node) => {
+              const isCollapsed = Boolean(collapsedScopes[node.id]);
+              return (
+                <div key={node.id} className="scope-tree-group">
+                  <button
+                    type="button"
+                    className={`scope-tree-header ${node.category}`}
+                    onClick={() =>
+                      setCollapsedScopes((prev) => ({
+                        ...prev,
+                        [node.id]: !prev[node.id],
+                      }))
+                    }
+                  >
+                    {isCollapsed ? (
+                      <ChevronRight size={13} style={{ flexShrink: 0 }} />
+                    ) : (
+                      <ChevronDown size={13} style={{ flexShrink: 0 }} />
+                    )}
+                    <span className="scope-tree-title">{node.label}</span>
+                    <span className="count-badge">{node.variables.length}</span>
+                  </button>
+
+                  {!isCollapsed && (
+                    <div className="scope-tree-body">
+                      {node.variables.length === 0 ? (
+                        <div className="scope-empty-row">此作用域内无独占变量</div>
+                      ) : (
+                        node.variables.map((v) => {
+                          const hasLive = Object.prototype.hasOwnProperty.call(
+                            variables,
+                            v.name,
+                          );
+                          const liveVal = hasLive
+                            ? variables[v.name]
+                            : '未运行 / 未赋值';
+                          const badge = KIND_BADGE[v.kind] ?? KIND_BADGE.shared;
+
+                          return (
+                            <div
+                              key={`${node.id}-${v.kind}-${v.name}`}
+                              className={`scope-var-row ${v.firstBlockId ? 'clickable' : ''}`}
+                              onClick={() => {
+                                if (v.firstBlockId) {
+                                  onSelectBlockFromLine(v.firstBlockId);
+                                }
+                              }}
+                              title={
+                                v.usedInScopes && v.usedInScopes.length > 0
+                                  ? `跨作用域共享：${v.usedInScopes.join(' · ')}（点击定位积木）`
+                                  : v.firstBlockId
+                                    ? '点击定位到声明/赋值积木'
+                                    : undefined
+                              }
+                            >
+                              <div className="scope-var-left">
+                                <span className={badge.cls}>{badge.text}</span>
+                                <span className="var-row-name">{v.name}</span>
+                                {v.usedInScopes && v.usedInScopes.length > 1 && (
+                                  <span className="scope-usage-hint">
+                                    {v.usedInScopes.join('·')}
+                                  </span>
+                                )}
+                              </div>
+                              <span
+                                className="var-row-val"
+                                style={
+                                  hasLive
+                                    ? undefined
+                                    : { color: 'var(--text-muted)', fontWeight: 400 }
+                                }
+                              >
+                                {liveVal}
+                              </span>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       )}
@@ -633,7 +776,7 @@ export function CodeInspector({
               }}
             >
               <CheckCircle2 size={16} />
-              <span>静态检查通过：结构完整，无悬空积木或空入口块。</span>
+              <span>静态检查通过：结构完整，无悬空积木、重复回调或越界通道。</span>
             </div>
           ) : (
             generated.diagnostics.map((d) => (
@@ -647,7 +790,11 @@ export function CodeInspector({
               >
                 <AlertTriangle
                   size={15}
-                  style={{ color: 'var(--warning)', flexShrink: 0, marginTop: 2 }}
+                  style={{
+                    color: d.severity === 'error' ? 'var(--danger)' : 'var(--warning)',
+                    flexShrink: 0,
+                    marginTop: 2,
+                  }}
                 />
                 <span>{d.message}</span>
               </button>

@@ -4,20 +4,17 @@ import {
   FilePlus2,
   FolderOpen,
   Pencil,
-  Plus,
-  Star,
-  Timer,
+  Settings2,
   Trash2,
   Upload,
-  X,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { normalizeTimerConfig } from '../../core/blocks/timerConfigBridge';
 import {
+  countProjectScripts,
   MULTI_SCRIPT_PROJECT_TEMPLATES,
   parseImportedProject,
 } from '../../core/projects/store';
-import type { ProjectModel, ProjectTimerConfig } from '../../types/project';
+import type { ProjectModel } from '../../types/project';
 
 interface ProjectsPageProps {
   projects: ProjectModel[];
@@ -30,7 +27,7 @@ interface ProjectsPageProps {
   onDeleteProject: (projectId: string) => void;
   onSaveProjectFile: (projectId: string) => void;
   onImportProject: (project: ProjectModel) => void;
-  onUpdateProjectTimerConfig: (projectId: string, cfg: ProjectTimerConfig) => void;
+  onOpenProjectSettings: (projectId: string) => void;
   onReturnToBlocks: () => void;
   onNotify: (msg: string) => void;
 }
@@ -46,56 +43,13 @@ export function ProjectsPage({
   onDeleteProject,
   onSaveProjectFile,
   onImportProject,
-  onUpdateProjectTimerConfig,
+  onOpenProjectSettings,
   onReturnToBlocks,
   onNotify,
 }: ProjectsPageProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState<string>('');
-  const [aliasSlotId, setAliasSlotId] = useState<string>('0');
-  const [aliasDraft, setAliasDraft] = useState<string>('');
-
-  const activeProj = projects.find((p) => p.id === activeProjectId) ?? projects[0];
-  const activeTimerCfg = normalizeTimerConfig(activeProj?.timerConfig);
-
-  const handleSetTimerCount = (nextCount: number) => {
-    if (!activeProj) return;
-    const clamped = Math.max(1, Math.min(32, Math.trunc(nextCount || 8)));
-    onUpdateProjectTimerConfig(activeProj.id, {
-      ...activeTimerCfg,
-      count: clamped,
-    });
-    if (Number(aliasSlotId) >= clamped) {
-      setAliasSlotId('0');
-    }
-  };
-
-  const handleSaveAlias = () => {
-    if (!activeProj) return;
-    const trimmed = aliasDraft.trim();
-    const nextAliases = { ...activeTimerCfg.aliases };
-    if (trimmed) {
-      nextAliases[aliasSlotId] = trimmed.slice(0, 16);
-    } else {
-      delete nextAliases[aliasSlotId];
-    }
-    onUpdateProjectTimerConfig(activeProj.id, {
-      ...activeTimerCfg,
-      aliases: nextAliases,
-    });
-    setAliasDraft('');
-  };
-
-  const handleDeleteAlias = (slotKey: string) => {
-    if (!activeProj) return;
-    const nextAliases = { ...activeTimerCfg.aliases };
-    delete nextAliases[slotKey];
-    onUpdateProjectTimerConfig(activeProj.id, {
-      ...activeTimerCfg,
-      aliases: nextAliases,
-    });
-  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -134,9 +88,9 @@ export function ProjectsPage({
       <div className="subpage-inner">
         <div className="subpage-header">
           <div>
-            <h1 className="subpage-title">项目管理（以项目为根 · 多脚本工程）</h1>
+            <h1 className="subpage-title">项目管理（三层工程 · 多句柄隔离）</h1>
             <p className="subpage-sub">
-              每个项目统一管理目标语言与多个积木脚本标签（<code>.polyblock.json</code> v2，向下兼容导入旧版 v1 文件）。
+              以项目为根管理多个隔离运行句柄（独立 <code>lua_State*</code>）与同句柄模块脚本；点击项目卡片右下「⚙ 配置」调整句柄、定时器通道与扩展包。
             </p>
           </div>
 
@@ -179,8 +133,8 @@ export function ProjectsPage({
         <div className="card-grid">
           {projects.map((proj) => {
             const isActive = proj.id === activeProjectId;
-            const ext = proj.language === 'lua' ? 'lua' : 'py';
             const isEditing = editingId === proj.id;
+            const totalScripts = countProjectScripts(proj);
 
             return (
               <div
@@ -212,7 +166,11 @@ export function ProjectsPage({
                     </div>
                   )}
                   <span className={`status-pill ${isActive ? 'ok' : 'idle'}`}>
-                    {isActive ? '当前打开' : proj.language === 'lua' ? 'Lua 5.4' : 'Python 3'}
+                    {isActive
+                      ? '当前打开'
+                      : proj.language === 'lua'
+                        ? 'Lua 5.4'
+                        : 'Python 3'}
                   </span>
                 </div>
 
@@ -220,21 +178,39 @@ export function ProjectsPage({
                   <p className="card-desc">{proj.description}</p>
                 )}
 
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                  {proj.language === 'lua' ? 'Lua 5.4' : 'Python 3'} ·{' '}
+                  {proj.handles.length} 句柄 · {totalScripts} 脚本 ·{' '}
+                  {proj.enabledExtensions.length} 扩展
+                </div>
+
                 <div className="paused-var-chips">
-                  {proj.scripts.map((s) => (
-                    <span key={s.id} className="var-chip">
-                      {s.id === proj.entryScriptId && (
-                        <Star size={10} className="entry-star" fill="currentColor" />
-                      )}
-                      <span>
-                        {s.name}.{ext}
+                  {proj.handles.map((h) => (
+                    <span key={h.id} className="var-chip">
+                      <span
+                        className="lang-dot"
+                        style={{ background: h.color, width: 6, height: 6 }}
+                      />
+                      <span>{h.name}</span>
+                      <span style={{ opacity: 0.65 }}>
+                        ({h.scripts.length} · T0~{h.timerConfig.count - 1})
                       </span>
                     </span>
                   ))}
                 </div>
 
                 <div className="card-footer">
-                  <div style={{ display: 'flex', gap: 4 }}>
+                  <div style={{ display: 'flex', gap: 3 }}>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ padding: '4px 6px' }}
+                      title="配置此项目的句柄、定时器与扩展"
+                      aria-label={`配置项目 ${proj.name}`}
+                      onClick={() => onOpenProjectSettings(proj.id)}
+                    >
+                      <Settings2 size={13} />
+                    </button>
                     <button
                       type="button"
                       className="btn-ghost"
@@ -296,151 +272,42 @@ export function ProjectsPage({
           })}
         </div>
 
-        <h2 className="section-heading">
-          当前项目定时器通道配置（{activeProj?.name}）
-        </h2>
-        {activeProj && (
-          <div className="ui-card timer-cfg-card">
-            <div className="timer-cfg-row">
-              <div>
-                <div
-                  style={{
-                    fontWeight: 700,
-                    fontSize: 13.5,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}
-                >
-                  <Timer size={14} style={{ color: 'var(--accent)' }} />
-                  <span>可用定时器通道数（ID 0 ~ {activeTimerCfg.count - 1}）</span>
-                </div>
-                <p className="card-desc" style={{ marginTop: 3 }}>
-                  通道总数随目标板/项目能力按需配置（1~32 路）。可选通道别名仅用于积木下拉显示与注释标注，导出脚本始终使用纯整数 ID（如 <code>rt.start_timer(0, 500, 0)</code>）。
-                </p>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                {[4, 8, 16, 32].map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    className={
-                      activeTimerCfg.count === preset ? 'btn-primary' : 'btn-outline'
-                    }
-                    style={{ padding: '4px 9px', fontSize: 11.5 }}
-                    onClick={() => handleSetTimerCount(preset)}
-                  >
-                    {preset} 路
-                  </button>
-                ))}
-                <input
-                  type="number"
-                  aria-label="自定义定时器通道数"
-                  className="template-select"
-                  style={{ width: 66, textAlign: 'center' }}
-                  min={1}
-                  max={32}
-                  value={activeTimerCfg.count}
-                  onChange={(e) => handleSetTimerCount(Number(e.target.value))}
-                />
-              </div>
-            </div>
-
-            <div className="timer-alias-editor">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <select
-                  aria-label="选择要设置别名的定时器通道"
-                  className="template-select"
-                  value={aliasSlotId}
-                  onChange={(e) => setAliasSlotId(e.target.value)}
-                >
-                  {Array.from({ length: activeTimerCfg.count }, (_, idx) => (
-                    <option key={idx} value={String(idx)}>
-                      T{idx} (ID {idx})
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  aria-label="定时器通道别名输入框"
-                  className="dropdown-rename-input"
-                  style={{ width: 176, height: 28 }}
-                  placeholder="可选别名，如：心跳灯"
-                  maxLength={16}
-                  value={aliasDraft}
-                  onChange={(e) => setAliasDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSaveAlias();
-                  }}
-                />
-                <button
-                  type="button"
-                  className="btn-outline"
-                  style={{ height: 28, padding: '0 10px', fontSize: 12 }}
-                  onClick={handleSaveAlias}
-                >
-                  <Plus size={13} />
-                  <span>保存别名</span>
-                </button>
-              </div>
-
-              <div className="paused-var-chips">
-                {Object.keys(activeTimerCfg.aliases).length === 0 ? (
-                  <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                    尚未设置通道别名（可直接使用 T0 ~ T{activeTimerCfg.count - 1}）。
-                  </span>
-                ) : (
-                  Object.entries(activeTimerCfg.aliases)
-                    .sort((a, b) => Number(a[0]) - Number(b[0]))
-                    .map(([slotKey, label]) => (
-                      <span key={slotKey} className="var-chip timer-alias-chip">
-                        <span className="var-chip-name">T{slotKey}</span>
-                        <span>· {label}</span>
-                        <button
-                          type="button"
-                          className="script-tab-icon-btn"
-                          title={`移除 T${slotKey} 别名`}
-                          onClick={() => handleDeleteAlias(slotKey)}
-                        >
-                          <X size={10} />
-                        </button>
-                      </span>
-                    ))
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        <h2 className="section-heading">从内置多脚本模板新建项目</h2>
+        <h2 className="section-heading">从内置多句柄 / 多脚本模板新建项目</h2>
         <div className="card-grid">
-          {MULTI_SCRIPT_PROJECT_TEMPLATES.map((tpl) => (
-            <div key={tpl.id} className="ui-card">
-              <div className="card-top">
-                <div style={{ fontWeight: 700, fontSize: 13.5 }}>{tpl.name}</div>
-                <span className="status-pill accent">
-                  {tpl.scripts.length} 个脚本 · {tpl.language === 'lua' ? 'Lua' : 'Python'}
-                </span>
+          {MULTI_SCRIPT_PROJECT_TEMPLATES.map((tpl) => {
+            const scriptTotal = tpl.handles.reduce(
+              (acc, h) => acc + h.scripts.length,
+              0,
+            );
+            return (
+              <div key={tpl.id} className="ui-card">
+                <div className="card-top">
+                  <div style={{ fontWeight: 700, fontSize: 13.5 }}>{tpl.name}</div>
+                  <span className="status-pill accent">
+                    {tpl.handles.length} 句柄 · {scriptTotal} 脚本 ·{' '}
+                    {tpl.language === 'lua' ? 'Lua' : 'Python'}
+                  </span>
+                </div>
+                <p className="card-desc">{tpl.description}</p>
+                <div className="card-footer">
+                  <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                    句柄：{tpl.handles.map((h) => h.name).join(' / ')}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    onClick={() => {
+                      onCreateFromTemplate(tpl.id);
+                      onReturnToBlocks();
+                    }}
+                  >
+                    <FilePlus2 size={13} />
+                    <span>由此新建</span>
+                  </button>
+                </div>
               </div>
-              <p className="card-desc">{tpl.description}</p>
-              <div className="card-footer">
-                <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                  包含：{tpl.scripts.map((s) => s.name).join(' / ')}
-                </span>
-                <button
-                  type="button"
-                  className="btn-outline"
-                  onClick={() => {
-                    onCreateFromTemplate(tpl.id);
-                    onReturnToBlocks();
-                  }}
-                >
-                  <FilePlus2 size={13} />
-                  <span>由此新建</span>
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

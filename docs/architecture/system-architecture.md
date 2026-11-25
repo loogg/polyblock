@@ -194,3 +194,37 @@ sequenceDiagram
   S-->>W: 返回 "stop"
   W->>W: 执行 on_stop() 并上报 DONE
 ```
+
+## 9. 三层工程模型、多句柄隔离仿真与作用域变量架构（Phase 6 · v3）
+
+为 1:1 映射真实嵌入式设备中「单项目多隔离 `lua_State*` 句柄 + 单句柄内多脚本模块互调」的运行时拓扑，PolyBlock 将核心数据模型升级至 **v3 三层结构**（自动无损迁移历史 v1/v2 工程）：
+
+### 9.1 三层数据模型与配置归属（`Project → RuntimeHandle → ProjectScript`）
+```mermaid
+flowchart TD
+  S["WorkspaceStore v3"] --> P["Project（项目 / 设备工程）"]
+  P --> PC["项目级配置：目标语言 · 板型默认通道上限 · 扩展积木包(C层原生API) · sharedModules(预留公共脚本库)"]
+  P --> H1["RuntimeHandle #1 (独立 lua_State* · 如 led_ctrl)"]
+  P --> H2["RuntimeHandle #2 (独立 lua_State* · 如 temp_monitor)"]
+  H1 --> H1C["句柄级配置：句柄名 · 色标 · 自启动 · 独立 timerConfig(通道数 + 专属别名)"]
+  H1 --> H1S1["★ main.lua (入口生命周期回调)"]
+  H1 --> H1S2["helper.lua (同句柄可 require 模块)"]
+  H2 --> H2C["句柄级配置：独立 timerConfig（与句柄 #1 同 ID 零窜扰）"]
+  H2 --> H2S1["★ main.lua"]
+```
+
+- **外设/API 扩展库（`enabledExtensions`）vs `sharedModules`**：
+  - `enabledExtensions` 对应宿主/C 层直接注册的原生模块（如 `rt`、`board`、未来跨句柄 `bus`），导出代码仅 `require`，不包含模块源码；
+  - `sharedModules` 预留给用户自写或引入的纯 Lua/Python 公共算法脚本：源码只存一份，各句柄各自通过 `package.preload` / `package.path` 加载到独立 VM，实现代码复用且运行时内存隔离。
+
+### 9.2 统一项目/句柄配置弹窗 & 画布就地别名
+- 移除项目管理页底部孤立的定时器配置卡片；统一收口至「项目卡片 `⚙ 配置` 按钮 + 顶部项目下拉菜单 + 定时飞出栏快捷按钮」直达的**分 Tab 配置弹窗**（`常规与语言` / `句柄与定时` / `扩展积木包`）。
+- 定时器通道别名回归画布就地编辑：右键任意定时器积木或点击通道下拉末尾 `✎ 设置通道别名...`，弹出轻量输入框即时同步当前句柄的全部积木、代码尾注与监控面板，绝不影响其他句柄。
+
+### 9.3 作用域树形变量监视器与 `local` 局部变量
+- 新增 `局部变量 [tmp] = [值]`（`poly_local_set`）与 `读取局部 [tmp]`（`poly_local_get`）积木：Lua 生成标准 `local` 声明，Python 不写入 `global`，避免多回调/函数间临时变量踩踏。
+- 静态 AST 分析器（`scopeAnalysis.ts`）自动将画布变量归类为树形结构：**句柄共享变量（跨回调共享）**、**各生命周期/定时器/按键回调作用域**、**自定义函数（含形参 + 局部）**，并在右侧「变量」面板中以可折叠树形实时展示运行值与点击跳转定位。
+
+### 9.4 多句柄并发沙箱模拟（`MultiHandleRunner`）
+- **单句柄调试**：运行当前句柄的当前脚本（自动挂载同句柄其他辅助脚本），支持逐块高亮、断点暂停与单步调试。
+- **全项目多句柄并发模拟**：为项目中每个 `autoStart` 句柄分配独立 `Worker` + 独立 WASM 引擎 + 独立 `WorkerRuntimeScheduler`，并发驱动同一虚拟硬件板卡与共享输入事件，日志自动带 `[句柄名]` 彩色标签，右侧监控按句柄展示各自的 `on_run` 与定时器进度，点击停止统一触发各句柄 `on_stop()` 优雅停机。

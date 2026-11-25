@@ -1,23 +1,32 @@
 import {
+  ChevronDown,
   Copy,
   FileCode2,
-  List,
+  FolderTree,
   MoreHorizontal,
   Pencil,
   Plus,
+  Settings2,
   Star,
   Trash2,
   X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { ProjectScript } from '../types/project';
+import type { ProjectScript, RuntimeHandle } from '../types/project';
 
 interface ScriptTabBarProps {
+  handles: RuntimeHandle[];
+  activeHandle: RuntimeHandle;
   scripts: ProjectScript[];
   activeScriptId: string;
   entryScriptId: string;
   extension: string;
+  showExplorer: boolean;
   disabled?: boolean;
+  onToggleExplorer: () => void;
+  onSelectHandle: (handleId: string) => void;
+  onAddHandle: () => void;
+  onOpenHandleSettings: (handleId: string) => void;
   onSelectScript: (scriptId: string) => void;
   onAddScript: () => void;
   onRenameScript: (scriptId: string, nextName: string) => void;
@@ -27,11 +36,18 @@ interface ScriptTabBarProps {
 }
 
 export function ScriptTabBar({
+  handles,
+  activeHandle,
   scripts,
   activeScriptId,
   entryScriptId,
   extension,
+  showExplorer,
   disabled = false,
+  onToggleExplorer,
+  onSelectHandle,
+  onAddHandle,
+  onOpenHandleSettings,
   onSelectScript,
   onAddScript,
   onRenameScript,
@@ -45,14 +61,14 @@ export function ScriptTabBar({
     scriptId: string;
     left: number;
   } | null>(null);
-  const [showListMenu, setShowListMenu] = useState<boolean>(false);
+  const [showHandleMenu, setShowHandleMenu] = useState<boolean>(false);
   const barRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
       if (barRef.current && !barRef.current.contains(e.target as Node)) {
         setMenuState(null);
-        setShowListMenu(false);
+        setShowHandleMenu(false);
       }
     };
     document.addEventListener('mousedown', onDocClick);
@@ -61,7 +77,7 @@ export function ScriptTabBar({
 
   const openScriptMenu = (scriptId: string, anchorEl: HTMLElement) => {
     if (disabled) return;
-    setShowListMenu(false);
+    setShowHandleMenu(false);
     const barRect = barRef.current?.getBoundingClientRect();
     const anchorRect = anchorEl.getBoundingClientRect();
     const rawLeft = barRect ? anchorRect.left - barRect.left : 0;
@@ -96,28 +112,72 @@ export function ScriptTabBar({
       ref={barRef}
       style={{ position: 'relative' }}
       role="tablist"
-      aria-label="项目脚本标签栏"
+      aria-label="句柄与脚本标签栏"
     >
-      {/* Quick all-scripts picker button */}
+      {/* Collapsible Project Explorer toggle */}
+      <button
+        type="button"
+        className={`script-list-btn ${showExplorer ? 'active' : ''}`}
+        onClick={onToggleExplorer}
+        title={showExplorer ? '收起工程结构树' : '展开工程结构树（查看全部句柄与脚本）'}
+        aria-label="展开或收起工程结构树"
+      >
+        <FolderTree size={13} />
+      </button>
+
+      {/* Compact Handle Switcher Pill (zero extra vertical bar height!) */}
       <div className="popover-anchor">
         <button
           type="button"
-          className="script-list-btn"
+          className="handle-switcher-pill"
           onClick={() => {
-            setShowListMenu((v) => !v);
+            setShowHandleMenu((v) => !v);
             setMenuState(null);
           }}
-          title={`当前项目共 ${scripts.length} 个脚本，点击快速切换`}
-          aria-label="展开项目脚本列表"
+          title={`当前隔离句柄：${activeHandle.name}（共 ${handles.length} 个句柄 · 定时器 0~${activeHandle.timerConfig.count - 1}），点击切换或新建`}
+          aria-label="切换或管理运行句柄"
         >
-          <List size={13} />
-          <span>{scripts.length}</span>
+          <span
+            className="lang-dot"
+            style={{ background: activeHandle.color, flexShrink: 0 }}
+          />
+          <span className="handle-switcher-name">{activeHandle.name}</span>
+          {handles.length > 1 && (
+            <span className="count-badge">{handles.length}</span>
+          )}
+          <ChevronDown size={11} style={{ opacity: 0.65, flexShrink: 0 }} />
         </button>
 
-        {showListMenu && (
-          <div className="dropdown-menu" style={{ left: 0, minWidth: 215 }}>
+        {showHandleMenu && (
+          <div className="dropdown-menu" style={{ left: 0, minWidth: 248 }}>
             <div className="dropdown-section-label">
-              项目内全部脚本 ({scripts.length})
+              项目内隔离句柄 ({handles.length} 个独立 VM)
+            </div>
+            {handles.map((h) => (
+              <button
+                key={h.id}
+                type="button"
+                className={`dropdown-item ${h.id === activeHandle.id ? 'active' : ''}`}
+                disabled={disabled && h.id !== activeHandle.id}
+                onClick={() => {
+                  onSelectHandle(h.id);
+                  setShowHandleMenu(false);
+                }}
+              >
+                <span
+                  className="lang-dot"
+                  style={{ background: h.color, flexShrink: 0 }}
+                />
+                <span className="dropdown-item-label">{h.name}</span>
+                <span className="count-badge">
+                  {h.scripts.length} 脚本 · T0~{h.timerConfig.count - 1}
+                </span>
+              </button>
+            ))}
+
+            <div className="dropdown-divider" />
+            <div className="dropdown-section-label">
+              当前句柄 [{activeHandle.name}] 脚本 ({scripts.length})
             </div>
             {scripts.map((s) => (
               <button
@@ -127,39 +187,48 @@ export function ScriptTabBar({
                 disabled={disabled && s.id !== activeScriptId}
                 onClick={() => {
                   onSelectScript(s.id);
-                  setShowListMenu(false);
+                  setShowHandleMenu(false);
                 }}
               >
-                <FileCode2 size={13} />
+                <FileCode2 size={12} />
                 <span className="dropdown-item-label">
                   {s.name}.{extension}
                 </span>
                 {s.id === entryScriptId && (
                   <Star size={11} className="entry-star" fill="currentColor" />
                 )}
-                {s.breakpoints.length > 0 && (
-                  <span className="count-badge err">● {s.breakpoints.length}</span>
-                )}
               </button>
             ))}
+
             <div className="dropdown-divider" />
             <button
               type="button"
               className="dropdown-item"
               disabled={disabled}
               onClick={() => {
-                setShowListMenu(false);
-                onAddScript();
+                setShowHandleMenu(false);
+                onAddHandle();
               }}
             >
               <Plus size={13} />
-              <span>新建积木脚本</span>
+              <span>新建隔离句柄</span>
+            </button>
+            <button
+              type="button"
+              className="dropdown-item"
+              onClick={() => {
+                setShowHandleMenu(false);
+                onOpenHandleSettings(activeHandle.id);
+              }}
+            >
+              <Settings2 size={13} />
+              <span>配置句柄与定时器...</span>
             </button>
           </div>
         )}
       </div>
 
-      {/* Horizontal Tab Strip */}
+      {/* Horizontal Script Tabs for Active Handle */}
       <div className="script-tabs-scroll">
         {scripts.map((script) => {
           const isActive = script.id === activeScriptId;
@@ -185,7 +254,7 @@ export function ScriptTabBar({
                 openScriptMenu(script.id, e.currentTarget);
               }}
               title={`${script.name}.${extension}${
-                isEntry ? '（项目入口脚本）' : ''
+                isEntry ? '（句柄入口脚本）' : '（同句柄辅助模块）'
               } · 双击重命名`}
             >
               {isEntry && (
@@ -267,14 +336,14 @@ export function ScriptTabBar({
           className="script-add-btn"
           disabled={disabled}
           onClick={onAddScript}
-          title="在当前项目中新建积木脚本"
+          title={`在句柄 ${activeHandle.name} 内新建模块脚本`}
           aria-label="新建积木脚本"
         >
           <Plus size={14} />
         </button>
       </div>
 
-      {/* Unclipped Tab Context Menu rendered at TabBar level */}
+      {/* Unclipped Tab Context Menu */}
       {menuState && menuScript && (
         <div
           className="dropdown-menu"
@@ -310,7 +379,7 @@ export function ScriptTabBar({
               }}
             >
               <Star size={13} />
-              <span>设为入口脚本 (★)</span>
+              <span>设为句柄入口 (★)</span>
             </button>
           )}
           {scripts.length > 1 && (

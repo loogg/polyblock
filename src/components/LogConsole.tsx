@@ -108,6 +108,17 @@ export function LogConsole({
           visibleLogs.map((entry) => (
             <div key={entry.id} className="log-row">
               <span className="log-time">{entry.timestamp}</span>
+              {entry.handleName && (
+                <span
+                  className="log-handle-badge"
+                  style={{
+                    borderColor: entry.handleColor || 'var(--accent)',
+                    color: entry.handleColor || 'var(--accent)',
+                  }}
+                >
+                  {entry.handleName}
+                </span>
+              )}
               <span className={`log-lvl ${entry.level}`}>
                 {entry.level.toUpperCase()}
               </span>

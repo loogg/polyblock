@@ -38,6 +38,11 @@ const BLOCK_STYLES: Record<string, Partial<Blockly.Theme.BlockStyle>> = {
     colourSecondary: '#be185d',
     colourTertiary: '#9d174d',
   },
+  variable_local_blocks: {
+    colourPrimary: '#9d174d',
+    colourSecondary: '#831843',
+    colourTertiary: '#6b1236',
+  },
   math_blocks: {
     colourPrimary: '#16a34a',
     colourSecondary: '#15803d',

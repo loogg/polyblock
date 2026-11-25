@@ -15,6 +15,9 @@ export interface LogEntry {
   message: string;
   line?: number;
   blockId?: string;
+  /** Optional source handle name & accent color during multi-handle concurrent runs. */
+  handleName?: string;
+  handleColor?: string;
 }
 
 export interface DiagnosticItem {
@@ -35,9 +38,27 @@ export interface VariableSnapshotItem {
   value: string;
 }
 
-/** Project-scoped hardware/software timer capability config (integer IDs 0..count-1). */
+/** Static + runtime scope classification for tree-structured variable watching. */
+export interface ScopedVariableItem {
+  name: string;
+  /** Safe generated identifier used for runtime snapshot lookup. */
+  ident: string;
+  kind: 'shared' | 'scope-global' | 'local' | 'param';
+  firstBlockId?: string;
+  usedInScopes?: string[];
+}
+
+export interface VariableScopeNode {
+  id: string;
+  label: string;
+  category: 'shared' | 'lifecycle' | 'timer' | 'button' | 'function' | 'top';
+  blockId?: string;
+  variables: ScopedVariableItem[];
+}
+
+/** Handle-scoped hardware/software timer capability config (integer IDs 0..count-1). */
 export interface ProjectTimerConfig {
-  /** Number of available timer channels (1..32, default 8 -> IDs 0..7). */
+  /** Number of available timer channels for this handle (1..32, default 8 -> IDs 0..7). */
   count: number;
   /** Optional friendly labels keyed by stringified integer ID (e.g. "0": "心跳灯"). */
   aliases: Record<string, string>;
@@ -63,7 +84,7 @@ export interface RuntimeTelemetry {
   timers: RuntimeTimerTelemetry[];
 }
 
-/** Single visual-block script inside a PolyBlock project. */
+/** Single visual-block script inside a RuntimeHandle (or sharedModules). */
 export interface ProjectScript {
   id: string;
   name: string;
@@ -72,29 +93,61 @@ export interface ProjectScript {
   updatedAt: string;
 }
 
-/** v2 Project-rooted multi-script model (unified project language + 1..N scripts). */
+/** Isolated runtime VM handle inside a project (maps 1:1 to a C-layer lua_State* / Python VM). */
+export interface RuntimeHandle {
+  id: string;
+  name: string;
+  description?: string;
+  color: string;
+  autoStart: boolean;
+  timerConfig: ProjectTimerConfig;
+  entryScriptId: string;
+  activeScriptId: string;
+  scripts: ProjectScript[];
+  updatedAt: string;
+}
+
+/** v3 Three-tier Project -> Handle[] -> Script[] model. */
 export interface ProjectModel {
   format: 'polyblock-project';
-  version: 2;
+  version: 3;
   id: string;
   name: string;
   description?: string;
   language: ScriptLanguageId;
+  /** Project default timer channel count for newly added handles (1..32). */
+  defaultTimerCount: number;
   enabledExtensions: string[];
-  /** Optional per-project timer channel capability & aliases (defaults to 8 channels, 0..7). */
-  timerConfig?: ProjectTimerConfig;
-  entryScriptId: string;
-  activeScriptId: string;
-  scripts: ProjectScript[];
+  /** Forward-compatible reserved pure-script shared libraries (single source, isolated load per handle). */
+  sharedModules: ProjectScript[];
+  activeHandleId: string;
+  handles: RuntimeHandle[];
   createdAt: string;
   updatedAt: string;
 }
 
-/** Root workspace store persisted in browser localStorage. */
+/** Root workspace store persisted in browser localStorage (v3). */
 export interface WorkspaceStoreState {
-  version: 2;
+  version: 3;
   activeProjectId: string;
   projects: ProjectModel[];
+}
+
+/** Legacy v2 two-tier project format kept for lossless import & migration. */
+export interface LegacyProjectModelV2 {
+  format?: 'polyblock-project';
+  version: 2;
+  id?: string;
+  name?: string;
+  description?: string;
+  language?: ScriptLanguageId;
+  enabledExtensions?: string[];
+  timerConfig?: Partial<ProjectTimerConfig>;
+  entryScriptId?: string;
+  activeScriptId?: string;
+  scripts: ProjectScript[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 /** Legacy v1 single-canvas file format kept for seamless import & migration. */

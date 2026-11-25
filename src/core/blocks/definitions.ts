@@ -2,7 +2,11 @@ import * as Blockly from 'blockly';
 import '@blockly/block-plus-minus';
 import * as zhHans from 'blockly/msg/zh-hans';
 import { extensionRegistry } from '../extensions/registry';
-import { buildTimerDropdownOptions } from './timerConfigBridge';
+import {
+  buildTimerDropdownOptions,
+  EDIT_TIMER_ALIAS_SENTINEL,
+  triggerTimerAliasPrompt,
+} from './timerConfigBridge';
 
 let blocksRegistered = false;
 
@@ -17,6 +21,12 @@ class TimerIdFieldDropdown extends Blockly.FieldDropdown {
   }
 
   protected override doClassValidation_(newValue?: string): string | null {
+    if (newValue === EDIT_TIMER_ALIAS_SENTINEL) {
+      const curRaw = this.getValue();
+      const curId = curRaw && /^\d+$/.test(curRaw) ? Number(curRaw) : 0;
+      setTimeout(() => triggerTimerAliasPrompt(curId), 0);
+      return null;
+    }
     if (typeof newValue === 'string' && /^\d+$/.test(newValue)) {
       const n = Number(newValue);
       if (Number.isInteger(n) && n >= 0 && n < 32) {
@@ -235,6 +245,30 @@ export function registerPolyBlocks(): void {
       nextStatement: null,
       style: 'control_blocks',
       tooltip: '在生成的 Lua / Python 代码中保留对应注释行。',
+    },
+
+    // --- 局部变量 (Local Scoped Variable) ---
+    {
+      type: 'poly_local_set',
+      message0: '局部变量 %1 = %2',
+      args0: [
+        { type: 'field_input', name: 'NAME', text: 'tmp' },
+        { type: 'input_value', name: 'VALUE' },
+      ],
+      inputsInline: true,
+      previousStatement: null,
+      nextStatement: null,
+      style: 'variable_local_blocks',
+      tooltip:
+        '声明或赋值仅在当前回调/函数体内有效的局部变量（Lua 生成 local，Python 保持函数局部，不污染句柄全局变量）。',
+    },
+    {
+      type: 'poly_local_get',
+      message0: '局部 %1',
+      args0: [{ type: 'field_input', name: 'NAME', text: 'tmp' }],
+      output: null,
+      style: 'variable_local_blocks',
+      tooltip: '读取当前回调或函数内定义的局部变量。',
     },
 
     // --- 文本辅助 ---

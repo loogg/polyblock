@@ -31,7 +31,12 @@ import {
   polyblockDarkTheme,
   polyblockLightTheme,
 } from '../core/blocks/themes';
-import { setActiveTimerConfig } from '../core/blocks/timerConfigBridge';
+import {
+  formatTimerLabel,
+  registerTimerAliasPromptHandler,
+  setActiveTimerConfig,
+} from '../core/blocks/timerConfigBridge';
+import { TIMER_ID_BLOCK_TYPES } from '../core/backends/eventMode';
 import type { ProjectTimerConfig, ThemeMode } from '../types/project';
 
 export interface BlocklyWorkbenchHandle {
@@ -54,18 +59,21 @@ interface BlocklyWorkbenchProps {
   onWorkspaceChange: (workspace: Blockly.WorkspaceSvg) => void;
   onSelectBlock: (blockId: string | null) => void;
   onToggleBreakpoint: (blockId: string) => void;
+  onEditTimerAlias: (timerId: number) => void;
+  onOpenHandleTimerSettings: () => void;
   onOpenExtensionsPage: () => void;
 }
 
 // Singleton hook bridge so Blockly's global ContextMenuRegistry invokes current React callbacks
 let breakpointMenuRegistered = false;
 let currentToggleBpHandler: ((blockId: string) => void) | null = null;
+let currentEditAliasHandler: ((timerId: number) => void) | null = null;
 let currentBreakpointsSet = new Set<string>();
 
 function registerBreakpointContextMenu(): void {
   if (breakpointMenuRegistered) return;
 
-  const menuItem: Blockly.ContextMenuRegistry.RegistryItem = {
+  const bpMenuItem: Blockly.ContextMenuRegistry.RegistryItem = {
     id: 'polyblock_toggle_breakpoint',
     scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
     weight: -5,
@@ -89,8 +97,42 @@ function registerBreakpointContextMenu(): void {
     },
   };
 
+  const aliasMenuItem: Blockly.ContextMenuRegistry.RegistryItem = {
+    id: 'polyblock_edit_timer_alias',
+    scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+    weight: -6,
+    displayText: (scope) => {
+      const blk = scope.block;
+      const tid = Math.trunc(Number(blk?.getFieldValue('TIMER_ID') ?? 0));
+      const label = formatTimerLabel(tid);
+      return label.includes('·')
+        ? `修改 ${label} 别名...`
+        : `设置定时器 T${tid} 别名...`;
+    },
+    preconditionFn: (scope) => {
+      const blk = scope.block;
+      if (!blk || blk.isInFlyout || !TIMER_ID_BLOCK_TYPES.has(blk.type)) {
+        return 'hidden';
+      }
+      return 'enabled';
+    },
+    callback: (scope) => {
+      const blk = scope.block;
+      if (!blk) return;
+      const tid = Math.trunc(Number(blk.getFieldValue('TIMER_ID') ?? 0));
+      if (Number.isInteger(tid) && tid >= 0) {
+        currentEditAliasHandler?.(tid);
+      }
+    },
+  };
+
   try {
-    Blockly.ContextMenuRegistry.registry.register(menuItem);
+    Blockly.ContextMenuRegistry.registry.register(bpMenuItem);
+  } catch {
+    // Already registered in HMR
+  }
+  try {
+    Blockly.ContextMenuRegistry.registry.register(aliasMenuItem);
   } catch {
     // Already registered in HMR
   }
@@ -113,6 +155,8 @@ export const BlocklyWorkbench = forwardRef<
     onWorkspaceChange,
     onSelectBlock,
     onToggleBreakpoint,
+    onEditTimerAlias,
+    onOpenHandleTimerSettings,
     onOpenExtensionsPage,
   },
   ref,
@@ -121,6 +165,7 @@ export const BlocklyWorkbench = forwardRef<
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
   const onChangeRef = useRef(onWorkspaceChange);
   const onSelectRef = useRef(onSelectBlock);
+  const onOpenTimerCfgRef = useRef(onOpenHandleTimerSettings);
   const initialDataRef = useRef(initialWorkspace);
   const extraCatsRef = useRef<BlockCategorySpec[]>(extraCategories);
 
@@ -130,8 +175,11 @@ export const BlocklyWorkbench = forwardRef<
 
   onChangeRef.current = onWorkspaceChange;
   onSelectRef.current = onSelectBlock;
+  onOpenTimerCfgRef.current = onOpenHandleTimerSettings;
   extraCatsRef.current = extraCategories;
   currentToggleBpHandler = onToggleBreakpoint;
+  currentEditAliasHandler = onEditTimerAlias;
+  registerTimerAliasPromptHandler(onEditTimerAlias);
   currentBreakpointsSet = new Set(breakpoints);
 
   const refreshFlyout = useCallback((catId: string, query: string) => {
@@ -187,6 +235,10 @@ export const BlocklyWorkbench = forwardRef<
           refreshFlyout('variables', '');
         },
       );
+    });
+
+    ws.registerButtonCallback('OPEN_HANDLE_TIMER_CONFIG', () => {
+      onOpenTimerCfgRef.current();
     });
 
     try {

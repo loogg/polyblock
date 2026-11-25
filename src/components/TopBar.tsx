@@ -5,12 +5,14 @@ import {
   Download,
   FolderGit2,
   FolderKanban,
+  Layers,
   Moon,
   Pause,
   Pencil,
   Play,
   Plus,
   Save,
+  Settings2,
   Square,
   StepForward,
   Sun,
@@ -18,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
+import { countProjectScripts } from '../core/projects/store';
 import type { RunnerStatus } from '../core/runners/types';
 import type {
   ExecutionSpeedId,
@@ -30,22 +33,26 @@ import type {
 interface TopBarProps {
   projects: ProjectModel[];
   activeProject: ProjectModel;
+  activeHandleName: string;
   activeScriptName: string;
   isDirty: boolean;
   activePage: PageId;
   theme: ThemeMode;
   runnerStatus: RunnerStatus;
+  multiHandleRunning: boolean;
   executionSpeed: ExecutionSpeedId;
   showCode: boolean;
   showConsole: boolean;
   onSelectProject: (projectId: string) => void;
   onCreateBlankProject: () => void;
   onRenameCurrentProject: (nextName: string) => void;
+  onOpenProjectSettings: () => void;
   onSaveProjectFile: () => void;
   onOpenProjectsPage: () => void;
   onSelectLanguage: (lang: ScriptLanguageId) => void;
   onSelectSpeed: (speed: ExecutionSpeedId) => void;
   onRun: () => void;
+  onRunAllHandles: () => void;
   onStartStepMode: () => void;
   onResume: () => void;
   onStepNext: () => void;
@@ -60,22 +67,26 @@ interface TopBarProps {
 export function TopBar({
   projects,
   activeProject,
+  activeHandleName,
   activeScriptName,
   isDirty,
   activePage,
   theme,
   runnerStatus,
+  multiHandleRunning,
   executionSpeed,
   showCode,
   showConsole,
   onSelectProject,
   onCreateBlankProject,
   onRenameCurrentProject,
+  onOpenProjectSettings,
   onSaveProjectFile,
   onOpenProjectsPage,
   onSelectLanguage,
   onSelectSpeed,
   onRun,
+  onRunAllHandles,
   onStartStepMode,
   onResume,
   onStepNext,
@@ -96,6 +107,8 @@ export function TopBar({
   const isRunning = runnerStatus === 'running';
   const isPaused = runnerStatus === 'paused';
   const activeFileName = `${activeScriptName}.${activeBackend.extension}`;
+  const totalScripts = countProjectScripts(activeProject);
+  const hasMultipleHandles = activeProject.handles.length > 1;
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -143,19 +156,21 @@ export function TopBar({
             }}
             aria-expanded={projectMenuOpen}
             aria-label="切换或管理当前项目"
-            title={`当前项目：${activeProject.name}（共 ${activeProject.scripts.length} 个脚本）`}
+            title={`当前项目：${activeProject.name}（${activeProject.handles.length} 句柄 · ${totalScripts} 脚本）`}
           >
             <FolderGit2 size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
             {isDirty && <span className="dirty-dot" title="有未导出修改" />}
             <span className="project-switcher-name">{activeProject.name}</span>
             <span className="project-script-count">
-              {activeProject.scripts.length} 脚本
+              {hasMultipleHandles
+                ? `${activeProject.handles.length} 句柄`
+                : `${totalScripts} 脚本`}
             </span>
             <ChevronDown size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
           </button>
 
           {projectMenuOpen && (
-            <div className="dropdown-menu" style={{ left: 0, minWidth: 264 }}>
+            <div className="dropdown-menu" style={{ left: 0, minWidth: 272 }}>
               <div className="dropdown-section-label">
                 切换项目 ({projects.length})
               </div>
@@ -178,7 +193,7 @@ export function TopBar({
                       </span>
                       <span className="dropdown-item-label">{p.name}</span>
                       <span className="count-badge">
-                        {p.language === 'lua' ? 'Lua' : 'Py'} · {p.scripts.length}
+                        {p.language === 'lua' ? 'Lua' : 'Py'} · {p.handles.length}句柄
                       </span>
                     </button>
                   );
@@ -186,6 +201,18 @@ export function TopBar({
               </div>
 
               <div className="dropdown-divider" />
+
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => {
+                  setProjectMenuOpen(false);
+                  onOpenProjectSettings();
+                }}
+              >
+                <Settings2 size={13} />
+                <span>当前项目与句柄配置...</span>
+              </button>
 
               {renamingProject ? (
                 <div className="dropdown-rename-row">
@@ -316,11 +343,22 @@ export function TopBar({
               type="button"
               className="btn-run"
               onClick={onRun}
-              title={`运行当前脚本 ${activeFileName}`}
+              title={`运行当前句柄 [${activeHandleName}] 的 ${activeFileName}`}
             >
               <Play size={12} fill="currentColor" />
               <span>运行</span>
             </button>
+            {hasMultipleHandles && (
+              <button
+                type="button"
+                className="btn-step"
+                onClick={onRunAllHandles}
+                title={`同时启动 ${activeProject.handles.filter((h) => h.autoStart).length} 个自启动隔离句柄（多 Worker 并发模拟）`}
+              >
+                <Layers size={12} />
+                <span>并发</span>
+              </button>
+            )}
             <button
               type="button"
               className="btn-outline"
@@ -335,20 +373,26 @@ export function TopBar({
 
         {isRunning && (
           <>
-            <button
-              type="button"
-              className="btn-pause"
-              onClick={onPause}
-              title="在下一块积木处暂停"
-            >
-              <Pause size={12} />
-              <span>暂停</span>
-            </button>
+            {!multiHandleRunning && (
+              <button
+                type="button"
+                className="btn-pause"
+                onClick={onPause}
+                title="在下一块积木处暂停"
+              >
+                <Pause size={12} />
+                <span>暂停</span>
+              </button>
+            )}
             <button
               type="button"
               className="btn-run running"
               onClick={onStop}
-              title="立即停止脚本执行"
+              title={
+                multiHandleRunning
+                  ? '停止全部并发运行中的句柄'
+                  : '停止当前脚本执行'
+              }
             >
               <Square size={12} fill="currentColor" />
               <span>停止</span>

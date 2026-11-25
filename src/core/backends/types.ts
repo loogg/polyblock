@@ -3,6 +3,7 @@ import type {
   DiagnosticItem,
   ScriptLanguageId,
   SourceLineRange,
+  VariableScopeNode,
 } from '../../types/project';
 
 export interface GeneratedCodeResult {
@@ -16,6 +17,8 @@ export interface GeneratedCodeResult {
   diagnostics: DiagnosticItem[];
   blockCount: number;
   variableNames: string[];
+  /** Scope-tree grouping of shared globals, per-callback vars, locals, and procedure params. */
+  variableScopes?: VariableScopeNode[];
   /** True when the script uses on_run, timers, on_stop, or hardware event callbacks. */
   isEventDriven?: boolean;
 }

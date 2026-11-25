@@ -5,7 +5,7 @@ import { registerPolyBlocks } from '../blocks/definitions';
 import { setActiveTimerConfig } from '../blocks/timerConfigBridge';
 import { extensionRegistry } from '../extensions/registry';
 import {
-  getProjectTimerConfig,
+  getHandleTimerConfig,
   instantiateProjectFromTemplate,
 } from '../projects/store';
 import { WorkerRuntimeScheduler } from '../../workers/runtimeScheduler';
@@ -16,16 +16,17 @@ function loadWs(json: Record<string, unknown>): Blockly.Workspace {
   return ws;
 }
 
-describe('Phase 5: Event-Driven ABI, Multi-Channel Timers & Static Diagnostics', () => {
+describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-Channel Timers', () => {
   beforeAll(() => {
     registerPolyBlocks();
     extensionRegistry.ensureInitialized();
   });
 
-  it('generates clean zero-closure top-level Lua 5.4 & Python 3 Event-Driven ABI', () => {
+  it('generates clean zero-closure Lua 5.4 & Python 3 Event-Driven ABI with local vars and scope tree', () => {
     const proj = instantiateProjectFromTemplate('event_timer_demo');
-    setActiveTimerConfig(getProjectTimerConfig(proj));
-    const ws = loadWs(proj.scripts[0].workspace);
+    const hdl = proj.handles[0];
+    setActiveTimerConfig(getHandleTimerConfig(hdl));
+    const ws = loadWs(hdl.scripts[0].workspace);
 
     const luaRes = backendRegistry.get('lua').generate(ws);
     expect(luaRes.isEventDriven).toBe(true);
@@ -35,6 +36,7 @@ describe('Phase 5: Event-Driven ABI, Multi-Channel Timers & Static Diagnostics',
     expect(luaRes.code).toContain('function on_start()');
     expect(luaRes.code).toContain('rt.set_run_period(100)');
     expect(luaRes.code).toContain('function on_run()');
+    expect(luaRes.code).toContain('local cur_temp = board.read_temp()');
     expect(luaRes.code).toContain('function on_timer(id)');
     expect(luaRes.code).toContain('if id == 0 then -- T0: 心跳灯');
     expect(luaRes.code).toContain('elseif id == 1 then -- T1: 告警倒计时');
@@ -43,12 +45,25 @@ describe('Phase 5: Event-Driven ABI, Multi-Channel Timers & Static Diagnostics',
     expect(luaRes.code).toContain('function on_stop()');
     expect(luaRes.code).toContain('rt.start_timer(0, 500, 0) -- T0: 心跳灯');
     expect(luaRes.code).toContain('rt.start_timer(1, 400, 3) -- T1: 告警倒计时');
-    // Zero closure registration on rt
     expect(luaRes.code).not.toContain('rt.on_timer(');
     expect(luaRes.debugCode).toContain('__poly_should_loop');
     expect(luaRes.debugCode).toContain('__poly_next_event():await()');
     expect(luaRes.sourceMap['ev_start_t0']).toBeDefined();
     expect(luaRes.sourceMap['ev_print_t1']).toBeDefined();
+
+    // Verify Scope-Tree variable classification
+    const scopes = luaRes.variableScopes ?? [];
+    const sharedNode = scopes.find((s) => s.id === 'shared');
+    expect(sharedNode).toBeDefined();
+    expect(sharedNode!.variables.map((v) => v.name)).toContain('led_on');
+    expect(sharedNode!.variables.map((v) => v.name)).toContain('ticks');
+    expect(sharedNode!.variables.map((v) => v.name)).not.toContain('cur_temp');
+
+    const runNode = scopes.find((s) => s.label.includes('on_run'));
+    expect(runNode).toBeDefined();
+    expect(
+      runNode!.variables.some((v) => v.name === 'cur_temp' && v.kind === 'local'),
+    ).toBe(true);
 
     const pyRes = backendRegistry.get('python').generate(ws);
     expect(pyRes.isEventDriven).toBe(true);
@@ -56,7 +71,9 @@ describe('Phase 5: Event-Driven ABI, Multi-Channel Timers & Static Diagnostics',
     expect(pyRes.code).toContain('import rt');
     expect(pyRes.code).toContain('import board');
     expect(pyRes.code).toContain('def on_start():');
-    expect(pyRes.code).toContain('global ');
+    expect(pyRes.code).toContain('global led_on, ticks');
+    expect(pyRes.code).not.toContain('global cur_temp');
+    expect(pyRes.code).toContain('cur_temp = board.read_temp()');
     expect(pyRes.code).toContain('rt.set_run_period(100)');
     expect(pyRes.code).toContain('def on_run():');
     expect(pyRes.code).toContain('def on_timer(id):');
@@ -112,10 +129,8 @@ describe('Phase 5: Event-Driven ABI, Multi-Channel Timers & Static Diagnostics',
       post: (m) => msgsB.push(m),
     });
 
-    // Out-of-range channel must throw
     expect(() => schedA.startTimer(5, 50, 1)).toThrow(/超出当前项目配置范围/);
 
-    // Start T0 on ctx A (2 triggers, 25ms) while ctx B keeps T0 stopped -> total isolation
     schedA.startTimer(0, 25, 2);
     expect(schedA.isTimerRunning(0)).toBe(true);
     expect(schedB.isTimerRunning(0)).toBe(false);
@@ -131,11 +146,9 @@ describe('Phase 5: Event-Driven ABI, Multi-Channel Timers & Static Diagnostics',
     expect(schedA.isTimerRunning(0)).toBe(false);
     expect(schedA.getTimerValue(0)).toBe(0);
 
-    // No remaining active sources -> auto-exits with 'done'
     const ev3 = await schedA.nextEvent();
     expect(ev3).toBe('done');
 
-    // Button delta dispatch + graceful stop on ctx B
     expect(schedB.shouldEnterEventLoop(false, false, true)).toBe(true);
     schedB.onMockInputsDelta({ btnA: false }, { btnA: true });
     expect(await schedB.nextEvent()).toBe('button:A:1');

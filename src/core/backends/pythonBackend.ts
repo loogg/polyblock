@@ -3,6 +3,10 @@ import { Order, pythonGenerator } from 'blockly/python';
 import { getActiveTimerConfig } from '../blocks/timerConfigBridge';
 import { isEventDrivenWorkspace } from './eventMode';
 import {
+  analyzeWorkspaceScopes,
+  sanitizeLocalIdent,
+} from './scopeAnalysis';
+import {
   analyzeWorkspaceDiagnostics,
   extractSourceMap,
   SENTINEL_END_PREFIX,
@@ -296,6 +300,18 @@ function registerPythonBlockGenerators(): void {
     return `# ${text}\n`;
   };
 
+  pythonGenerator.forBlock['poly_local_set'] = (block, generator) => {
+    const rawName = String(block.getFieldValue('NAME') || 'tmp');
+    const ident = sanitizeLocalIdent(rawName);
+    const val = generator.valueToCode(block, 'VALUE', Order.NONE) || 'None';
+    return `${ident} = ${val}\n`;
+  };
+
+  pythonGenerator.forBlock['poly_local_get'] = (block) => {
+    const rawName = String(block.getFieldValue('NAME') || 'tmp');
+    return [sanitizeLocalIdent(rawName), Order.ATOMIC];
+  };
+
   pythonGenerator.forBlock['poly_to_string'] = (block, generator) => {
     const value = generator.valueToCode(block, 'VALUE', Order.NONE) || '""';
     return [`str(${value})`, Order.FUNCTION_CALL];
@@ -418,13 +434,13 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
 
     let rawClean = '';
     const varEntries: Array<[string, string]> = [];
+    const varIdToIdent = new Map<string, string>();
     try {
       pythonGenerator.init(workspace);
       for (const v of workspace.getVariableMap().getAllVariables()) {
-        varEntries.push([
-          v.getName(),
-          pythonGenerator.getVariableName(v.getId()),
-        ]);
+        const ident = pythonGenerator.getVariableName(v.getId());
+        varEntries.push([v.getName(), ident]);
+        varIdToIdent.set(v.getId(), ident);
       }
       pythonActiveVarIdents = varEntries.map(([, ident]) => ident);
       rawClean = pythonGenerator.workspaceToCode(workspace);
@@ -432,6 +448,11 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       pythonGenerator.STATEMENT_PREFIX = prevPrefix;
       pythonGenerator.STATEMENT_SUFFIX = prevSuffix;
     }
+
+    const { scopes: variableScopes, allLocalEntries } = analyzeWorkspaceScopes(
+      workspace,
+      varIdToIdent,
+    );
 
     const header = eventDriven
       ? `# 由 PolyBlock 自动生成 (Target: Python 3 · Event-Driven ABI)\n`
@@ -460,9 +481,18 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       pythonGenerator.STATEMENT_SUFFIX = prevSuffix;
     }
 
+    const snapVarEntries: Array<[string, string]> = [...varEntries];
+    const seenPyLabels = new Set(varEntries.map(([label]) => label));
+    for (const loc of allLocalEntries) {
+      if (!seenPyLabels.has(loc.label)) {
+        seenPyLabels.add(loc.label);
+        snapVarEntries.push([loc.label, loc.ident]);
+      }
+    }
+
     const debugPrelude = [
       `import _poly, json`,
-      `_POLY_VAR_MAP = ${JSON.stringify(varEntries)}`,
+      `_POLY_VAR_MAP = ${JSON.stringify(snapVarEntries)}`,
       `def _poly_snap(_loc, _glb):`,
       `  _out = {}`,
       `  for _label, _ident in _POLY_VAR_MAP:`,
@@ -496,6 +526,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
         .getAllBlocks(false)
         .filter((b) => !b.isShadow()).length,
       variableNames: varEntries.map((v) => v[0]),
+      variableScopes,
       isEventDriven: eventDriven,
     };
   }

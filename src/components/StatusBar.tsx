@@ -5,10 +5,12 @@ import type { ScriptLanguageId } from '../types/project';
 
 interface StatusBarProps {
   projectName: string;
-  scriptCount: number;
+  handleCount: number;
+  activeHandleName: string;
   activeScriptName: string;
   language: ScriptLanguageId;
   runnerStatus: RunnerStatus;
+  multiHandleRunning?: boolean;
   blockCount: number;
   diagnosticCount: number;
   breakpointCount: number;
@@ -17,10 +19,12 @@ interface StatusBarProps {
 
 export function StatusBar({
   projectName,
-  scriptCount,
+  handleCount,
+  activeHandleName,
   activeScriptName,
   language,
   runnerStatus,
+  multiHandleRunning = false,
   blockCount,
   diagnosticCount,
   breakpointCount,
@@ -33,10 +37,12 @@ export function StatusBar({
     runnerStatus === 'paused'
       ? `已暂停（断点 / 单步）· ${runner.shortLabel}`
       : runnerStatus === 'running'
-      ? `正在逐块运行 (${runner.shortLabel})...`
-      : runnerStatus === 'error'
-      ? `上次运行出错 · ${runner.shortLabel}`
-      : `沙箱就绪 · ${runner.shortLabel}`;
+        ? multiHandleRunning
+          ? `${handleCount} 句柄并发仿真中 (${runner.shortLabel})...`
+          : `正在运行 [${activeHandleName}] (${runner.shortLabel})...`
+        : runnerStatus === 'error'
+          ? `上次运行出错 · ${runner.shortLabel}`
+          : `沙箱就绪 · ${runner.shortLabel}`;
 
   return (
     <footer className="status-bar">
@@ -47,19 +53,19 @@ export function StatusBar({
               runnerStatus === 'paused'
                 ? 'paused'
                 : runnerStatus === 'running'
-                ? 'running'
-                : runnerStatus === 'error'
-                ? 'error'
-                : ''
+                  ? 'running'
+                  : runnerStatus === 'error'
+                    ? 'error'
+                    : ''
             }`}
           />
           {statusText}
         </span>
         <span>
-          项目: {projectName} ({scriptCount} 脚本)
+          项目: {projectName} ({handleCount} 句柄)
         </span>
         <span>
-          当前: {activeScriptName}.{backend.extension}
+          当前: {activeHandleName}/{activeScriptName}.{backend.extension}
         </span>
         <span>积木数: {blockCount}</span>
         {breakpointCount > 0 && (

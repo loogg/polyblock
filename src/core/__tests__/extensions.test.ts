@@ -32,10 +32,13 @@ describe('Declarative Extension Pack System', () => {
   it('generates clean deduplicated Lua & Python board code for virtual_board_demo project', () => {
     const proj = instantiateProjectFromTemplate('virtual_board_demo');
     expect(proj.enabledExtensions).toContain('virtual-board');
-    expect(proj.scripts.map((s) => s.name)).toEqual(['led_blink', 'temp_guard']);
+    expect(proj.handles[0].scripts.map((s) => s.name)).toEqual([
+      'led_blink',
+      'temp_guard',
+    ]);
 
     const ws = new Blockly.Workspace();
-    Blockly.serialization.workspaces.load(proj.scripts[1].workspace, ws);
+    Blockly.serialization.workspaces.load(proj.handles[0].scripts[1].workspace, ws);
 
     const luaRes = backendRegistry.get('lua').generate(ws);
     expect(luaRes.code).toContain('local board = require("board")');

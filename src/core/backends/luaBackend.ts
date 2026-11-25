@@ -3,6 +3,10 @@ import { luaGenerator, Order } from 'blockly/lua';
 import { getActiveTimerConfig } from '../blocks/timerConfigBridge';
 import { isEventDrivenWorkspace } from './eventMode';
 import {
+  analyzeWorkspaceScopes,
+  sanitizeLocalIdent,
+} from './scopeAnalysis';
+import {
   analyzeWorkspaceDiagnostics,
   extractSourceMap,
   SENTINEL_END_PREFIX,
@@ -15,6 +19,11 @@ let luaDebugPass = false;
 let luaEventDrivenMode = false;
 let luaEmittedTimerDispatch = false;
 let luaEmittedButtonDispatch = false;
+let luaDeclaredLocalsByRoot = new Map<string, Set<string>>();
+
+function getLuaScopeRootId(block: Blockly.Block): string {
+  return block.getRootBlock().id;
+}
 
 function ensureLuaRtImport(generator: typeof luaGenerator): void {
   const defs = (generator as unknown as { definitions_: Record<string, string> })
@@ -262,6 +271,28 @@ function registerLuaBlockGenerators(): void {
     return `-- ${text}\n`;
   };
 
+  luaGenerator.forBlock['poly_local_set'] = (block, generator) => {
+    const rawName = String(block.getFieldValue('NAME') || 'tmp');
+    const ident = sanitizeLocalIdent(rawName);
+    const val = generator.valueToCode(block, 'VALUE', Order.NONE) || 'nil';
+    const rootId = getLuaScopeRootId(block);
+    let declared = luaDeclaredLocalsByRoot.get(rootId);
+    if (!declared) {
+      declared = new Set<string>();
+      luaDeclaredLocalsByRoot.set(rootId, declared);
+    }
+    if (!declared.has(ident)) {
+      declared.add(ident);
+      return `local ${ident} = ${val}\n`;
+    }
+    return `${ident} = ${val}\n`;
+  };
+
+  luaGenerator.forBlock['poly_local_get'] = (block) => {
+    const rawName = String(block.getFieldValue('NAME') || 'tmp');
+    return [sanitizeLocalIdent(rawName), Order.ATOMIC];
+  };
+
   luaGenerator.forBlock['poly_to_string'] = (block, generator) => {
     const value = generator.valueToCode(block, 'VALUE', Order.NONE) || '""';
     return [`tostring(${value})`, Order.HIGH];
@@ -329,24 +360,30 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
     luaEventDrivenMode = eventDriven;
     luaEmittedTimerDispatch = false;
     luaEmittedButtonDispatch = false;
+    luaDeclaredLocalsByRoot = new Map();
     luaGenerator.STATEMENT_PREFIX = `${SENTINEL_START_PREFIX}%1__\n`;
     luaGenerator.STATEMENT_SUFFIX = `${SENTINEL_END_PREFIX}%1__\n`;
 
     let rawClean = '';
     const varEntries: Array<{ label: string; ident: string }> = [];
+    const varIdToIdent = new Map<string, string>();
     try {
       luaGenerator.init(workspace);
       for (const v of workspace.getVariableMap().getAllVariables()) {
-        varEntries.push({
-          label: v.getName(),
-          ident: luaGenerator.getVariableName(v.getId()),
-        });
+        const ident = luaGenerator.getVariableName(v.getId());
+        varEntries.push({ label: v.getName(), ident });
+        varIdToIdent.set(v.getId(), ident);
       }
       rawClean = luaGenerator.workspaceToCode(workspace);
     } finally {
       luaGenerator.STATEMENT_PREFIX = prevPrefix;
       luaGenerator.STATEMENT_SUFFIX = prevSuffix;
     }
+
+    const { scopes: variableScopes, allLocalEntries } = analyzeWorkspaceScopes(
+      workspace,
+      varIdToIdent,
+    );
 
     const header = eventDriven
       ? `-- 由 PolyBlock 自动生成 (Target: Lua 5.4 · Event-Driven ABI)\n`
@@ -357,13 +394,24 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
     const { code, sourceMap, lineToBlock } = extractSourceMap(combinedClean);
 
     // --- Pass 2: Instrumented async sandbox debug code ---
-    const snapExpr = buildLuaSnapshotExpr(varEntries);
+    // Include local variable identifiers in __poly_snap: Lua naturally resolves
+    // them to the active local inside their scope and nil (omitted by pairs) outside!
+    const snapEntries = [...varEntries];
+    const seenSnapLabels = new Set(varEntries.map((e) => e.label));
+    for (const loc of allLocalEntries) {
+      if (!seenSnapLabels.has(loc.label)) {
+        seenSnapLabels.add(loc.label);
+        snapEntries.push(loc);
+      }
+    }
+    const snapExpr = buildLuaSnapshotExpr(snapEntries);
     let debugBody = '';
     try {
       luaDebugPass = true;
       luaEventDrivenMode = eventDriven;
       luaEmittedTimerDispatch = false;
       luaEmittedButtonDispatch = false;
+      luaDeclaredLocalsByRoot = new Map();
       luaGenerator.STATEMENT_PREFIX = `__poly_step(%1, __poly_snap(${snapExpr})):await()\n`;
       luaGenerator.STATEMENT_SUFFIX = null;
       debugBody = luaGenerator.workspaceToCode(workspace);
@@ -390,6 +438,7 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
         .getAllBlocks(false)
         .filter((b) => !b.isShadow()).length,
       variableNames: varEntries.map((v) => v.label),
+      variableScopes,
       isEventDriven: eventDriven,
     };
   }

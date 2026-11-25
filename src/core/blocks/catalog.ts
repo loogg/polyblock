@@ -194,7 +194,21 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
     label: '变量',
     color: '#db2777',
     custom: 'VARIABLE',
-    blocks: [],
+    blocks: [
+      {
+        kind: 'block',
+        type: 'poly_local_set',
+        keywords: '局部变量 local 临时 变量 作用域 tmp',
+        fields: { NAME: 'tmp' },
+        inputs: { VALUE: numShadow(0) },
+      },
+      {
+        kind: 'block',
+        type: 'poly_local_get',
+        keywords: '读取 局部 local 临时 变量 tmp',
+        fields: { NAME: 'tmp' },
+      },
+    ],
   },
   {
     id: 'math',
@@ -423,10 +437,10 @@ export function buildFlyoutToolbox(
     const vars = workspace.getVariableMap().getAllVariables();
     const items: Blockly.utils.toolbox.FlyoutItemInfoArray = [
       topSpacer,
-      { kind: 'label', text: '变量管理' },
+      { kind: 'label', text: '句柄共享变量 (Global)' },
       {
         kind: 'button',
-        text: '+ 新建变量',
+        text: '+ 新建共享变量',
         callbackkey: 'CREATE_VARIABLE',
       },
     ];
@@ -456,6 +470,22 @@ export function buildFlyoutToolbox(
         } as unknown as Blockly.utils.toolbox.BlockInfo);
       }
     }
+
+    items.push(
+      { kind: 'sep', gap: '16' },
+      { kind: 'label', text: '局部临时变量 (仅本回调/函数)' },
+      {
+        kind: 'block',
+        type: 'poly_local_set',
+        fields: { NAME: 'tmp' },
+        inputs: { VALUE: numShadow(0) },
+      } as unknown as Blockly.utils.toolbox.BlockInfo,
+      {
+        kind: 'block',
+        type: 'poly_local_get',
+        fields: { NAME: 'tmp' },
+      } as unknown as Blockly.utils.toolbox.BlockInfo,
+    );
 
     return { kind: 'flyoutToolbox', contents: items };
   }
@@ -497,6 +527,24 @@ export function buildFlyoutToolbox(
     }
 
     return { kind: 'flyoutToolbox', contents: items };
+  }
+
+  if (category.id === 'timers') {
+    return {
+      kind: 'flyoutToolbox',
+      contents: [
+        topSpacer,
+        { kind: 'label', text: '多路定时器 (rt · 本句柄独立)' },
+        {
+          kind: 'button',
+          text: '⚙ 配置本句柄定时器通道',
+          callbackkey: 'OPEN_HANDLE_TIMER_CONFIG',
+        },
+        ...category.blocks.map(
+          (b) => stripKeywords(b) as unknown as Blockly.utils.toolbox.BlockInfo,
+        ),
+      ],
+    };
   }
 
   return {

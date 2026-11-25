@@ -8,7 +8,7 @@ import { registerPolyBlocks } from '../blocks/definitions';
 import { VIRTUAL_BOARD_PACK } from '../extensions/builtinPacks';
 import { extensionRegistry } from '../extensions/registry';
 import {
-  getProjectTimerConfig,
+  getHandleTimerConfig,
   instantiateProjectFromTemplate,
 } from '../projects/store';
 import { setActiveTimerConfig } from '../blocks/timerConfigBridge';
@@ -24,7 +24,7 @@ describe('Real WASM Runtime Integration (Lua 5.4 & MicroPython + Virtual Board M
   it('executes temp_guard in real Wasmoon Lua 5.4 & MicroPython WASM with live mock temperature inputs', async () => {
     const proj = instantiateProjectFromTemplate('virtual_board_demo');
     const ws = new Blockly.Workspace();
-    Blockly.serialization.workspaces.load(proj.scripts[1].workspace, ws);
+    Blockly.serialization.workspaces.load(proj.handles[0].scripts[1].workspace, ws);
 
     const luaCode = backendRegistry.get('lua').generate(ws).code;
     const pyCode = backendRegistry.get('python').generate(ws).code;
@@ -111,10 +111,11 @@ sys.modules["board"] = _m
 
   it('executes event-driven 3-shot timer (on_start -> on_timer(0) x3 -> on_stop) in BOTH Wasmoon Lua 5.4 and MicroPython WASM', async () => {
     const proj = instantiateProjectFromTemplate('event_timer_demo');
-    setActiveTimerConfig(getProjectTimerConfig(proj));
+    const hdl = proj.handles[0];
+    setActiveTimerConfig(getHandleTimerConfig(hdl));
     const ws = new Blockly.Workspace();
     // scripts[1] is timer_oneshot (120ms x3 triggers -> auto exit -> on_stop)
-    Blockly.serialization.workspaces.load(proj.scripts[1].workspace, ws);
+    Blockly.serialization.workspaces.load(hdl.scripts[1].workspace, ws);
 
     const luaDebug = backendRegistry.get('lua').generate(ws).debugCode;
     const pyDebug = backendRegistry.get('python').generate(ws).debugCode;
