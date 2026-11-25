@@ -7,7 +7,6 @@ import {
   Copy,
   Cpu,
   Eye,
-  RotateCcw,
   Settings2,
   Timer,
 } from 'lucide-react';
@@ -18,12 +17,13 @@ import { formatTimerLabel } from '../core/blocks/timerConfigBridge';
 import {
   CAP_RT_LIFECYCLE,
   CAP_RT_TIMERS,
-  CAP_VIRTUAL_BOARD,
   hasCapability,
 } from '../core/capabilities/registry';
+import { getWidgetDefaultValue } from '../core/extensions/simState';
 import type {
-  VirtualBoardInputs,
-  VirtualBoardState,
+  PolyExtensionPack,
+  SimStateMap,
+  SimWidgetSpec,
 } from '../core/extensions/types';
 import { highlightCodeLine } from '../core/highlight';
 import { getHandleTimerConfig } from '../core/projects/store';
@@ -33,6 +33,7 @@ import type {
   RuntimeTelemetry,
   ScriptLanguageId,
 } from '../types/project';
+import { SimWidgetPanel } from './SimWidgetPanel';
 
 interface CodeInspectorProps {
   language: ScriptLanguageId;
@@ -48,14 +49,13 @@ interface CodeInspectorProps {
   errorLine: number | null;
   enabledCapabilities: string[];
   defaultTimerCount: number;
-  showVirtualBoard: boolean;
-  virtualBoard: VirtualBoardState;
-  mockInputs: VirtualBoardInputs;
+  simPacks: PolyExtensionPack[];
+  simState: SimStateMap;
   projectHandles: RuntimeHandle[];
   activeHandle: RuntimeHandle;
   handleTelemetries: Record<string, RuntimeTelemetry>;
-  onUpdateMockInputs: (patch: Partial<VirtualBoardInputs>) => void;
-  onResetVirtualBoard: () => void;
+  onUpdateSimValues: (patch: Record<string, unknown>) => void;
+  onResetSimPack: (pack: PolyExtensionPack) => void;
   onOpenHandleTimerSettings: (handleId: string) => void;
   onSelectBlockFromLine: (blockId: string) => void;
   onToggleBreakpoint: (blockId: string) => void;
@@ -84,14 +84,13 @@ export function CodeInspector({
   errorLine,
   enabledCapabilities,
   defaultTimerCount,
-  showVirtualBoard,
-  virtualBoard,
-  mockInputs,
+  simPacks,
+  simState,
   projectHandles,
   activeHandle,
   handleTelemetries,
-  onUpdateMockInputs,
-  onResetVirtualBoard,
+  onUpdateSimValues,
+  onResetSimPack,
   onOpenHandleTimerSettings,
   onSelectBlockFromLine,
   onToggleBreakpoint,
@@ -115,13 +114,41 @@ export function CodeInspector({
     [runnerStatus, handleTelemetries],
   );
 
-  const hasVirtualBoard =
-    showVirtualBoard || hasCapability(enabledCapabilities, CAP_VIRTUAL_BOARD);
+  const hasSimPacks = simPacks.length > 0;
   const hasRtLifecycle = hasCapability(enabledCapabilities, CAP_RT_LIFECYCLE);
   const hasRtTimers = hasCapability(enabledCapabilities, CAP_RT_TIMERS);
   const showRtMonitor = hasRtLifecycle || hasRtTimers || anyEventLoopRunning;
 
-  const showSimTab = hasVirtualBoard || hasRtLifecycle || hasRtTimers || anyEventLoopRunning;
+  const showSimTab = hasSimPacks || hasRtLifecycle || hasRtTimers || anyEventLoopRunning;
+
+  const allSimWidgets = useMemo<SimWidgetSpec[]>(
+    () => simPacks.flatMap((p) => p.simWidgets ?? []),
+    [simPacks],
+  );
+
+  const anySimLedActive = useMemo(
+    () =>
+      allSimWidgets.some(
+        (w) => w.kind === 'led' && Boolean(simState[w.key]),
+      ),
+    [allSimWidgets, simState],
+  );
+
+  const miniPreviewWidgets = useMemo(() => {
+    const picked: SimWidgetSpec[] = [];
+    for (const w of allSimWidgets) {
+      if (
+        w.kind === 'led' ||
+        w.kind === 'rgb' ||
+        w.kind === 'bar' ||
+        w.kind === 'slider'
+      ) {
+        picked.push(w);
+        if (picked.length >= 3) break;
+      }
+    }
+    return picked;
+  }, [allSimWidgets]);
 
   useEffect(() => {
     if (!showSimTab && activeTab === 'board') {
@@ -186,8 +213,6 @@ export function CodeInspector({
     rowEl?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [activeTab, execRange, activeRange]);
 
-  const rgbActive = virtualBoard.rgb !== '#1e293b' && virtualBoard.rgb !== '#334155';
-
   // Determine which handles to display in the Runtime Monitor card
   const monitoredHandles = useMemo(() => {
     if (multiHandleRunning) {
@@ -229,7 +254,7 @@ export function CodeInspector({
             >
               <Cpu size={12} style={{ flexShrink: 0 }} />
               <span>模拟</span>
-              {(virtualBoard.led || anyEventLoopRunning) && (
+              {(anySimLedActive || anyEventLoopRunning) && (
                 <span
                   style={{
                     width: 6,
@@ -413,33 +438,64 @@ export function CodeInspector({
               title="点击展开虚拟外设与定时器调度面板"
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                {hasVirtualBoard && (
-                  <>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                {miniPreviewWidgets.map((w) => {
+                  const val = Object.prototype.hasOwnProperty.call(simState, w.key)
+                    ? simState[w.key]
+                    : getWidgetDefaultValue(w);
+                  if (w.kind === 'led') {
+                    const on = Boolean(val);
+                    const litColor = w.color || '#22c55e';
+                    return (
                       <span
-                        className={`vboard-led ${virtualBoard.led ? 'on' : ''}`}
-                        style={{ width: 9, height: 9 }}
-                      />
-                      LED
-                    </span>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        key={w.key}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                      >
+                        <span
+                          className={`vboard-led ${on ? 'on' : ''}`}
+                          style={{
+                            width: 9,
+                            height: 9,
+                            ...(on
+                              ? {
+                                  background: litColor,
+                                  boxShadow: `0 0 8px ${litColor}`,
+                                }
+                              : {}),
+                          }}
+                        />
+                        {w.label.slice(0, 6)}
+                      </span>
+                    );
+                  }
+                  if (w.kind === 'rgb') {
+                    const hex = String(val || '#1e293b');
+                    const isLit = hex !== '#1e293b' && hex !== '#334155';
+                    return (
                       <span
-                        className="vboard-rgb"
-                        style={{
-                          width: 10,
-                          height: 10,
-                          background: virtualBoard.rgb,
-                          boxShadow: rgbActive ? `0 0 8px ${virtualBoard.rgb}` : 'none',
-                        }}
-                      />
-                      RGB
+                        key={w.key}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                      >
+                        <span
+                          className="vboard-rgb"
+                          style={{
+                            width: 10,
+                            height: 10,
+                            background: hex,
+                            boxShadow: isLit ? `0 0 8px ${hex}` : 'none',
+                          }}
+                        />
+                        {w.label.slice(0, 4)}
+                      </span>
+                    );
+                  }
+                  return (
+                    <span key={w.key} style={{ fontFamily: 'var(--font-mono)' }}>
+                      {String(val ?? 0)}
+                      {w.unit ?? ''}
                     </span>
-                    <span style={{ fontFamily: 'var(--font-mono)' }}>
-                      {mockInputs.temp}°C
-                    </span>
-                  </>
-                )}
-                {!hasVirtualBoard && (hasRtLifecycle || hasRtTimers) && !anyEventLoopRunning && (
+                  );
+                })}
+                {!hasSimPacks && (hasRtLifecycle || hasRtTimers) && !anyEventLoopRunning && (
                   <span style={{ color: 'var(--text-secondary)' }}>
                     {hasRtTimers ? 'RT 周期与多路定时器' : 'RT 周期调度'}
                   </span>
@@ -471,111 +527,13 @@ export function CodeInspector({
 
       {activeTab === 'board' && showSimTab && (
         <div className="vboard-wrap">
-          {hasVirtualBoard && (
-            <>
-              <div className="vboard-pcb">
-                <div className="vboard-top-row">
-                  <span className="vboard-title" title="POLYBLOCK VIRTUAL BOARD v1">
-                    POLYBLOCK VIRTUAL BOARD v1
-                  </span>
-                  <button
-                    type="button"
-                    className="vboard-reset-btn"
-                    onClick={onResetVirtualBoard}
-                    title="复位虚拟外设输出"
-                  >
-                    <RotateCcw size={11} style={{ flexShrink: 0 }} />
-                    <span>复位</span>
-                  </button>
-                </div>
-
-                <div className="vboard-indicators">
-                  <div className="vboard-lamp-item">
-                    <span
-                      className={`vboard-led ${virtualBoard.led ? 'on' : ''}`}
-                      aria-label={virtualBoard.led ? 'LED 已点亮' : 'LED 已熄灭'}
-                    />
-                    <span>板载 LED：{virtualBoard.led ? 'ON' : 'OFF'}</span>
-                  </div>
-
-                  <div className="vboard-lamp-item">
-                    <span
-                      className="vboard-rgb"
-                      style={{
-                        background: virtualBoard.rgb,
-                        boxShadow: rgbActive
-                          ? `0 0 14px ${virtualBoard.rgb}, 0 0 4px #ffffff`
-                          : 'none',
-                      }}
-                    />
-                    <span>RGB</span>
-                  </div>
-                </div>
-
-                <div className="vboard-oled" aria-label="虚拟 OLED 显示屏">
-                  {virtualBoard.oledLines.length === 0 ? (
-                    <span style={{ opacity: 0.45 }}>[OLED 已清空]</span>
-                  ) : (
-                    virtualBoard.oledLines.map((line, i) => (
-                      <div key={i}>{line}</div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              <div className="vboard-control-card">
-                <div className="vboard-slider-head">
-                  <span>模拟温度传感器 (board.read_temp)</span>
-                  <span className="vboard-temp-val">{mockInputs.temp}°C</span>
-                </div>
-                <input
-                  type="range"
-                  aria-label="模拟温度传感器滑块"
-                  min={15}
-                  max={95}
-                  step={1}
-                  value={mockInputs.temp}
-                  onChange={(e) =>
-                    onUpdateMockInputs({ temp: Number(e.target.value) })
-                  }
-                  style={{ width: '100%', accentColor: 'var(--accent)' }}
-                />
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: 10.5,
-                    color: 'var(--text-muted)',
-                  }}
-                >
-                  <span>15°C (低温)</span>
-                  <span>35°C (演示阈值)</span>
-                  <span>95°C (高温)</span>
-                </div>
-              </div>
-
-              <div className="vboard-control-card">
-                <div className="vboard-slider-head">
-                  <span>模拟按键 (board / on_button)</span>
-                </div>
-                <div className="vboard-btn-row">
-                  <button
-                    type="button"
-                    className={`vboard-key-btn ${mockInputs.btnA ? 'pressed' : ''}`}
-                    onClick={() => onUpdateMockInputs({ btnA: !mockInputs.btnA })}
-                  >
-                    按键 A · {mockInputs.btnA ? '按下中' : '释放'}
-                  </button>
-                  <button
-                    type="button"
-                    className={`vboard-key-btn ${mockInputs.btnB ? 'pressed' : ''}`}
-                    onClick={() => onUpdateMockInputs({ btnB: !mockInputs.btnB })}
-                  >
-                    按键 B · {mockInputs.btnB ? '按下中' : '释放'}
-                  </button>
-                </div>
-              </div>
-            </>
+          {hasSimPacks && (
+            <SimWidgetPanel
+              packs={simPacks}
+              simState={simState}
+              onUpdateSimValues={onUpdateSimValues}
+              onResetPack={onResetSimPack}
+            />
           )}
 
           {/* Per-Handle Runtime & Timer Monitor Card(s) — ONLY when rt-lifecycle or rt-timers is enabled */}

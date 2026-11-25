@@ -248,3 +248,11 @@ flowchart TD
 - **项目内嵌外设包（`ProjectModel.localExtensions`）**：在「项目配置 → 能力与外设」导入，仅保存在当前项目 JSON 内，**不出现在左侧全局「扩展」页**；同 ID 时**无条件优先覆盖全局包**（切换项目自动同步重绑 Blockly 积木与 Lua/Python 代码生成器）；支持一键导出 `.polyext.json` 或复制保存到全局库。
 - **全局扩展库（`ExtensionRegistry` · `localStorage`）**：在左侧「扩展」页导入与管理（内置包 + 跨项目复用 SDK），所有项目可按需勾选启用，自定义包支持导出 `.polyext.json` 分享给团队。
 - **确定性便携快照（`bundledExtensions`）**：导出 `.polyblock.json` 时，自动把项目已启用的非内置全局包快照附带至 `bundledExtensions`。接收方导入时，**不依赖脆弱的版本号比对，直接将 `bundledExtensions` 无条件吸收为该项目的内嵌包并覆盖同名全局包**，既确保跨环境行为 100% 一致，又绝不污染接收方全局库；接收方随时可一键移除内嵌覆盖以切回自己的全局库版本。
+
+### 10.2 通用声明式模拟控件（`simWidgets`）与跨句柄共享外设态
+外设/C 接口扩展包可在同一份 `.polyext.json` 内按需声明三层内容：`blocks`（积木与干净导出模板）+ 可选 `sandboxMock`（浏览器模拟桩）+ 可选 `simWidgets`（可视化交互面板），导出真机脚本时后两层自动剥离：
+- **7 种内置通用控件（`SimWidgetPanel`）**：
+  - **输出显示类**：`led`（状态灯）、`rgb`（彩灯）、`bar`（数值进度条）、`screen`（多行文本屏 / 状态终端，支持 `<key>:append` / `<key>:clear`）；
+  - **输入交互类**：`slider`（模拟量滑块）、`toggle`（拨动开关）、`button`（按键）。
+- **零硬编码狗粮验证**：内置示例 `virtual-board` 与示例模板 `SAMPLE_CUSTOM_EXTENSION_TEMPLATE` 均全面迁移至声明式 `simWidgets`，`CodeInspector` 中不再存在任何硬编码虚拟板 JSX。
+- **跨句柄共享模拟外设态**：统一在 Lua / Python Worker 暴露 `__poly_sim_set(key, val)` / `__poly_sim_get(key)`（Python：`_poly.sim_set` / `_poly.sim_get`，兼容旧 `__poly_device_emit` / `__poly_mock_input`）。任一句柄写入状态时，先即时镜像到本地 Worker 保证同句柄同步读写零延迟，再经主线程广播至其余所有并发句柄 Worker 与 UI 控件，完整模拟多 `lua_State*` 共享同一套底层硬件/C 状态。

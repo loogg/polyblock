@@ -201,13 +201,37 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
         session.setFinalVars(varsJson);
       });
 
-      engine.global.set('__poly_device_emit', (kind: string, value: unknown) => {
-        self.postMessage({ type: 'DEVICE_EVENT', runId, kind: String(kind), value });
-      });
+      const emitDeviceState = (kind: string, value: unknown) => {
+        const k = String(kind);
+        // Mirror scalar writes immediately into local worker state so synchronous
+        // read-after-write in the same handle sees the updated value with zero latency.
+        if (k === 'oled_clear') {
+          currentMockInputs.oled = [];
+        } else if (k === 'oled_show') {
+          const prev = Array.isArray(currentMockInputs.oled)
+            ? (currentMockInputs.oled as string[])
+            : [];
+          currentMockInputs.oled = [...prev, String(value)].slice(-8);
+        } else if (k.endsWith(':clear')) {
+          currentMockInputs[k.slice(0, -6)] = [];
+        } else if (k.endsWith(':append')) {
+          const base = k.slice(0, -7);
+          const prev = Array.isArray(currentMockInputs[base])
+            ? (currentMockInputs[base] as string[])
+            : [];
+          currentMockInputs[base] = [...prev, String(value)].slice(-8);
+        } else {
+          currentMockInputs[k] = value;
+        }
+        self.postMessage({ type: 'DEVICE_EVENT', runId, kind: k, value });
+      };
 
-      engine.global.set('__poly_mock_input', (key: string) => {
-        return currentMockInputs[String(key)];
-      });
+      const getSimState = (key: string) => currentMockInputs[String(key)];
+
+      engine.global.set('__poly_device_emit', emitDeviceState);
+      engine.global.set('__poly_sim_set', emitDeviceState);
+      engine.global.set('__poly_mock_input', getSimState);
+      engine.global.set('__poly_sim_get', getSimState);
 
       engine.global.set('__poly_now_ms', () => {
         return performance.now();

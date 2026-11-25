@@ -11,8 +11,16 @@ import {
   targetProfileRegistry,
   validateTargetProfile,
 } from '../capabilities/registry';
-import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../extensions/builtinPacks';
+import {
+  SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+  VIRTUAL_BOARD_PACK,
+} from '../extensions/builtinPacks';
 import { extensionRegistry, validateExtensionPack } from '../extensions/registry';
+import {
+  applySimDeviceEvent,
+  buildDefaultSimState,
+  buildPackResetPatch,
+} from '../extensions/simState';
 import {
   buildExportableProjectJson,
   instantiateProjectFromTemplate,
@@ -330,5 +338,50 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
 
     extensionRegistry.removeCustomPack(globalV2.id);
     extensionRegistry.setActiveProjectLocalPacks([]);
+  });
+
+  it('validates declarative simWidgets and updates/resets shared simulator state across append, clear, and scalar events', () => {
+    expect(() =>
+      validateExtensionPack({
+        ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+        simWidgets: [{ kind: 'invalid_widget', key: 'x', label: 'bad' }],
+      }),
+    ).toThrow(/无效的模拟控件类型/);
+
+    const validatedSample = validateExtensionPack(SAMPLE_CUSTOM_EXTENSION_TEMPLATE);
+    expect(validatedSample.simWidgets).toHaveLength(5);
+
+    const packs = [VIRTUAL_BOARD_PACK, validatedSample];
+    let state = buildDefaultSimState(packs);
+    expect(state.led).toBe(false);
+    expect(state.temp).toBe(28);
+    expect(state.robot_battery).toBe(88);
+    expect(state.robot_estop).toBe(false);
+
+    // Scalar set + broadcast patch
+    const r1 = applySimDeviceEvent(state, 'robot_speed', 75, packs);
+    state = r1.next;
+    expect(state.robot_speed).toBe(75);
+    expect(r1.broadcastPatch).toEqual({ robot_speed: 75 });
+
+    // Multi-line screen append respects maxLines=3
+    state = applySimDeviceEvent(state, 'robot_log:clear', true, packs).next;
+    expect(state.robot_log).toEqual([]);
+    state = applySimDeviceEvent(state, 'robot_log:append', 'L1', packs).next;
+    state = applySimDeviceEvent(state, 'robot_log:append', 'L2', packs).next;
+    state = applySimDeviceEvent(state, 'robot_log:append', 'L3', packs).next;
+    state = applySimDeviceEvent(state, 'robot_log:append', 'L4', packs).next;
+    expect(state.robot_log).toEqual(['L2', 'L3', 'L4']);
+
+    // Legacy oled_show / oled_clear aliases still route cleanly to `oled`
+    state = applySimDeviceEvent(state, 'oled_clear', true, packs).next;
+    state = applySimDeviceEvent(state, 'oled_show', 'Hello OLED', packs).next;
+    expect(state.oled).toEqual(['Hello OLED']);
+
+    // Per-pack reset restores only that pack's widgets
+    const resetRobot = buildPackResetPatch(validatedSample);
+    expect(resetRobot.robot_speed).toBe(0);
+    expect(resetRobot.robot_battery).toBe(88);
+    expect(resetRobot).not.toHaveProperty('temp');
   });
 });

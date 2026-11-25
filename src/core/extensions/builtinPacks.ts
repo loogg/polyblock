@@ -151,45 +151,95 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
     luaSource: `
 local M = {}
 function M.led(on)
-  __poly_device_emit("led", on and true or false)
+  __poly_sim_set("led", on and true or false)
 end
 function M.rgb(hex)
-  __poly_device_emit("rgb", tostring(hex))
+  __poly_sim_set("rgb", tostring(hex))
 end
 function M.oled_show(text)
-  __poly_device_emit("oled_show", tostring(text))
+  __poly_sim_set("oled:append", tostring(text))
 end
 function M.oled_clear()
-  __poly_device_emit("oled_clear", true)
+  __poly_sim_set("oled:clear", true)
 end
 function M.read_temp()
-  local v = tonumber(__poly_mock_input("temp"))
+  local v = tonumber(__poly_sim_get("temp"))
   return v or 28
 end
 function M.is_pressed(btn)
   local key = (tostring(btn) == "B") and "btnB" or "btnA"
-  return __poly_mock_input(key) == true
+  return __poly_sim_get(key) == true
 end
 return M
 `,
     pythonSource: `
 import _poly
 def led(on):
-    _poly.emit_device("led", bool(on))
+    _poly.sim_set("led", bool(on))
 def rgb(hex_color):
-    _poly.emit_device("rgb", str(hex_color))
+    _poly.sim_set("rgb", str(hex_color))
 def oled_show(text):
-    _poly.emit_device("oled_show", str(text))
+    _poly.sim_set("oled:append", str(text))
 def oled_clear():
-    _poly.emit_device("oled_clear", True)
+    _poly.sim_set("oled:clear", True)
 def read_temp():
-    v = _poly.get_input("temp")
+    v = _poly.sim_get("temp")
     return float(v) if v is not None else 28.0
 def is_pressed(btn):
     key = "btnB" if str(btn) == "B" else "btnA"
-    return bool(_poly.get_input(key))
+    return bool(_poly.sim_get(key))
 `,
   },
+  simWidgets: [
+    {
+      kind: 'led',
+      key: 'led',
+      label: '板载 LED',
+      color: '#22c55e',
+      default: false,
+    },
+    {
+      kind: 'rgb',
+      key: 'rgb',
+      label: 'RGB',
+      default: '#1e293b',
+    },
+    {
+      kind: 'screen',
+      key: 'oled',
+      label: '虚拟 OLED 显示屏',
+      maxLines: 4,
+      default: ['PolyBlock OLED', '等待脚本输出...'],
+    },
+    {
+      kind: 'slider',
+      key: 'temp',
+      label: '模拟温度传感器',
+      hint: 'board.read_temp',
+      min: 15,
+      max: 95,
+      step: 1,
+      unit: '°C',
+      default: 28,
+      marks: ['15°C (低温)', '35°C (演示阈值)', '95°C (高温)'],
+    },
+    {
+      kind: 'button',
+      key: 'btnA',
+      label: '按键 A',
+      default: false,
+      activeLabel: '按下中',
+      idleLabel: '释放',
+    },
+    {
+      kind: 'button',
+      key: 'btnB',
+      label: '按键 B',
+      default: false,
+      activeLabel: '按下中',
+      idleLabel: '释放',
+    },
+  ],
 };
 
 export const DICT_JSON_PACK: PolyExtensionPack = {
@@ -427,18 +477,88 @@ export const SAMPLE_CUSTOM_EXTENSION_TEMPLATE: PolyExtensionPack = {
     luaSource: `
 local M = {}
 function M.move(dir, speed)
-  print("[INFO] [Mock Robot] move(" .. tostring(dir) .. ", speed=" .. tostring(speed) .. ")")
+  if __poly_sim_get("robot_estop") == true then
+    __poly_sim_set("robot_moving", false)
+    __poly_sim_set("robot_speed", 0)
+    __poly_sim_set("robot_log:append", "[ESTOP] 急停已触发，忽略移动指令")
+    print("[WARN] [Mock Robot] E-Stop active, move ignored")
+    return
+  end
+  local spd = tonumber(speed) or 0
+  __poly_sim_set("robot_moving", spd > 0)
+  __poly_sim_set("robot_speed", spd)
+  __poly_sim_set("robot_log:append", "move(" .. tostring(dir) .. ", " .. tostring(spd) .. "%)")
+  print("[INFO] [Mock Robot] move(" .. tostring(dir) .. ", speed=" .. tostring(spd) .. ")")
 end
 function M.battery()
-  return 88
+  local v = tonumber(__poly_sim_get("robot_battery"))
+  return v or 88
 end
 return M
 `,
     pythonSource: `
+import _poly
 def move(dir_name, speed):
+    if _poly.sim_get("robot_estop") is True:
+        _poly.sim_set("robot_moving", False)
+        _poly.sim_set("robot_speed", 0)
+        _poly.sim_set("robot_log:append", "[ESTOP] 急停已触发，忽略移动指令")
+        print("[WARN] [Mock Robot] E-Stop active, move ignored")
+        return
+    spd = float(speed)
+    _poly.sim_set("robot_moving", spd > 0)
+    _poly.sim_set("robot_speed", spd)
+    _poly.sim_set("robot_log:append", f"move({dir_name}, {int(spd)}%)")
     print("[INFO] [Mock Robot] move(" + str(dir_name) + ", speed=" + str(speed) + ")")
 def battery():
-    return 88
+    v = _poly.sim_get("robot_battery")
+    return int(v) if v is not None else 88
 `,
   },
+  simWidgets: [
+    {
+      kind: 'led',
+      key: 'robot_moving',
+      label: '运动状态',
+      color: '#10b981',
+      default: false,
+    },
+    {
+      kind: 'bar',
+      key: 'robot_speed',
+      label: '当前车速',
+      hint: 'robot.move',
+      min: 0,
+      max: 100,
+      unit: '%',
+      color: '#ec4899',
+      default: 0,
+    },
+    {
+      kind: 'screen',
+      key: 'robot_log',
+      label: '机器人指令终端',
+      maxLines: 3,
+      default: ['[Robot Ready] 等待指令...'],
+    },
+    {
+      kind: 'slider',
+      key: 'robot_battery',
+      label: '模拟电池电量',
+      hint: 'robot.battery',
+      min: 0,
+      max: 100,
+      step: 1,
+      unit: '%',
+      default: 88,
+      marks: ['0% 亏电', '20% 预警', '100% 满电'],
+    },
+    {
+      kind: 'toggle',
+      key: 'robot_estop',
+      label: '急停开关 (E-Stop)',
+      color: '#ef4444',
+      default: false,
+    },
+  ],
 };

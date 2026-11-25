@@ -47,14 +47,56 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
       activeSession?.setFinalVars(varsJson);
     },
     emit_device: (kind: string, value: unknown) => {
+      const k = String(kind);
+      if (k === 'oled_clear') {
+        currentMockInputs.oled = [];
+      } else if (k === 'oled_show') {
+        const prev = Array.isArray(currentMockInputs.oled)
+          ? (currentMockInputs.oled as string[])
+          : [];
+        currentMockInputs.oled = [...prev, String(value)].slice(-8);
+      } else if (k.endsWith(':clear')) {
+        currentMockInputs[k.slice(0, -6)] = [];
+      } else if (k.endsWith(':append')) {
+        const base = k.slice(0, -7);
+        const prev = Array.isArray(currentMockInputs[base])
+          ? (currentMockInputs[base] as string[])
+          : [];
+        currentMockInputs[base] = [...prev, String(value)].slice(-8);
+      } else {
+        currentMockInputs[k] = value;
+      }
       self.postMessage({
         type: 'DEVICE_EVENT',
         runId: activeRunId,
-        kind: String(kind),
+        kind: k,
+        value,
+      });
+    },
+    sim_set: (kind: string, value: unknown) => {
+      const k = String(kind);
+      if (k.endsWith(':clear')) {
+        currentMockInputs[k.slice(0, -6)] = [];
+      } else if (k.endsWith(':append')) {
+        const base = k.slice(0, -7);
+        const prev = Array.isArray(currentMockInputs[base])
+          ? (currentMockInputs[base] as string[])
+          : [];
+        currentMockInputs[base] = [...prev, String(value)].slice(-8);
+      } else {
+        currentMockInputs[k] = value;
+      }
+      self.postMessage({
+        type: 'DEVICE_EVENT',
+        runId: activeRunId,
+        kind: k,
         value,
       });
     },
     get_input: (key: string) => {
+      return currentMockInputs[String(key)];
+    },
+    sim_get: (key: string) => {
       return currentMockInputs[String(key)];
     },
     now_ms: () => {

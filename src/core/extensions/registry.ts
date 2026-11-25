@@ -7,7 +7,72 @@ import type {
   ExtensionBlockDef,
   ExtensionSandboxMock,
   PolyExtensionPack,
+  SimWidgetKind,
+  SimWidgetSpec,
 } from './types';
+
+const VALID_SIM_WIDGET_KINDS = new Set<SimWidgetKind>([
+  'led',
+  'rgb',
+  'bar',
+  'screen',
+  'slider',
+  'toggle',
+  'button',
+]);
+
+function validateSimWidgets(raw: unknown): SimWidgetSpec[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new Error('simWidgets 必须是数组');
+  }
+  const out: SimWidgetSpec[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') {
+      throw new Error('simWidgets 中的每一项必须是对象');
+    }
+    const w = item as Record<string, unknown>;
+    if (
+      typeof w.kind !== 'string' ||
+      !VALID_SIM_WIDGET_KINDS.has(w.kind as SimWidgetKind)
+    ) {
+      throw new Error(
+        `无效的模拟控件类型 "${String(w.kind)}"，支持：led / rgb / bar / screen / slider / toggle / button`,
+      );
+    }
+    if (typeof w.key !== 'string' || !w.key.trim()) {
+      throw new Error(`模拟控件 (${w.kind}) 缺少非空 key 字段`);
+    }
+    if (typeof w.label !== 'string' || !w.label.trim()) {
+      throw new Error(`模拟控件 (${w.key}) 缺少非空 label 字段`);
+    }
+    out.push({
+      kind: w.kind as SimWidgetKind,
+      key: w.key.trim(),
+      label: w.label.trim(),
+      ...(w.default !== undefined
+        ? { default: w.default as SimWidgetSpec['default'] }
+        : {}),
+      ...(typeof w.color === 'string' && w.color.trim() ? { color: w.color.trim() } : {}),
+      ...(typeof w.min === 'number' && Number.isFinite(w.min) ? { min: w.min } : {}),
+      ...(typeof w.max === 'number' && Number.isFinite(w.max) ? { max: w.max } : {}),
+      ...(typeof w.step === 'number' && Number.isFinite(w.step) && w.step > 0
+        ? { step: w.step }
+        : {}),
+      ...(typeof w.unit === 'string' ? { unit: w.unit } : {}),
+      ...(typeof w.maxLines === 'number' && Number.isFinite(w.maxLines) && w.maxLines >= 1
+        ? { maxLines: Math.min(12, Math.trunc(w.maxLines)) }
+        : {}),
+      ...(typeof w.hint === 'string' ? { hint: w.hint } : {}),
+      ...(Array.isArray(w.marks)
+        ? { marks: w.marks.filter((m): m is string => typeof m === 'string') }
+        : {}),
+      ...(typeof w.activeLabel === 'string' ? { activeLabel: w.activeLabel } : {}),
+      ...(typeof w.idleLabel === 'string' ? { idleLabel: w.idleLabel } : {}),
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 export const STORAGE_CUSTOM_EXTENSIONS_KEY = 'polyblock.extensions.custom.v1';
 
@@ -164,6 +229,8 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
     }
   }
 
+  const simWidgets = validateSimWidgets(obj.simWidgets);
+
   return {
     format: 'polyblock-extension',
     version: 1,
@@ -178,6 +245,7 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
     hasVirtualBoardUi: Boolean(obj.hasVirtualBoardUi),
     blocks: obj.blocks as ExtensionBlockDef[],
     sandboxMock: obj.sandboxMock as ExtensionSandboxMock | undefined,
+    ...(simWidgets ? { simWidgets } : {}),
   };
 }
 

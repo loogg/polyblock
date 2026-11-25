@@ -36,12 +36,14 @@ describe('Real WASM Runtime Integration (Lua 5.4 & MicroPython + Virtual Board M
     const factory = new LuaFactory();
     const lua = await factory.createEngine({ openStandardLibs: true });
     try {
-      lua.global.set('__poly_device_emit', (kind: string, value: unknown) => {
+      const emitLua = (kind: string, value: unknown) => {
         luaEvents.push({ kind: String(kind), value });
-      });
-      lua.global.set('__poly_mock_input', (key: string) =>
-        key === 'temp' ? 48 : false,
-      );
+      };
+      const getLua = (key: string) => (key === 'temp' ? 48 : false);
+      lua.global.set('__poly_device_emit', emitLua);
+      lua.global.set('__poly_sim_set', emitLua);
+      lua.global.set('__poly_mock_input', getLua);
+      lua.global.set('__poly_sim_get', getLua);
       lua.global.set('print', (...args: unknown[]) => {
         luaLogs.push(args.map(String).join(' '));
       });
@@ -61,7 +63,7 @@ describe('Real WASM Runtime Integration (Lua 5.4 & MicroPython + Virtual Board M
     expect(luaEvents).toContainEqual({ kind: 'led', value: true });
     expect(luaEvents).toContainEqual({ kind: 'rgb', value: '#ef4444' });
     expect(luaEvents).toContainEqual({
-      kind: 'oled_show',
+      kind: 'oled:append',
       value: 'ALARM: TEMP > 35C!',
     });
     expect(luaLogs.some((l) => l.includes('高温告警'))).toBe(true);
@@ -73,10 +75,14 @@ describe('Real WASM Runtime Integration (Lua 5.4 & MicroPython + Virtual Board M
     const mp = await loadMicroPython({
       stdout: (line) => pyLogs.push(line),
     });
+    const emitPy = (kind: string, value: unknown) =>
+      pyEvents.push({ kind: String(kind), value });
+    const getPy = (key: string) => (key === 'temp' ? mockTemp : false);
     mp.registerJsModule('_poly', {
-      emit_device: (kind: string, value: unknown) =>
-        pyEvents.push({ kind: String(kind), value }),
-      get_input: (key: string) => (key === 'temp' ? mockTemp : false),
+      emit_device: emitPy,
+      sim_set: emitPy,
+      get_input: getPy,
+      sim_get: getPy,
       now_ms: () => performance.now(),
     });
     mp.runPython(`
@@ -94,7 +100,7 @@ sys.modules["board"] = _m
     expect(pyEvents).toContainEqual({ kind: 'led', value: false });
     expect(pyEvents).toContainEqual({ kind: 'rgb', value: '#10b981' });
     expect(pyEvents).toContainEqual({
-      kind: 'oled_show',
+      kind: 'oled:append',
       value: 'TEMP NORMAL (OK)',
     });
 
@@ -104,7 +110,7 @@ sys.modules["board"] = _m
     expect(pyEvents).toContainEqual({ kind: 'led', value: true });
     expect(pyEvents).toContainEqual({ kind: 'rgb', value: '#ef4444' });
     expect(pyEvents).toContainEqual({
-      kind: 'oled_show',
+      kind: 'oled:append',
       value: 'ALARM: TEMP > 35C!',
     });
   });

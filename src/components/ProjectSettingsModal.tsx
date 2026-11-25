@@ -629,7 +629,11 @@ export function ProjectSettingsModal({
                                   )}
                                 </div>
                                 <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                  v{pack.packVersion} · {pack.blocks.length} 个积木 · ID: {pack.id}
+                                  v{pack.packVersion} · {pack.blocks.length} 个积木
+                                  {(pack.simWidgets?.length ?? 0) > 0
+                                    ? ` · ${pack.simWidgets!.length} 模拟控件`
+                                    : ''}{' '}
+                                  · ID: {pack.id}
                                 </div>
                               </div>
                             </div>

@@ -34,10 +34,14 @@ import {
   targetProfileRegistry,
 } from './core/capabilities/registry';
 import { extensionRegistry } from './core/extensions/registry';
+import {
+  applySimDeviceEvent,
+  buildDefaultSimState,
+  buildPackResetPatch,
+} from './core/extensions/simState';
 import type {
   PolyExtensionPack,
-  VirtualBoardInputs,
-  VirtualBoardState,
+  SimStateMap,
 } from './core/extensions/types';
 import {
   addHandleToProject,
@@ -93,12 +97,6 @@ const SPEED_DELAY_MS: Record<ExecutionSpeedId, number> = {
   fast: 0,
   normal: 180,
   slow: 450,
-};
-
-const DEFAULT_VIRTUAL_BOARD: VirtualBoardState = {
-  led: false,
-  rgb: '#1e293b',
-  oledLines: ['PolyBlock OLED', '等待脚本输出...'],
 };
 
 const VALID_PAGES: PageId[] = [
@@ -191,14 +189,9 @@ export function App() {
   } | null>(null);
   const [aliasModalTimerId, setAliasModalTimerId] = useState<number | null>(null);
 
-  const [virtualBoard, setVirtualBoard] = useState<VirtualBoardState>(
-    DEFAULT_VIRTUAL_BOARD,
+  const [simState, setSimState] = useState<SimStateMap>(() =>
+    buildDefaultSimState(extensionRegistry.listAll()),
   );
-  const [mockInputs, setMockInputs] = useState<VirtualBoardInputs>({
-    temp: 28,
-    btnA: false,
-    btnB: false,
-  });
 
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus>('ready');
   const [multiHandleRunning, setMultiHandleRunning] = useState<boolean>(false);
@@ -254,14 +247,14 @@ export function App() {
     [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
   );
 
-  const showVirtualBoard = useMemo(
+  const activeSimPacks = useMemo(
     () =>
       extensionRegistry
         .getEnabledPacks(
           activeProject.enabledCapabilities,
           activeProject.localExtensions,
         )
-        .some((p) => p.hasVirtualBoardUi),
+        .filter((p) => (p.simWidgets?.length ?? 0) > 0),
     [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
   );
 
@@ -287,14 +280,32 @@ export function App() {
   const activeScriptIdRef = useRef<string>(activeScript.id);
   const languageRef = useRef<ScriptLanguageId>(language);
   const breakpointsRef = useRef<string[]>(breakpoints);
-  const mockInputsRef = useRef<VirtualBoardInputs>(mockInputs);
+  const simStateRef = useRef<SimStateMap>(simState);
+  const activeSimPacksRef = useRef<PolyExtensionPack[]>(activeSimPacks);
 
   activeProjectIdRef.current = activeProject.id;
   activeHandleIdRef.current = activeHandle.id;
   activeScriptIdRef.current = activeScript.id;
   languageRef.current = language;
   breakpointsRef.current = breakpoints;
-  mockInputsRef.current = mockInputs;
+  simStateRef.current = simState;
+  activeSimPacksRef.current = activeSimPacks;
+
+  // Ensure any newly enabled/imported extension pack's simWidgets seed their default keys
+  useEffect(() => {
+    const defaults = buildDefaultSimState(activeSimPacks);
+    setSimState((prev) => {
+      let changed = false;
+      const merged: SimStateMap = { ...prev };
+      for (const [k, v] of Object.entries(defaults)) {
+        if (!Object.prototype.hasOwnProperty.call(prev, k)) {
+          merged[k] = v;
+          changed = true;
+        }
+      }
+      return changed ? merged : prev;
+    });
+  }, [activeSimPacks]);
 
   const notify = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -725,29 +736,38 @@ export function App() {
     [notify],
   );
 
-  const handleUpdateMockInputs = useCallback(
-    (patch: Partial<VirtualBoardInputs>) => {
-      setMockInputs((prev) => {
-        const next = { ...prev, ...patch };
-        const raw = next as unknown as Record<string, unknown>;
-        runnerManager.updateActiveMockInputs(raw);
-        multiHandleOrchestrator.updateMockInputs(raw);
-        return next;
-      });
+  const handleUpdateSimValues = useCallback((patch: Record<string, unknown>) => {
+    setSimState((prev) => {
+      const next = { ...prev, ...patch };
+      simStateRef.current = next;
+      return next;
+    });
+    runnerManager.updateActiveMockInputs(patch);
+    multiHandleOrchestrator.updateMockInputs(patch);
+  }, []);
+
+  const handleResetSimPack = useCallback(
+    (pack: PolyExtensionPack) => {
+      const patch = buildPackResetPatch(pack);
+      handleUpdateSimValues(patch);
+      notify(`已复位「${pack.name}」模拟状态`);
     },
-    [],
+    [handleUpdateSimValues, notify],
   );
 
   const handleDeviceEvent = useCallback((kind: string, value: unknown) => {
-    setVirtualBoard((prev) => {
-      if (kind === 'led') return { ...prev, led: Boolean(value) };
-      if (kind === 'rgb') return { ...prev, rgb: String(value || '#1e293b') };
-      if (kind === 'oled_clear') return { ...prev, oledLines: [] };
-      if (kind === 'oled_show') {
-        return { ...prev, oledLines: [...prev.oledLines, String(value)].slice(-4) };
-      }
-      return prev;
-    });
+    const { next, broadcastPatch } = applySimDeviceEvent(
+      simStateRef.current,
+      kind,
+      value,
+      activeSimPacksRef.current,
+    );
+    simStateRef.current = next;
+    setSimState(next);
+    // Broadcast state updates across all concurrent handle Workers so every handle
+    // shares the same simulated physical hardware / C-layer device state.
+    runnerManager.updateActiveMockInputs(broadcastPatch);
+    multiHandleOrchestrator.updateMockInputs(broadcastPatch);
   }, []);
 
   /* ========================================================================
@@ -1210,7 +1230,7 @@ export function App() {
     };
     setStore(freshStore);
     mountScriptIntoCanvas(freshStore);
-    setVirtualBoard(DEFAULT_VIRTUAL_BOARD);
+    setSimState(buildDefaultSimState(extensionRegistry.listAll()));
     setIsDirty(false);
     navigateTo('blocks');
     notify('已恢复默认示例项目');
@@ -1330,7 +1350,7 @@ export function App() {
           startInStepMode,
           timerCount: activeTimerConfig.count,
           mockModules: [...extensionMocks, ...siblingMocks],
-          mockInputs: mockInputsRef.current as unknown as Record<string, unknown>,
+          mockInputs: simStateRef.current,
         },
         {
           onClear: () => setLogs([]),
@@ -1444,7 +1464,7 @@ export function App() {
         timeoutMs: settings.timeoutMs,
         stepDelayMs: SPEED_DELAY_MS[settings.executionSpeed],
         extensionMocks,
-        mockInputs: mockInputsRef.current as unknown as Record<string, unknown>,
+        mockInputs: simStateRef.current,
       },
       {
         onHandleLog: (hdl, level, message, line) => {
@@ -1686,14 +1706,13 @@ export function App() {
                   errorLine={errorLine}
                   enabledCapabilities={activeProject.enabledCapabilities}
                   defaultTimerCount={activeProject.defaultTimerCount}
-                  showVirtualBoard={showVirtualBoard}
-                  virtualBoard={virtualBoard}
-                  mockInputs={mockInputs}
+                  simPacks={activeSimPacks}
+                  simState={simState}
                   projectHandles={activeProject.handles}
                   activeHandle={activeHandle}
                   handleTelemetries={handleTelemetries}
-                  onUpdateMockInputs={handleUpdateMockInputs}
-                  onResetVirtualBoard={() => setVirtualBoard(DEFAULT_VIRTUAL_BOARD)}
+                  onUpdateSimValues={handleUpdateSimValues}
+                  onResetSimPack={handleResetSimPack}
                   onOpenHandleTimerSettings={(hdlId) =>
                     setSettingsModal({
                       projectId: activeProject.id,
