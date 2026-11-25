@@ -49,7 +49,8 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(luaRes.code).toContain('rt.start_timer(0, 500, 0) -- T0: 心跳灯');
     expect(luaRes.code).toContain('rt.start_timer(1, 400, 3) -- T1: 告警倒计时');
     expect(luaRes.code).not.toContain('rt.on_timer(');
-    expect(luaRes.debugCode).toContain('__poly_should_loop');
+    expect(luaRes.debugCode).toContain('__poly_init_scheduler');
+    expect(luaRes.debugCode).toContain('coroutine.create(on_start)');
     expect(luaRes.debugCode).toContain('__poly_next_event():await()');
     expect(luaRes.sourceMap['ev_start_t0']).toBeDefined();
     expect(luaRes.sourceMap['ev_print_t1']).toBeDefined();
@@ -167,5 +168,123 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(await schedB.nextEvent()).toBe('button:A:1');
     schedB.requestGracefulStop();
     expect(await schedB.nextEvent()).toBe('stop');
+  });
+
+  it('flags poly_wait_ms inside event callbacks as Option A error, while allowing it in on_start', () => {
+    const ws = loadWs({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'ok_start',
+            x: 20,
+            y: 20,
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_wait_ms',
+                  id: 'wait_in_start',
+                  inputs: {
+                    MS: { shadow: { type: 'math_number', id: 'm1', fields: { NUM: 100 } } },
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: 'poly_on_run',
+            id: 'bad_run',
+            x: 320,
+            y: 20,
+            fields: { PERIOD_MS: 100 },
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_wait_ms',
+                  id: 'wait_in_run',
+                  inputs: {
+                    MS: { shadow: { type: 'math_number', id: 'm2', fields: { NUM: 50 } } },
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: 'poly_on_timer',
+            id: 'bad_timer',
+            x: 620,
+            y: 20,
+            fields: { TIMER_ID: '0' },
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_wait_ms',
+                  id: 'wait_in_timer',
+                  inputs: {
+                    MS: { shadow: { type: 'math_number', id: 'm3', fields: { NUM: 50 } } },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    const luaRes = backendRegistry.get('lua').generate(ws);
+    expect(luaRes.code).toContain('sleep_ms(100)');
+    expect(
+      luaRes.diagnostics.some(
+        (d) =>
+          d.severity === 'error' &&
+          d.id === 'wait-in-callback-on_run-wait_in_run' &&
+          d.blockId === 'wait_in_run',
+      ),
+    ).toBe(true);
+    expect(
+      luaRes.diagnostics.some(
+        (d) =>
+          d.severity === 'error' &&
+          d.id === 'wait-in-callback-on_timer-wait_in_timer' &&
+          d.blockId === 'wait_in_timer',
+      ),
+    ).toBe(true);
+    expect(luaRes.diagnostics.some((d) => d.blockId === 'wait_in_start')).toBe(false);
+    ws.dispose();
+  });
+
+  it('freezes logical clock during pauseClock and dispatches overdue timers & on_run fairly without starvation', async () => {
+    const sched = new WorkerRuntimeScheduler({
+      runId: 'fair-test',
+      timerCount: 4,
+      timeSliceMs: 20,
+      post: () => {},
+    });
+
+    const t0 = sched.now();
+    sched.pauseClock();
+    await new Promise((r) => setTimeout(r, 45));
+    sched.resumeClock(0);
+    const t1 = sched.now();
+    // Entire 45ms pause must be frozen out of logical clock
+    expect(t1 - t0).toBeLessThan(12);
+
+    // Start T0 (20ms), T1 (20ms), and on_run (20ms) then wait 40ms so ALL THREE are overdue simultaneously
+    sched.setRunPeriod(20);
+    sched.startTimer(0, 20, 0);
+    sched.startTimer(1, 20, 0);
+    expect(sched.initCoroutineMode(false, true, true, false)).toBe(true);
+
+    await new Promise((r) => setTimeout(r, 40));
+
+    // Over 6 consecutive dispatches, ALL THREE sources (timer:0, timer:1, run) must get fair turns
+    const dispatched: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      dispatched.push(await sched.nextEvent());
+    }
+    expect(dispatched).toContain('timer:0');
+    expect(dispatched).toContain('timer:1');
+    expect(dispatched).toContain('run');
   });
 });

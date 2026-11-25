@@ -189,6 +189,20 @@ export function analyzeWorkspaceDiagnostics(
   for (const blk of workspace.getAllBlocks(false)) {
     if (blk.isShadow() || !blk.isEnabled()) continue;
 
+    // Option A strict board alignment: `sleep_ms` / wait block cannot block inside synchronous event callbacks
+    if (blk.type === 'poly_wait_ms') {
+      const rootBlk = blk.getRootBlock();
+      const rootHat = rootBlk ? extensionRegistry.getHatBlockDef(rootBlk.type) : undefined;
+      if (rootHat) {
+        diagnostics.push({
+          id: `wait-in-callback-${rootHat.hat.eventName}-${blk.id}`,
+          severity: 'error',
+          message: `禁止在事件回调「${rootHat.hat.eventName}」内使用「等待 ms」（sleep_ms）；实板同步回调不可阻塞，请移至「当程序启动」协程或改用定时器。`,
+          blockId: blk.id,
+        });
+      }
+    }
+
     const ownerPack = extensionRegistry.findPackForBlockType(blk.type);
 
     if (activeCaps !== null) {

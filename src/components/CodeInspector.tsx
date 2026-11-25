@@ -637,6 +637,21 @@ export function CodeInspector({
                     </div>
                   </div>
 
+                  {tele?.startCoState && tele.startCoState !== 'idle' && (
+                    <div className="rt-run-meta">
+                      <span>
+                        <code>on_start</code> 协程：
+                        {tele.startCoState === 'running'
+                          ? '运行中'
+                          : tele.startCoState === 'sleeping'
+                            ? '休眠中 (sleep_ms)'
+                            : tele.startCoState === 'ready'
+                              ? `就绪 · 时间片 ${tele.timeSliceMs ?? 20}ms`
+                              : '已结束'}
+                      </span>
+                    </div>
+                  )}
+
                   {(hasRtLifecycle || Boolean(tele?.hasOnRun)) && (
                     <div className="rt-run-meta">
                       <span>

@@ -93,11 +93,12 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     const ws = createLoadedWorkspace(stepTpl.workspace);
 
     const luaRes = backendRegistry.get('lua').generate(ws);
-    expect(luaRes.code).toContain('poly_wait_ms(350)');
+    expect(luaRes.code).toContain('sleep_ms(350)');
+    expect(luaRes.code).not.toContain('poly_wait_ms');
     expect(luaRes.code).not.toContain('__poly_step');
     expect(luaRes.code).not.toContain('__poly_sleep');
-    expect(luaRes.debugCode).toContain('__poly_step(');
-    expect(luaRes.debugCode).toContain('__poly_sleep(350):await()');
+    expect(luaRes.debugCode).toContain('__poly_tick(');
+    expect(luaRes.debugCode).toContain('sleep_ms(350)');
     expect(luaRes.debugCode).toContain('["sum"] = sum');
     expect(luaRes.sourceMap['dbg_wait'].startLine).toBe(
       luaRes.sourceMap['dbg_wait'].endLine,
@@ -112,8 +113,8 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     expect(pyRes.code).toContain('time.sleep(0.35)');
     expect(pyRes.code).not.toContain('_poly.step');
     expect(pyRes.code).not.toContain('_poly.sleep');
-    expect(pyRes.debugCode).toContain('await _poly.step(');
-    expect(pyRes.debugCode).toContain('await _poly.sleep(350)');
+    expect(pyRes.debugCode).toContain('await _poly_tick(');
+    expect(pyRes.debugCode).toContain('await _poly_sleep_ms(350)');
     expect(pyRes.debugCode).toContain('["sum","sum2"]');
     expect(pyRes.variableNames).toContain('sum');
 

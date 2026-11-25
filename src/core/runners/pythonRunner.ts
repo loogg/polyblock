@@ -87,7 +87,7 @@ export class MicroPythonWasmRunner implements ScriptRunner {
       const done = this.activeResolve;
       callbacks?.onLog(
         'warn',
-        `单步连续计算超过 ${this.activeTimeoutMs}ms（疑似死循环），已自动终止 Python Worker 沙箱。`,
+        `单次同步回调/计算连续耗时超过 ${this.activeTimeoutMs}ms（疑似死循环），已自动终止 Python Worker 沙箱。`,
       );
       this.terminateWorker();
       this.cleanupRun();
@@ -246,6 +246,8 @@ export class MicroPythonWasmRunner implements ScriptRunner {
         stepDelayMs: request.stepDelayMs ?? 0,
         startInStepMode: request.startInStepMode ?? false,
         timerCount: request.timerCount ?? 8,
+        timeSliceMs: request.timeSliceMs ?? 20,
+        callbackTimeoutMs: request.timeoutMs,
         mockModules: request.mockModules ?? [],
         mockInputs: request.mockInputs ?? {},
       });
@@ -282,6 +284,15 @@ export class MicroPythonWasmRunner implements ScriptRunner {
       type: 'SET_SPEED',
       runId: this.activeRunId,
       stepDelayMs,
+    });
+  }
+
+  updateTimeSlice(timeSliceMs: number): void {
+    if (!this.worker || !this.activeRunId) return;
+    this.worker.postMessage({
+      type: 'SET_TIME_SLICE',
+      runId: this.activeRunId,
+      timeSliceMs,
     });
   }
 

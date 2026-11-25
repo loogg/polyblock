@@ -23,7 +23,8 @@ export function registerPolyBlocks(): void {
       message1: '%1',
       args1: [{ type: 'input_statement', name: 'BODY' }],
       style: 'event_blocks',
-      tooltip: '程序主入口（on_start），点击运行后执行一次初始化逻辑。',
+      tooltip:
+        '程序主入口（on_start）。在事件驱动模式下运行于独立协程中，允许使用死循环与 sleep_ms 非阻塞等待，不影响事件回调响应。',
     },
 
     // --- 打印与日志 (Print & Logging) ---
@@ -115,7 +116,8 @@ export function registerPolyBlocks(): void {
       previousStatement: null,
       nextStatement: null,
       style: 'control_blocks',
-      tooltip: '非阻塞延时指定毫秒数后再继续执行后续积木（沙箱中支持随时停止）。',
+      tooltip:
+        '非阻塞协程延时指定毫秒数（Lua 导出全局 sleep_ms(ms)）。仅可在主程序 / on_start 协程中使用，禁止在 on_run / on_timer 等事件回调内阻塞等待。',
     },
     {
       type: 'poly_comment',

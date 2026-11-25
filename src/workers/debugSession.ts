@@ -3,6 +3,10 @@ export interface DebugRunConfig {
   breakpoints: string[];
   stepDelayMs: number;
   startInStepMode?: boolean;
+  /** Optional hook invoked around debugger pauses (breakpoints & visual stepDelayMs) so scheduler logical clock stays accurate. */
+  onClockPause?: (paused: boolean, creditLogicalMs?: number) => void;
+  /** Cooperative time-slice (ms) used to cap logical credit during `on_start` visual step animation. */
+  getTimeSliceMs?: () => number;
 }
 
 export interface WorkerMockModule {
@@ -22,6 +26,8 @@ export type WorkerControlMessage =
       stepDelayMs: number;
       startInStepMode?: boolean;
       timerCount?: number;
+      timeSliceMs?: number;
+      callbackTimeoutMs?: number;
       mockModules?: WorkerMockModule[];
       mockInputs?: Record<string, unknown>;
     }
@@ -31,6 +37,7 @@ export type WorkerControlMessage =
   | { type: 'STOP_GRACEFUL'; runId: string }
   | { type: 'SET_BREAKPOINTS'; runId: string; breakpoints: string[] }
   | { type: 'SET_SPEED'; runId: string; stepDelayMs: number }
+  | { type: 'SET_TIME_SLICE'; runId: string; timeSliceMs: number }
   | {
       type: 'UPDATE_MOCK_INPUTS';
       runId: string;
@@ -68,9 +75,13 @@ export class WorkerDebugSession {
   private breakpoints: Set<string>;
   private stepDelayMs: number;
   private pauseOnNextStep: boolean;
+  private shuttingDown = false;
   private pendingResume: (() => void) | null = null;
+  private pendingDelayCancel: (() => void) | null = null;
   private lastVars: Record<string, string> = {};
   private readonly post: (msg: Record<string, unknown>) => void;
+  private readonly onClockPause?: (paused: boolean, creditLogicalMs?: number) => void;
+  private readonly getTimeSliceMs?: () => number;
 
   constructor(
     config: DebugRunConfig,
@@ -80,6 +91,8 @@ export class WorkerDebugSession {
     this.breakpoints = new Set(config.breakpoints);
     this.stepDelayMs = Math.max(0, config.stepDelayMs);
     this.pauseOnNextStep = Boolean(config.startInStepMode);
+    this.onClockPause = config.onClockPause;
+    this.getTimeSliceMs = config.getTimeSliceMs;
     this.post = post;
   }
 
@@ -111,6 +124,15 @@ export class WorkerDebugSession {
       this.post({ type: 'RESUMED', runId: this.runId });
       fn();
     }
+    const cancelDelay = this.pendingDelayCancel;
+    this.pendingDelayCancel = null;
+    if (cancelDelay) cancelDelay();
+  }
+
+  enterGracefulStop(): void {
+    this.shuttingDown = true;
+    this.stepDelayMs = 0;
+    this.resume();
   }
 
   stepNext(): void {
@@ -123,16 +145,21 @@ export class WorkerDebugSession {
     }
   }
 
-  async onStep(blockId: string, varsJson: unknown): Promise<void> {
+  async onStep(
+    blockId: string,
+    varsJson: unknown,
+    inStartCoroutine = false,
+  ): Promise<void> {
     const vars = parseVarsJson(varsJson);
     this.lastVars = vars;
 
-    const hitBreakpoint = this.breakpoints.has(blockId);
-    const shouldPause = this.pauseOnNextStep || hitBreakpoint;
+    const hitBreakpoint = !this.shuttingDown && this.breakpoints.has(blockId);
+    const shouldPause = !this.shuttingDown && (this.pauseOnNextStep || hitBreakpoint);
 
     if (shouldPause) {
       const reason = hitBreakpoint && !this.pauseOnNextStep ? 'breakpoint' : 'step';
       this.pauseOnNextStep = false;
+      this.onClockPause?.(true);
       this.post({
         type: 'PAUSED',
         runId: this.runId,
@@ -141,9 +168,14 @@ export class WorkerDebugSession {
         reason,
       });
 
-      await new Promise<void>((resolve) => {
-        this.pendingResume = resolve;
-      });
+      try {
+        await new Promise<void>((resolve) => {
+          this.pendingResume = resolve;
+        });
+      } finally {
+        // Zero logical time elapses while parked at a breakpoint/step pause
+        this.onClockPause?.(false, 0);
+      }
       return;
     }
 
@@ -155,9 +187,31 @@ export class WorkerDebugSession {
     });
 
     if (this.stepDelayMs > 0) {
+      const delayMs = this.stepDelayMs;
+      this.onClockPause?.(true);
       this.post({ type: 'WAITING', runId: this.runId, active: true });
-      await new Promise<void>((resolve) => setTimeout(resolve, this.stepDelayMs));
-      this.post({ type: 'WAITING', runId: this.runId, active: false });
+      try {
+        await new Promise<void>((resolve) => {
+          let done = false;
+          const finish = () => {
+            if (done) return;
+            done = true;
+            clearTimeout(handle);
+            if (this.pendingDelayCancel === finish) this.pendingDelayCancel = null;
+            resolve();
+          };
+          const handle = setTimeout(finish, delayMs);
+          this.pendingDelayCancel = finish;
+        });
+      } finally {
+        this.post({ type: 'WAITING', runId: this.runId, active: false });
+        // Freeze logical clock completely during event callback visual stepping so timers never self-starve;
+        // inside `on_start` coroutine, credit at most one time-slice quantum so tight loops still interleave smoothly.
+        const credit = inStartCoroutine
+          ? Math.min(delayMs, this.getTimeSliceMs?.() ?? 20)
+          : 0;
+        this.onClockPause?.(false, credit);
+      }
     }
   }
 
@@ -167,7 +221,10 @@ export class WorkerDebugSession {
       ? Math.max(0, Math.min(600_000, numeric))
       : 0;
     this.post({ type: 'WAITING', runId: this.runId, active: true });
-    await new Promise<void>((resolve) => setTimeout(resolve, delay));
-    this.post({ type: 'WAITING', runId: this.runId, active: false });
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    } finally {
+      this.post({ type: 'WAITING', runId: this.runId, active: false });
+    }
   }
 }

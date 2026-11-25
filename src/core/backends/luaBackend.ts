@@ -81,7 +81,10 @@ function registerLuaBlockGenerators(): void {
 
   luaGenerator.forBlock['poly_repeat_times'] = (block, generator) => {
     const times = generator.valueToCode(block, 'TIMES', Order.NONE) || '0';
-    const branch = generator.statementToCode(block, 'DO');
+    let branch = generator.statementToCode(block, 'DO');
+    if (codegenContext.debugPass && !branch.trim()) {
+      branch = '  __poly_yield_check()\n';
+    }
     return `for _count = 1, ${times} do\n${branch}end\n`;
   };
 
@@ -90,24 +93,34 @@ function registerLuaBlockGenerators(): void {
     const from = generator.valueToCode(block, 'FROM', Order.NONE) || '1';
     const to = generator.valueToCode(block, 'TO', Order.NONE) || '1';
     const by = generator.valueToCode(block, 'BY', Order.NONE) || '1';
-    const branch = generator.statementToCode(block, 'DO');
+    let branch = generator.statementToCode(block, 'DO');
+    if (codegenContext.debugPass && !branch.trim()) {
+      branch = '  __poly_yield_check()\n';
+    }
     const stepPart = by.trim() === '1' ? '' : `, ${by}`;
     return `for ${variableName} = ${from}, ${to}${stepPart} do\n${branch}end\n`;
   };
 
   luaGenerator.forBlock['poly_wait_ms'] = (block, generator) => {
     const ms = generator.valueToCode(block, 'MS', Order.NONE) || '0';
-    if (codegenContext.debugPass) {
-      return `__poly_sleep(${ms}):await()\n`;
-    }
-    const helper = generator.provideFunction_('poly_wait_ms', [
-      `local function ${generator.FUNCTION_NAME_PLACEHOLDER_}(ms)`,
-      `  local t0 = os.clock()`,
-      `  while (os.clock() - t0) * 1000 < ms do end`,
-      `end`,
-    ]);
-    return `${helper}(${ms})\n`;
+    return `sleep_ms(${ms})\n`;
   };
+
+  // Ensure empty `while true do end` loops in debugPass still preempt cleanly inside `on_start` coroutine
+  const origWhileUntil = luaGenerator.forBlock['controls_whileUntil'];
+  if (origWhileUntil) {
+    luaGenerator.forBlock['controls_whileUntil'] = (block, generator) => {
+      const code = origWhileUntil(block, generator);
+      if (
+        codegenContext.debugPass &&
+        typeof code === 'string' &&
+        !block.getInputTargetBlock('DO')
+      ) {
+        return code.replace(/do\nend/, 'do\n  __poly_yield_check()\nend');
+      }
+      return code;
+    };
+  }
 
   luaGenerator.forBlock['poly_comment'] = (block) => {
     const text = (block.getFieldValue('TEXT') || '').replace(/\r?\n/g, ' ');
@@ -162,28 +175,103 @@ function buildLuaSnapshotExpr(
 
 function buildLuaEventLoopDriver(keepAliveExternal: boolean): string {
   return `
-if type(on_start) == "function" then on_start() end
-if __poly_should_loop(type(on_run) == "function", type(on_timer) == "function", ${keepAliveExternal ? 'true' : 'type(on_button) == "function"'}) then
+__poly_event_mode = true
+local _has_start = (type(on_start) == "function")
+local _has_run = (type(on_run) == "function")
+local _has_timer = (type(on_timer) == "function")
+local _has_ext = ${keepAliveExternal ? 'true' : '(type(on_button) == "function")'}
+
+if _has_start then
+  __poly_start_co = coroutine.create(on_start)
+end
+
+local function __poly_call_cb(cbName, fn, ...)
+  if type(fn) ~= "function" then return end
+  __poly_cb_enter(cbName)
+  debug.sethook(function()
+    if __poly_cb_expired() then
+      error("事件回调 " .. cbName .. " 执行超时（疑似死循环），已按单次回调超时保护中断。", 2)
+    end
+  end, "", 4000)
+  local _ok, _err = pcall(fn, ...)
+  debug.sethook()
+  __poly_cb_exit()
+  if not _ok then
+    error(_err, 0)
+  end
+end
+
+local function __poly_run_start_slice()
+  if __poly_start_co == nil or coroutine.status(__poly_start_co) == "dead" then
+    __poly_start_co = nil
+    __poly_co_done()
+    return
+  end
+  local _slice_ms = __poly_get_time_slice_ms()
+  local _slice_wall_start = __poly_now_ms()
+  local _empty_checks = 0
+  while true do
+    local _ok, _tag, _a, _b = coroutine.resume(__poly_start_co)
+    if not _ok then
+      __poly_start_co = nil
+      __poly_co_done()
+      error(_tag, 0)
+    end
+    if coroutine.status(__poly_start_co) == "dead" then
+      __poly_start_co = nil
+      __poly_co_done()
+      return
+    end
+    if _tag == "__POLY_SLEEP__" then
+      __poly_co_sleep(_a or 0)
+      return
+    elseif _tag == "__POLY_STEP__" then
+      __poly_step_start(_a, _b):await()
+      if __poly_is_stop_requested() then
+        __poly_start_co = nil
+        __poly_co_done()
+        return
+      end
+      if (__poly_now_ms() - _slice_wall_start) >= _slice_ms then
+        __poly_co_yield_slice()
+        return
+      end
+    elseif _tag == "__POLY_SLICE_CHECK__" then
+      _empty_checks = _empty_checks + 1
+      if _empty_checks >= 1000 or (__poly_now_ms() - _slice_wall_start) >= _slice_ms then
+        __poly_co_yield_slice()
+        return
+      end
+    else
+      __poly_co_yield_slice()
+      return
+    end
+  end
+end
+
+if __poly_init_scheduler(_has_start, _has_run, _has_timer, _has_ext) then
   while true do
     local _ev = __poly_next_event():await()
-    if _ev == "run" then
-      if type(on_run) == "function" then on_run() end
+    if _ev == "start_resume" then
+      __poly_run_start_slice()
+    elseif _ev == "run" then
+      __poly_call_cb("on_run", on_run)
     elseif type(_ev) == "string" and _ev:sub(1, 6) == "timer:" then
       local _tid = tonumber(_ev:sub(7))
-      if type(on_timer) == "function" and _tid ~= nil then on_timer(_tid) end
+      if _tid ~= nil then __poly_call_cb("on_timer", on_timer, _tid) end
     elseif type(_ev) == "string" and _ev:sub(1, 7) == "button:" then
       local _k, _p = _ev:match("^button:([^:]+):([01])$")
-      if type(on_button) == "function" and _k ~= nil then on_button(_k, _p == "1") end
+      if _k ~= nil then __poly_call_cb("on_button", on_button, _k, _p == "1") end
     elseif type(_ev) == "string" and _ev:sub(1, 6) == "event:" then
       local _ename = __poly_last_event_name()
       local _fn = _G[_ename]
       if type(_fn) == "function" then
         local _argc = __poly_last_event_argc()
-        if _argc == 0 then _fn()
-        elseif _argc == 1 then _fn(__poly_last_event_arg(1))
-        elseif _argc == 2 then _fn(__poly_last_event_arg(1), __poly_last_event_arg(2))
-        elseif _argc == 3 then _fn(__poly_last_event_arg(1), __poly_last_event_arg(2), __poly_last_event_arg(3))
-        else _fn(__poly_last_event_arg(1), __poly_last_event_arg(2), __poly_last_event_arg(3), __poly_last_event_arg(4))
+        if _argc == 0 then __poly_call_cb(_ename, _fn)
+        elseif _argc == 1 then __poly_call_cb(_ename, _fn, __poly_last_event_arg(1))
+        elseif _argc == 2 then __poly_call_cb(_ename, _fn, __poly_last_event_arg(1), __poly_last_event_arg(2))
+        elseif _argc == 3 then __poly_call_cb(_ename, _fn, __poly_last_event_arg(1), __poly_last_event_arg(2), __poly_last_event_arg(3))
+        else __poly_call_cb(_ename, _fn, __poly_last_event_arg(1), __poly_last_event_arg(2), __poly_last_event_arg(3), __poly_last_event_arg(4))
         end
       end
     else
@@ -191,7 +279,7 @@ if __poly_should_loop(type(on_run) == "function", type(on_timer) == "function", 
     end
   end
 end
-if type(on_stop) == "function" then on_stop() end
+__poly_call_cb("on_stop", on_stop)
 `;
 }
 
@@ -262,7 +350,7 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
     try {
       resetCodegenPassContext({ debugPass: true, eventDrivenMode: eventDriven });
       luaDeclaredLocalsByRoot = new Map();
-      luaGenerator.STATEMENT_PREFIX = `__poly_step(%1, __poly_snap(${snapExpr})):await()\n`;
+      luaGenerator.STATEMENT_PREFIX = `__poly_tick(%1, __poly_snap(${snapExpr}))\n`;
       luaGenerator.STATEMENT_SUFFIX = null;
       debugBody = luaGenerator.workspaceToCode(workspace);
     } finally {

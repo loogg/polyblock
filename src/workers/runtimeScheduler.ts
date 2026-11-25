@@ -1,6 +1,7 @@
 import type {
   RuntimeTelemetry,
   RuntimeTimerTelemetry,
+  StartCoroutineState,
 } from '../types/project';
 
 interface TimerSlot {
@@ -26,19 +27,34 @@ interface QueuedCustomEvent {
 export interface RuntimeSchedulerConfig {
   runId: string;
   timerCount: number;
+  /** Cooperative time-slice budget (ms) for `on_start` coroutine preemption (default 20ms). */
+  timeSliceMs?: number;
+  /** Single synchronous event callback timeout protection (ms, default 5000ms). */
+  callbackTimeoutMs?: number;
   post: (msg: Record<string, unknown>) => void;
 }
 
 /**
- * Isolated per-run cooperative runtime scheduler for embedded-style
- * on_start / on_run / on_timer(id) / on_button(key, pressed) / on_stop execution.
- * Mirrors isolated C-host ScriptCtx semantics: zero shared global timer state across runs.
+ * Isolated per-run cooperative runtime scheduler mirroring embedded Scheme A C-host semantics:
+ * - `on_start` runs inside an isolated coroutine (`CO_READY` / `CO_SLEEPING` / `CO_RUNNING` / `CO_DEAD`)
+ *   supporting infinite loops, non-blocking `sleep_ms(ms)` yield, and cooperative time-slice preemption.
+ * - `on_run`, `on_timer(id)`, `on_button(key, pressed)`, and custom events run as short synchronous
+ *   callbacks on the main state with strict single-callback timeout guard and no `sleep_ms` blocking.
+ * - Pause-aware logical clock freezes during visual stepping (`stepDelayMs`) and breakpoint pauses
+ *   so timers & `on_run` never drift or starve at normal/slow visual stepping speeds.
+ * - Fair round-robin dispatch prevents any single due timer from starving `on_run` or sibling timers.
  */
 export class WorkerRuntimeScheduler {
   readonly runId: string;
   readonly timerCount: number;
   private readonly post: (msg: Record<string, unknown>) => void;
 
+  // --- Pause-aware logical clock ---
+  private pausedOffsetMs = 0;
+  private pauseDepth = 0;
+  private pauseStartedAt: number | null = null;
+
+  // --- Independent on_run periodic schedule (completely independent of T0..TN) ---
   private runPeriodMs = 100;
   private runActive = false;
   private runExplicitlyControlled = false;
@@ -50,24 +66,95 @@ export class WorkerRuntimeScheduler {
   private hasOnButton = false;
   private eventLoopActive = false;
 
+  // --- `on_start` coroutine scheduling state (mirrors C ScriptCtx co_state / wake_at) ---
+  private coState: StartCoroutineState = 'idle';
+  private coWakeAt = 0;
+  private coHasRunOnce = false;
+  private timeSliceMs = 20;
+
+  // --- Main-state synchronous callback guard (mirrors C main-L timeout hook) ---
+  private callbackTimeoutMs = 5000;
+  private activeCallbackName: string | null = null;
+  private callbackStartedAt = 0;
+
+  // --- Timers & external event queues ---
   private timers = new Map<number, TimerSlot>();
   private buttonQueue: QueuedButtonEvent[] = [];
   private customEventQueue: QueuedCustomEvent[] = [];
   private lastCustomEvent: QueuedCustomEvent | null = null;
+  private lastPeriodicKey: string | null = null;
   private stopRequested = false;
 
+  // --- Async wake & Python coroutine slice handshake ---
   private wakeFn: (() => void) | null = null;
   private waitingPosted = false;
   private lastTelemetryAt = 0;
 
+  private pyTurnReady = false;
+  private pyTurnWaiter: (() => void) | null = null;
+  private pySliceDoneWaiter: (() => void) | null = null;
+  private pySliceActive = false;
+
   constructor(config: RuntimeSchedulerConfig) {
     this.runId = config.runId;
     this.timerCount = Math.max(1, Math.min(32, Math.trunc(config.timerCount || 8)));
+    this.timeSliceMs = this.clampTimeSlice(config.timeSliceMs ?? 20);
+    this.callbackTimeoutMs = Math.max(
+      500,
+      Math.min(120_000, Math.round(config.callbackTimeoutMs ?? 5000)),
+    );
     this.post = config.post;
   }
 
-  private now(): number {
-    return performance.now();
+  private clampTimeSlice(raw: unknown): number {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return 20;
+    return Math.max(5, Math.min(500, Math.round(n)));
+  }
+
+  setTimeSliceMs(raw: unknown): void {
+    this.timeSliceMs = this.clampTimeSlice(raw);
+    this.emitTelemetry(true);
+  }
+
+  getTimeSliceMs(): number {
+    return this.timeSliceMs;
+  }
+
+  getCallbackTimeoutMs(): number {
+    return this.callbackTimeoutMs;
+  }
+
+  /**
+   * Freezes logical clock during breakpoint pauses and visual stepping animations.
+   * Nested pause calls are reference-counted.
+   */
+  pauseClock(): void {
+    if (this.pauseDepth === 0) {
+      this.pauseStartedAt = performance.now();
+    }
+    this.pauseDepth += 1;
+  }
+
+  /**
+   * Resumes logical clock after a debugger pause.
+   * `creditLogicalMs` lets `on_start` visual steps advance logical time by at most one slice quantum
+   * while callback steps and breakpoints credit `0` so timers never drift or self-starve.
+   */
+  resumeClock(creditLogicalMs = 0): void {
+    if (this.pauseDepth <= 0) return;
+    this.pauseDepth -= 1;
+    if (this.pauseDepth === 0 && this.pauseStartedAt !== null) {
+      const wallDelta = Math.max(0, performance.now() - this.pauseStartedAt);
+      const credit = Math.max(0, Math.min(wallDelta, creditLogicalMs));
+      this.pausedOffsetMs += wallDelta - credit;
+      this.pauseStartedAt = null;
+    }
+  }
+
+  now(): number {
+    const base = this.pauseStartedAt ?? performance.now();
+    return base - this.pausedOffsetMs;
   }
 
   private assertTimerId(rawId: unknown): number {
@@ -84,6 +171,134 @@ export class WorkerRuntimeScheduler {
     const fn = this.wakeFn;
     this.wakeFn = null;
     if (fn) fn();
+  }
+
+  // --- Synchronous callback guard (Option A strict alignment) ---
+  beginCallback(name: string): void {
+    this.activeCallbackName = name || 'callback';
+    this.callbackStartedAt = this.now();
+  }
+
+  endCallback(): void {
+    this.activeCallbackName = null;
+  }
+
+  isInCallback(): boolean {
+    return this.activeCallbackName !== null;
+  }
+
+  getActiveCallbackName(): string {
+    return this.activeCallbackName ?? '';
+  }
+
+  isCallbackTimedOut(): boolean {
+    if (this.activeCallbackName === null) return false;
+    if (this.stopRequested && this.activeCallbackName !== 'on_stop') {
+      return true;
+    }
+    return this.now() - this.callbackStartedAt >= this.callbackTimeoutMs;
+  }
+
+  isStopRequested(): boolean {
+    return this.stopRequested;
+  }
+
+  // --- `on_start` coroutine state transitions ---
+  initCoroutineMode(
+    hasStart: boolean,
+    hasOnRun: boolean,
+    hasOnTimer: boolean,
+    hasOnButton: boolean,
+  ): boolean {
+    this.hasOnRun = Boolean(hasOnRun);
+    this.hasOnTimer = Boolean(hasOnTimer);
+    this.hasOnButton = Boolean(hasOnButton);
+
+    this.coState = hasStart ? 'ready' : 'dead';
+    this.coWakeAt = 0;
+    this.coHasRunOnce = false;
+
+    if (this.hasOnRun && !this.runExplicitlyControlled) {
+      this.runActive = true;
+      this.nextRunAt = this.now() + this.runPeriodMs;
+    }
+
+    const active =
+      !this.stopRequested &&
+      (this.coState === 'ready' ||
+        (this.hasOnRun && this.runActive) ||
+        this.hasAnyRunningTimer() ||
+        this.hasOnButton);
+
+    this.eventLoopActive = active;
+    this.emitTelemetry(true);
+    return active;
+  }
+
+  onStartCoSleep(rawMs: unknown): void {
+    const n = Number(rawMs);
+    const delay = Number.isFinite(n) ? Math.max(0, Math.min(600_000, n)) : 0;
+    this.coState = 'sleeping';
+    this.coWakeAt = this.now() + delay;
+    this.resolvePySliceDone();
+    this.wake();
+    this.emitTelemetry(false);
+  }
+
+  onStartCoYieldSlice(): void {
+    this.coState = 'ready';
+    this.resolvePySliceDone();
+    this.wake();
+    this.emitTelemetry(false);
+  }
+
+  onStartCoDone(): void {
+    this.coState = 'dead';
+    this.resolvePySliceDone();
+    this.wake();
+    this.emitTelemetry(true);
+  }
+
+  getStartCoState(): StartCoroutineState {
+    return this.coState;
+  }
+
+  // --- Python asyncio single-slice mutual-exclusion handshake ---
+  private resolvePySliceDone(): void {
+    this.pySliceActive = false;
+    const fn = this.pySliceDoneWaiter;
+    this.pySliceDoneWaiter = null;
+    if (fn) fn();
+  }
+
+  waitPythonStartTurn(): Promise<boolean> {
+    if (this.stopRequested || this.coState === 'dead') {
+      return Promise.resolve(false);
+    }
+    if (this.pyTurnReady) {
+      this.pyTurnReady = false;
+      return Promise.resolve(true);
+    }
+    return new Promise<boolean>((resolve) => {
+      this.pyTurnWaiter = () => resolve(!this.stopRequested && this.coState !== 'dead');
+    });
+  }
+
+  resumePythonStartSlice(): Promise<void> {
+    if (this.stopRequested || this.coState === 'dead') {
+      return Promise.resolve();
+    }
+    this.pySliceActive = true;
+    return new Promise<void>((resolve) => {
+      this.pySliceDoneWaiter = resolve;
+      if (this.pyTurnWaiter) {
+        const fn = this.pyTurnWaiter;
+        this.pyTurnWaiter = null;
+        fn();
+      } else {
+        this.pyTurnReady = true;
+      }
+    });
   }
 
   setRunPeriod(rawMs: unknown): void {
@@ -215,32 +430,24 @@ export class WorkerRuntimeScheduler {
 
   requestGracefulStop(): void {
     this.stopRequested = true;
+    if (this.pyTurnWaiter) {
+      const fn = this.pyTurnWaiter;
+      this.pyTurnWaiter = null;
+      fn();
+    }
+    if (this.pySliceActive) {
+      this.resolvePySliceDone();
+    }
     this.wake();
   }
 
+  /** Legacy compatibility helper (equivalent to initCoroutineMode without an active `on_start` coroutine). */
   shouldEnterEventLoop(
     hasOnRun: boolean,
     hasOnTimer: boolean,
     hasOnButton: boolean,
   ): boolean {
-    this.hasOnRun = Boolean(hasOnRun);
-    this.hasOnTimer = Boolean(hasOnTimer);
-    this.hasOnButton = Boolean(hasOnButton);
-
-    if (this.hasOnRun && !this.runExplicitlyControlled) {
-      this.runActive = true;
-      this.nextRunAt = this.now() + this.runPeriodMs;
-    }
-
-    const active =
-      !this.stopRequested &&
-      ((this.hasOnRun && this.runActive) ||
-        this.hasAnyRunningTimer() ||
-        this.hasOnButton);
-
-    this.eventLoopActive = active;
-    this.emitTelemetry(true);
-    return active;
+    return this.initCoroutineMode(false, hasOnRun, hasOnTimer, hasOnButton);
   }
 
   getTelemetrySnapshot(): RuntimeTelemetry {
@@ -265,6 +472,8 @@ export class WorkerRuntimeScheduler {
       runPeriodMs: this.runPeriodMs,
       runCount: this.runCount,
       hasOnButton: this.hasOnButton,
+      startCoState: this.coState,
+      timeSliceMs: this.timeSliceMs,
       timers,
     };
   }
@@ -286,10 +495,30 @@ export class WorkerRuntimeScheduler {
     this.post({ type: 'WAITING', runId: this.runId, active });
   }
 
+  private async macrotaskYield(ms = 4): Promise<void> {
+    this.setWaiting(true);
+    try {
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timerHandle);
+          if (this.wakeFn === finish) this.wakeFn = null;
+          resolve();
+        };
+        const timerHandle = setTimeout(finish, ms);
+        this.wakeFn = finish;
+      });
+    } finally {
+      this.setWaiting(false);
+    }
+  }
+
   /**
-   * Waits cooperatively for the next scheduled event.
-   * Returns a compact primitive string ("run", "timer:<id>", "button:<A|B>:<1|0>", "stop", "done")
-   * so both Wasmoon Lua and MicroPython WASM consume it cleanly with zero JS-proxy ambiguity.
+   * Waits cooperatively for the next scheduled event or `on_start` coroutine slice.
+   * Returns compact primitive tokens:
+   *   "start_resume" | "run" | "timer:<id>" | "button:<A|B>:<1|0>" | "event:<json>" | "stop" | "done"
    */
   async nextEvent(): Promise<string> {
     while (true) {
@@ -300,6 +529,16 @@ export class WorkerRuntimeScheduler {
         return 'stop';
       }
 
+      // 0. Always launch `on_start` first on initial startup before any periodic events
+      if (this.coState === 'ready' && !this.coHasRunOnce) {
+        this.coHasRunOnce = true;
+        this.coState = 'running';
+        this.setWaiting(false);
+        this.emitTelemetry(false);
+        return 'start_resume';
+      }
+
+      // 1. Immediate external events (custom declarative events & virtual buttons)
       if (this.customEventQueue.length > 0) {
         const ev = this.customEventQueue.shift()!;
         this.lastCustomEvent = ev;
@@ -317,38 +556,60 @@ export class WorkerRuntimeScheduler {
 
       const now = this.now();
 
-      // 1. Check earliest due timer
-      let dueTimer: TimerSlot | null = null;
+      // 2. Fair round-robin selection across ALL due timers AND independent `on_run`
+      const dueCandidates: Array<{
+        key: string;
+        dueAt: number;
+        slot?: TimerSlot;
+      }> = [];
+
       for (const slot of this.timers.values()) {
-        if (!slot.running) continue;
-        if (slot.nextFireAt <= now) {
-          if (!dueTimer || slot.nextFireAt < dueTimer.nextFireAt) {
-            dueTimer = slot;
-          }
+        if (slot.running && slot.nextFireAt <= now) {
+          dueCandidates.push({
+            key: `timer:${slot.id}`,
+            dueAt: slot.nextFireAt,
+            slot,
+          });
         }
       }
-
-      if (dueTimer) {
-        dueTimer.firedCount += 1;
-        const finished = dueTimer.repeat > 0 && dueTimer.firedCount >= dueTimer.repeat;
-        const firedId = dueTimer.id;
-        if (finished) {
-          dueTimer.running = false;
-          this.timers.delete(firedId);
-        } else {
-          dueTimer.startedAt = now;
-          dueTimer.nextFireAt = now + dueTimer.periodMs;
-        }
-        this.emitTelemetry(true);
-        if (this.hasOnTimer) {
-          this.setWaiting(false);
-          return `timer:${firedId}`;
-        }
-        continue;
-      }
-
-      // 2. Check on_run periodic callback
       if (this.hasOnRun && this.runActive && this.nextRunAt <= now) {
+        dueCandidates.push({ key: 'run', dueAt: this.nextRunAt });
+      }
+
+      if (dueCandidates.length > 0) {
+        dueCandidates.sort((a, b) => {
+          // If multiple sources are due simultaneously, rotate away from whichever just ran
+          // so no timer or on_run can ever starve another.
+          const aJustRan = a.key === this.lastPeriodicKey ? 1 : 0;
+          const bJustRan = b.key === this.lastPeriodicKey ? 1 : 0;
+          if (aJustRan !== bJustRan) return aJustRan - bJustRan;
+          return a.dueAt - b.dueAt;
+        });
+
+        const winner = dueCandidates[0];
+        this.lastPeriodicKey = winner.key;
+
+        if (winner.slot) {
+          const slot = winner.slot;
+          slot.firedCount += 1;
+          const finished = slot.repeat > 0 && slot.firedCount >= slot.repeat;
+          const firedId = slot.id;
+          if (finished) {
+            slot.running = false;
+            this.timers.delete(firedId);
+          } else {
+            slot.startedAt = now;
+            slot.nextFireAt = now + slot.periodMs;
+          }
+          this.emitTelemetry(true);
+          if (this.hasOnTimer) {
+            this.setWaiting(false);
+            return `timer:${firedId}`;
+          }
+          continue;
+        }
+
+        // Independent `on_run` tick
         this.nextRunAt = now + this.runPeriodMs;
         this.runCount += 1;
         this.emitTelemetry(false);
@@ -356,8 +617,35 @@ export class WorkerRuntimeScheduler {
         return 'run';
       }
 
-      // 3. Check if any active event source remains
+      // 3. Check `on_start` coroutine wake (CO_READY slice or CO_SLEEPING wake_at reached)
+      if (this.coState === 'ready') {
+        // Yield 1 short macrotask tick (like RTOS vTaskDelay(1)/taskYIELD()) so Web Worker
+        // onmessage always stays responsive to STOP, button clicks, and sensor sliders.
+        await this.macrotaskYield(4);
+        if (this.stopRequested) continue;
+        // Re-check if an urgent external event arrived during the breather
+        if (
+          this.customEventQueue.length > 0 ||
+          (this.buttonQueue.length > 0 && this.hasOnButton)
+        ) {
+          continue;
+        }
+        this.coState = 'running';
+        this.setWaiting(false);
+        this.emitTelemetry(false);
+        return 'start_resume';
+      }
+
+      if (this.coState === 'sleeping' && this.coWakeAt <= now) {
+        this.coState = 'running';
+        this.setWaiting(false);
+        this.emitTelemetry(false);
+        return 'start_resume';
+      }
+
+      // 4. Check if any active event source or sleeping `on_start` coroutine remains
       const hasSources =
+        this.coState === 'sleeping' ||
         (this.hasOnRun && this.runActive) ||
         this.hasAnyRunningTimer() ||
         this.hasOnButton;
@@ -368,7 +656,7 @@ export class WorkerRuntimeScheduler {
         return 'done';
       }
 
-      // 4. Compute earliest upcoming deadline & sleep cleanly while pausing watchdog
+      // 5. Compute earliest upcoming deadline across `on_run`, timers, and `on_start` wake_at
       let earliest = Number.POSITIVE_INFINITY;
       if (this.hasOnRun && this.runActive) {
         earliest = Math.min(earliest, this.nextRunAt);
@@ -378,9 +666,12 @@ export class WorkerRuntimeScheduler {
           earliest = Math.min(earliest, slot.nextFireAt);
         }
       }
+      if (this.coState === 'sleeping') {
+        earliest = Math.min(earliest, this.coWakeAt);
+      }
 
-      const delta = Number.isFinite(earliest) ? Math.max(8, earliest - now) : 120;
-      const sleepMs = Math.min(delta, 120);
+      const delta = Number.isFinite(earliest) ? Math.max(4, earliest - now) : 80;
+      const sleepMs = Math.min(delta, 80);
 
       this.setWaiting(true);
       this.emitTelemetry(false);

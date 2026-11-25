@@ -88,9 +88,18 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
   mpInstance.registerJsModule('_poly', {
     step: (blockId: string, varsJson: string) => {
       if (!activeSession) return Promise.resolve();
-      return activeSession.onStep(String(blockId), varsJson);
+      return activeSession.onStep(String(blockId), varsJson, false);
+    },
+    step_start: (blockId: string, varsJson: string) => {
+      if (!activeSession) return Promise.resolve();
+      return activeSession.onStep(String(blockId), varsJson, true);
     },
     sleep: (ms: number) => {
+      if (activeScheduler?.isInCallback()) {
+        throw new Error(
+          '禁止在事件回调（on_run / on_timer / on_button / on_stop）中调用等待 (sleep)；实板同步回调不可阻塞，请移至「当程序启动」协程或改用定时器。',
+        );
+      }
       if (!activeSession) return Promise.resolve();
       return activeSession.onSleep(ms);
     },
@@ -146,6 +155,41 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
             Boolean(hasBtn),
           )
         : false,
+    init_scheduler: (
+      hasStart: unknown,
+      hasRun: unknown,
+      hasTimer: unknown,
+      hasBtn: unknown,
+    ) =>
+      activeScheduler
+        ? activeScheduler.initCoroutineMode(
+            Boolean(hasStart),
+            Boolean(hasRun),
+            Boolean(hasTimer),
+            Boolean(hasBtn),
+          )
+        : false,
+    co_sleep: (ms: unknown) => activeScheduler?.onStartCoSleep(ms),
+    co_yield_slice: () => activeScheduler?.onStartCoYieldSlice(),
+    co_done: () => activeScheduler?.onStartCoDone(),
+    wait_start_turn: () =>
+      activeScheduler
+        ? activeScheduler.waitPythonStartTurn()
+        : Promise.resolve(false),
+    resume_start_slice: () =>
+      activeScheduler
+        ? activeScheduler.resumePythonStartSlice()
+        : Promise.resolve(),
+    cb_enter: (name: unknown) =>
+      activeScheduler?.beginCallback(String(name ?? 'callback')),
+    cb_exit: () => activeScheduler?.endCallback(),
+    cb_expired: () => (activeScheduler ? activeScheduler.isCallbackTimedOut() : false),
+    is_in_callback: () => (activeScheduler ? activeScheduler.isInCallback() : false),
+    is_stop_requested: () =>
+      activeScheduler ? activeScheduler.isStopRequested() : false,
+    get_time_slice_ms: () =>
+      activeScheduler ? activeScheduler.getTimeSliceMs() : 20,
+    logic_now_ms: () => (activeScheduler ? activeScheduler.now() : performance.now()),
     next_event: () =>
       activeScheduler ? activeScheduler.nextEvent() : Promise.resolve('done'),
   });
@@ -201,7 +245,7 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
       activeScheduler.requestGracefulStop();
     }
     if (activeSession?.runId === msg.runId) {
-      activeSession.resume();
+      activeSession.enterGracefulStop();
     }
     return;
   }
@@ -214,6 +258,12 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
   if (msg.type === 'SET_SPEED') {
     if (activeSession?.runId === msg.runId) {
       activeSession.setStepDelay(msg.stepDelayMs);
+    }
+    return;
+  }
+  if (msg.type === 'SET_TIME_SLICE') {
+    if (activeScheduler?.runId === msg.runId) {
+      activeScheduler.setTimeSliceMs(msg.timeSliceMs);
     }
     return;
   }
@@ -242,6 +292,8 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     stepDelayMs,
     startInStepMode,
     timerCount,
+    timeSliceMs,
+    callbackTimeoutMs,
     mockModules,
     mockInputs,
   } = msg;
@@ -251,15 +303,27 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
   const startedAt = performance.now();
 
   const post = (payload: Record<string, unknown>) => self.postMessage(payload);
-  const session = new WorkerDebugSession(
-    { runId, breakpoints, stepDelayMs, startInStepMode },
-    post,
-  );
   const scheduler = new WorkerRuntimeScheduler({
     runId,
     timerCount: timerCount ?? 8,
+    timeSliceMs: timeSliceMs ?? 20,
+    callbackTimeoutMs: callbackTimeoutMs ?? 5000,
     post,
   });
+  const session = new WorkerDebugSession(
+    {
+      runId,
+      breakpoints,
+      stepDelayMs,
+      startInStepMode,
+      onClockPause: (paused, creditMs) => {
+        if (paused) scheduler.pauseClock();
+        else scheduler.resumeClock(creditMs ?? 0);
+      },
+      getTimeSliceMs: () => scheduler.getTimeSliceMs(),
+    },
+    post,
+  );
   activeSession = session;
   activeScheduler = scheduler;
 

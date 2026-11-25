@@ -83,7 +83,10 @@ function registerPythonBlockGenerators(): void {
 
   pythonGenerator.forBlock['poly_repeat_times'] = (block, generator) => {
     const times = generator.valueToCode(block, 'TIMES', Order.NONE) || '0';
-    const branch = generator.statementToCode(block, 'DO') || generator.PASS;
+    const rawBranch = generator.statementToCode(block, 'DO');
+    const branch =
+      rawBranch ||
+      (codegenContext.debugPass ? '  await _poly_yield_check()\n' : generator.PASS);
     return `for _count in range(int(${times})):\n${branch}`;
   };
 
@@ -92,7 +95,10 @@ function registerPythonBlockGenerators(): void {
     const from = generator.valueToCode(block, 'FROM', Order.NONE) || '1';
     const to = generator.valueToCode(block, 'TO', Order.NONE) || '1';
     const by = generator.valueToCode(block, 'BY', Order.NONE) || '1';
-    const branch = generator.statementToCode(block, 'DO') || generator.PASS;
+    const rawBranch = generator.statementToCode(block, 'DO');
+    const branch =
+      rawBranch ||
+      (codegenContext.debugPass ? '  await _poly_yield_check()\n' : generator.PASS);
 
     const toNum = Number(to.trim());
     const byTrim = by.trim();
@@ -111,7 +117,7 @@ function registerPythonBlockGenerators(): void {
   pythonGenerator.forBlock['poly_wait_ms'] = (block, generator) => {
     const ms = generator.valueToCode(block, 'MS', Order.NONE) || '0';
     if (codegenContext.debugPass) {
-      return `await _poly.sleep(${ms})\n`;
+      return `await _poly_sleep_ms(${ms})\n`;
     }
     (generator as unknown as { definitions_: Record<string, string> }).definitions_['import_time'] =
       'import time';
@@ -122,6 +128,21 @@ function registerPythonBlockGenerators(): void {
     }
     return `time.sleep((${ms}) / 1000)\n`;
   };
+
+  const origPyWhileUntil = pythonGenerator.forBlock['controls_whileUntil'];
+  if (origPyWhileUntil) {
+    pythonGenerator.forBlock['controls_whileUntil'] = (block, generator) => {
+      const code = origPyWhileUntil(block, generator);
+      if (
+        codegenContext.debugPass &&
+        typeof code === 'string' &&
+        !block.getInputTargetBlock('DO')
+      ) {
+        return code.replace(/:\n(\s*)pass\n/, ':\n$1await _poly_yield_check()\n');
+      }
+      return code;
+    };
+  }
 
   pythonGenerator.forBlock['poly_comment'] = (block) => {
     const text = (block.getFieldValue('TEXT') || '').replace(/\r?\n/g, ' ');
@@ -215,32 +236,73 @@ function registerPythonBlockGenerators(): void {
 
 function buildPythonEventLoopDriver(keepAliveExternal: boolean): string {
   return `
-if 'on_start' in globals() and callable(on_start):
-  await on_start()
-if _poly.should_loop('on_run' in globals(), 'on_timer' in globals(), ${keepAliveExternal ? 'True' : "'on_button' in globals()"}):
+_POLY_EVENT_MODE = True
+_has_start = 'on_start' in globals() and callable(on_start)
+_has_run = 'on_run' in globals() and callable(on_run)
+_has_timer = 'on_timer' in globals() and callable(on_timer)
+_has_ext = ${keepAliveExternal ? 'True' : "'on_button' in globals() and callable(on_button)"}
+
+async def _poly_start_runner():
+  global _POLY_IN_START, _POLY_SLICE_START, _POLY_START_ERR
+  try:
+    _keep = await _poly.wait_start_turn()
+    if not _keep:
+      return
+    _POLY_IN_START = True
+    _POLY_SLICE_START = _poly.now_ms()
+    await on_start()
+  except _PolyStopStart:
+    pass
+  except Exception as _e:
+    _POLY_START_ERR = _e
+  finally:
+    _POLY_IN_START = False
+    _poly.co_done()
+
+async def _poly_call_cb(_cname, _fn, *_args):
+  if not callable(_fn):
+    return
+  _poly.cb_enter(_cname)
+  try:
+    await _fn(*_args)
+  finally:
+    _poly.cb_exit()
+
+_start_task = asyncio.create_task(_poly_start_runner()) if _has_start else None
+if _poly.init_scheduler(_has_start, _has_run, _has_timer, _has_ext):
   while True:
     _ev = await _poly.next_event()
-    if _ev == 'run':
-      if 'on_run' in globals() and callable(on_run):
-        await on_run()
+    if _ev == 'start_resume':
+      await _poly.resume_start_slice()
+      if _POLY_START_ERR is not None:
+        raise _POLY_START_ERR
+    elif _ev == 'run':
+      if _has_run:
+        await _poly_call_cb('on_run', on_run)
     elif isinstance(_ev, str) and _ev.startswith('timer:'):
-      if 'on_timer' in globals() and callable(on_timer):
-        await on_timer(int(_ev[6:]))
+      if _has_timer:
+        await _poly_call_cb('on_timer', on_timer, int(_ev[6:]))
     elif isinstance(_ev, str) and _ev.startswith('button:'):
       _parts = _ev.split(':')
       if 'on_button' in globals() and callable(on_button) and len(_parts) == 3:
-        await on_button(_parts[1], _parts[2] == '1')
+        await _poly_call_cb('on_button', on_button, _parts[1], _parts[2] == '1')
     elif isinstance(_ev, str) and _ev.startswith('event:'):
       _epayload = json.loads(_ev[6:])
       _ename = _epayload[0]
       _eargs = _epayload[1] if len(_epayload) > 1 else []
       _efn = globals().get(_ename)
       if callable(_efn):
-        await _efn(*_eargs)
+        await _poly_call_cb(_ename, _efn, *_eargs)
     else:
       break
+if _start_task is not None and not _start_task.done():
+  _poly.co_done()
+  try:
+    _start_task.cancel()
+  except Exception:
+    pass
 if 'on_stop' in globals() and callable(on_stop):
-  await on_stop()
+  await _poly_call_cb('on_stop', on_stop)
 `;
 }
 
@@ -308,7 +370,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
         eventDrivenMode: eventDriven,
         pythonGlobalVarIdents: varEntries.map(([, ident]) => ident),
       });
-      pythonGenerator.STATEMENT_PREFIX = `await _poly.step(%1, _poly_snap(locals(), globals()))\n`;
+      pythonGenerator.STATEMENT_PREFIX = `await _poly_tick(%1, _poly_snap(locals(), globals()))\n`;
       pythonGenerator.STATEMENT_SUFFIX = null;
       debugBody = pythonGenerator.workspaceToCode(workspace);
     } finally {
@@ -331,8 +393,61 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
     }
 
     const debugPrelude = [
-      `import _poly, json`,
+      `import _poly, json, asyncio`,
       `_POLY_VAR_MAP = ${JSON.stringify(snapVarEntries)}`,
+      `_POLY_EVENT_MODE = False`,
+      `_POLY_IN_START = False`,
+      `_POLY_SLICE_START = 0.0`,
+      `_POLY_START_ERR = None`,
+      `class _PolyStopStart(Exception):`,
+      `  pass`,
+      `async def _poly_sleep_ms(_ms):`,
+      `  global _POLY_IN_START, _POLY_SLICE_START`,
+      `  if _poly.is_in_callback():`,
+      `    raise RuntimeError("禁止在事件回调（on_run / on_timer / on_button / on_stop）中调用等待 (sleep)；实板同步回调不可阻塞，请移至「当程序启动」协程或改用定时器。")`,
+      `  if _POLY_EVENT_MODE and _POLY_IN_START:`,
+      `    _POLY_IN_START = False`,
+      `    _poly.co_sleep(_ms)`,
+      `    _keep = await _poly.wait_start_turn()`,
+      `    if not _keep:`,
+      `      raise _PolyStopStart()`,
+      `    _POLY_IN_START = True`,
+      `    _POLY_SLICE_START = _poly.now_ms()`,
+      `    return`,
+      `  await _poly.sleep(_ms)`,
+      `async def _poly_tick(_bid, _snap):`,
+      `  global _POLY_IN_START, _POLY_SLICE_START`,
+      `  if _POLY_EVENT_MODE and _POLY_IN_START and not _poly.is_in_callback():`,
+      `    await _poly.step_start(_bid, _snap)`,
+      `    if _poly.is_stop_requested():`,
+      `      raise _PolyStopStart()`,
+      `    if (_poly.now_ms() - _POLY_SLICE_START) >= _poly.get_time_slice_ms():`,
+      `      _POLY_IN_START = False`,
+      `      _poly.co_yield_slice()`,
+      `      _keep = await _poly.wait_start_turn()`,
+      `      if not _keep:`,
+      `        raise _PolyStopStart()`,
+      `      _POLY_IN_START = True`,
+      `      _POLY_SLICE_START = _poly.now_ms()`,
+      `    return`,
+      `  await _poly.step(_bid, _snap)`,
+      `  if _poly.is_in_callback() and _poly.cb_expired():`,
+      `    raise RuntimeError("事件回调执行超时（疑似死循环），已按单次回调超时保护中断。")`,
+      `async def _poly_yield_check():`,
+      `  global _POLY_IN_START, _POLY_SLICE_START`,
+      `  if _POLY_EVENT_MODE and _POLY_IN_START and not _poly.is_in_callback():`,
+      `    if _poly.is_stop_requested():`,
+      `      raise _PolyStopStart()`,
+      `    if (_poly.now_ms() - _POLY_SLICE_START) >= _poly.get_time_slice_ms():`,
+      `      _POLY_IN_START = False`,
+      `      _poly.co_yield_slice()`,
+      `      _keep = await _poly.wait_start_turn()`,
+      `      if not _keep:`,
+      `        raise _PolyStopStart()`,
+      `      _POLY_IN_START = True`,
+      `      _POLY_SLICE_START = _poly.now_ms()`,
+      `  elif _poly.is_in_callback() and _poly.cb_expired():`,
+      `    raise RuntimeError("事件回调执行超时（疑似死循环），已按单次回调超时保护中断。")`,
       `def _poly_snap(_loc, _glb):`,
       `  _out = {}`,
       `  for _label, _ident in _POLY_VAR_MAP:`,

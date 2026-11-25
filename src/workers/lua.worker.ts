@@ -97,6 +97,35 @@ package.preload["rt"] = function()
     is_timer_running = __poly_rt_is_timer_running,
   }
 end
+
+__poly_event_mode = false
+__poly_start_co = nil
+
+function sleep_ms(ms)
+  if __poly_event_mode then
+    local cur, is_main = coroutine.running()
+    if cur == nil or is_main or cur ~= __poly_start_co then
+      error("禁止在事件回调（on_run / on_timer / on_button / on_stop）中调用 sleep_ms()；实板同步回调不可阻塞，请移至「当程序启动」协程或改用定时器。", 2)
+    end
+    coroutine.yield("__POLY_SLEEP__", tonumber(ms) or 0)
+    return
+  end
+  __poly_sleep(tonumber(ms) or 0):await()
+end
+
+function __poly_tick(blockId, varsJson)
+  if __poly_event_mode and __poly_start_co ~= nil and coroutine.running() == __poly_start_co then
+    coroutine.yield("__POLY_STEP__", blockId, varsJson)
+    return
+  end
+  __poly_step(blockId, varsJson):await()
+end
+
+function __poly_yield_check()
+  if __poly_event_mode and __poly_start_co ~= nil and coroutine.running() == __poly_start_co then
+    coroutine.yield("__POLY_SLICE_CHECK__")
+  end
+end
 `;
 
 self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
@@ -120,7 +149,7 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
       activeScheduler.requestGracefulStop();
     }
     if (activeSession?.runId === msg.runId) {
-      activeSession.resume();
+      activeSession.enterGracefulStop();
     }
     return;
   }
@@ -133,6 +162,12 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
   if (msg.type === 'SET_SPEED') {
     if (activeSession?.runId === msg.runId) {
       activeSession.setStepDelay(msg.stepDelayMs);
+    }
+    return;
+  }
+  if (msg.type === 'SET_TIME_SLICE') {
+    if (activeScheduler?.runId === msg.runId) {
+      activeScheduler.setTimeSliceMs(msg.timeSliceMs);
     }
     return;
   }
@@ -161,21 +196,35 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     stepDelayMs,
     startInStepMode,
     timerCount,
+    timeSliceMs,
+    callbackTimeoutMs,
     mockModules,
     mockInputs,
   } = msg;
   currentMockInputs = { ...(mockInputs ?? {}) };
   const startedAt = performance.now();
   const post = (payload: Record<string, unknown>) => self.postMessage(payload);
-  const session = new WorkerDebugSession(
-    { runId, breakpoints, stepDelayMs, startInStepMode },
-    post,
-  );
   const scheduler = new WorkerRuntimeScheduler({
     runId,
     timerCount: timerCount ?? 8,
+    timeSliceMs: timeSliceMs ?? 20,
+    callbackTimeoutMs: callbackTimeoutMs ?? 5000,
     post,
   });
+  const session = new WorkerDebugSession(
+    {
+      runId,
+      breakpoints,
+      stepDelayMs,
+      startInStepMode,
+      onClockPause: (paused, creditMs) => {
+        if (paused) scheduler.pauseClock();
+        else scheduler.resumeClock(creditMs ?? 0);
+      },
+      getTimeSliceMs: () => scheduler.getTimeSliceMs(),
+    },
+    post,
+  );
   activeSession = session;
   activeScheduler = scheduler;
 
@@ -196,7 +245,11 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
       });
 
       engine.global.set('__poly_step', (blockId: string, varsJson: string) => {
-        return session.onStep(String(blockId), varsJson);
+        return session.onStep(String(blockId), varsJson, false);
+      });
+
+      engine.global.set('__poly_step_start', (blockId: string, varsJson: string) => {
+        return session.onStep(String(blockId), varsJson, true);
       });
 
       engine.global.set('__poly_sleep', (ms: number) => {
@@ -310,6 +363,37 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
             Boolean(hasTimer),
             Boolean(hasBtn),
           ),
+      );
+      engine.global.set(
+        '__poly_init_scheduler',
+        (hasStart: unknown, hasRun: unknown, hasTimer: unknown, hasBtn: unknown) =>
+          scheduler.initCoroutineMode(
+            Boolean(hasStart),
+            Boolean(hasRun),
+            Boolean(hasTimer),
+            Boolean(hasBtn),
+          ),
+      );
+      engine.global.set('__poly_co_sleep', (ms: unknown) =>
+        scheduler.onStartCoSleep(ms),
+      );
+      engine.global.set('__poly_co_yield_slice', () =>
+        scheduler.onStartCoYieldSlice(),
+      );
+      engine.global.set('__poly_co_done', () => scheduler.onStartCoDone());
+      engine.global.set('__poly_get_time_slice_ms', () =>
+        scheduler.getTimeSliceMs(),
+      );
+      engine.global.set('__poly_logic_now_ms', () => scheduler.now());
+      engine.global.set('__poly_is_stop_requested', () =>
+        scheduler.isStopRequested(),
+      );
+      engine.global.set('__poly_cb_enter', (name: unknown) =>
+        scheduler.beginCallback(String(name ?? 'callback')),
+      );
+      engine.global.set('__poly_cb_exit', () => scheduler.endCallback());
+      engine.global.set('__poly_cb_expired', () =>
+        scheduler.isCallbackTimedOut(),
       );
       engine.global.set('__poly_next_event', () => scheduler.nextEvent());
 

@@ -79,13 +79,38 @@ export function SettingsPage({
 
         <div className="setting-row">
           <div>
-            <div style={{ fontWeight: 600, marginBottom: 2 }}>沙箱执行超时保护</div>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>
+              <code>on_start</code> 协程时间片（抢占让出）
+            </div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              遇到死循环时自动终止 Web Worker 并恢复沙箱，避免页面卡死
+              当 <code>on_start</code> 内存在死循环或长计算且未调用 <code>sleep_ms</code> 时，每连续运行满该时间片即自动让出给事件调度器（对应实板 <code>LUA_MASKCOUNT</code> 时间片让出）
             </div>
           </div>
           <select
             className="template-select"
+            aria-label="on_start 协程时间片"
+            value={settings.timeSliceMs}
+            onChange={(e) =>
+              onUpdateSettings({ timeSliceMs: Number(e.target.value) })
+            }
+          >
+            <option value={10}>10 ms（高频响应）</option>
+            <option value={20}>20 ms（推荐默认）</option>
+            <option value={50}>50 ms</option>
+            <option value={100}>100 ms（长计算优先）</option>
+          </select>
+        </div>
+
+        <div className="setting-row">
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>单次事件回调 / 阻塞超时保护</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              仅限制单次事件回调（<code>on_run</code> / <code>on_timer</code> / <code>on_button</code>）或纯同步计算的连续耗时，不影响常驻事件循环与 <code>on_start</code> 协程的长期运行
+            </div>
+          </div>
+          <select
+            className="template-select"
+            aria-label="单次事件回调超时保护"
             value={settings.timeoutMs}
             onChange={(e) =>
               onUpdateSettings({ timeoutMs: Number(e.target.value) })

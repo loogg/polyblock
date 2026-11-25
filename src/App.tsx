@@ -138,6 +138,12 @@ function loadSavedSettings(): AppSettings {
           typeof parsed.timeoutMs === 'number' && parsed.timeoutMs >= 1000
             ? parsed.timeoutMs
             : 5000,
+        timeSliceMs:
+          typeof parsed.timeSliceMs === 'number' &&
+          parsed.timeSliceMs >= 5 &&
+          parsed.timeSliceMs <= 500
+            ? parsed.timeSliceMs
+            : 20,
         autoOpenConsoleOnRun: parsed.autoOpenConsoleOnRun ?? true,
         executionSpeed: speed,
       };
@@ -148,6 +154,7 @@ function loadSavedSettings(): AppSettings {
   return {
     theme: 'light',
     timeoutMs: 5000,
+    timeSliceMs: 20,
     autoOpenConsoleOnRun: true,
     executionSpeed: 'normal',
   };
@@ -1436,6 +1443,7 @@ export function App() {
           code: latest.code,
           debugCode: latest.debugCode || latest.code,
           timeoutMs: settings.timeoutMs,
+          timeSliceMs: settings.timeSliceMs,
           breakpoints: breakpointsRef.current,
           stepDelayMs: speedDelay,
           startInStepMode,
@@ -1503,6 +1511,7 @@ export function App() {
       settings.autoOpenConsoleOnRun,
       settings.executionSpeed,
       settings.timeoutMs,
+      settings.timeSliceMs,
       activeTimerConfig.count,
       language,
       activeHandle,
@@ -1553,6 +1562,7 @@ export function App() {
       {
         project: proj,
         timeoutMs: settings.timeoutMs,
+        timeSliceMs: settings.timeSliceMs,
         stepDelayMs: SPEED_DELAY_MS[settings.executionSpeed],
         extensionMocks,
         mockInputs: simStateRef.current,
@@ -1595,6 +1605,7 @@ export function App() {
     navigateTo,
     settings.autoOpenConsoleOnRun,
     settings.timeoutMs,
+    settings.timeSliceMs,
     settings.executionSpeed,
     flushActiveCanvasIntoStore,
     appendLog,
@@ -1886,9 +1897,13 @@ export function App() {
           {activePage === 'settings' && (
             <SettingsPage
               settings={settings}
-              onUpdateSettings={(patch) =>
-                setSettings((prev) => ({ ...prev, ...patch }))
-              }
+              onUpdateSettings={(patch) => {
+                setSettings((prev) => ({ ...prev, ...patch }));
+                if (typeof patch.timeSliceMs === 'number') {
+                  runnerManager.updateActiveTimeSlice(patch.timeSliceMs);
+                  multiHandleOrchestrator.updateTimeSlice(patch.timeSliceMs);
+                }
+              }}
               onResetWorkspace={handleResetWorkspace}
               onReturnToBlocks={() => navigateTo('blocks')}
             />

@@ -86,6 +86,7 @@ export function buildHandleScriptModules(
 export interface MultiHandleRunOptions {
   project: ProjectModel;
   timeoutMs: number;
+  timeSliceMs?: number;
   stepDelayMs: number;
   extensionMocks: ExtensionSandboxMock[];
   mockInputs: Record<string, unknown>;
@@ -127,7 +128,14 @@ export class MultiHandleRunnerOrchestrator {
   ): Promise<Array<{ handle: RuntimeHandle; result: RunResult }>> {
     this.stopAll(true);
 
-    const { project, timeoutMs, stepDelayMs, extensionMocks, mockInputs } = options;
+    const {
+      project,
+      timeoutMs,
+      timeSliceMs,
+      stepDelayMs,
+      extensionMocks,
+      mockInputs,
+    } = options;
     const targetHandles = project.handles.filter((h) => h.autoStart);
     const handlesToRun =
       targetHandles.length > 0 ? targetHandles : [project.handles[0]];
@@ -176,6 +184,7 @@ export class MultiHandleRunnerOrchestrator {
           code: compiled.code,
           debugCode: compiled.debugCode,
           timeoutMs,
+          timeSliceMs: timeSliceMs ?? 20,
           breakpoints: [],
           stepDelayMs,
           startInStepMode: false,
@@ -228,6 +237,12 @@ export class MultiHandleRunnerOrchestrator {
   updateStepDelay(stepDelayMs: number): void {
     for (const runner of this.activeRunners.values()) {
       runner.updateStepDelay?.(stepDelayMs);
+    }
+  }
+
+  updateTimeSlice(timeSliceMs: number): void {
+    for (const runner of this.activeRunners.values()) {
+      runner.updateTimeSlice?.(timeSliceMs);
     }
   }
 

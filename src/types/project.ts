@@ -101,6 +101,8 @@ export interface RuntimeTimerTelemetry {
   running: boolean;
 }
 
+export type StartCoroutineState = 'idle' | 'running' | 'sleeping' | 'ready' | 'dead';
+
 export interface RuntimeTelemetry {
   eventLoopActive: boolean;
   hasOnRun: boolean;
@@ -108,6 +110,8 @@ export interface RuntimeTelemetry {
   runPeriodMs: number;
   runCount: number;
   hasOnButton: boolean;
+  startCoState?: StartCoroutineState;
+  timeSliceMs?: number;
   timers: RuntimeTimerTelemetry[];
 }
 
@@ -205,7 +209,10 @@ export interface LegacyProjectFileV1 {
 
 export interface AppSettings {
   theme: ThemeMode;
+  /** Single event callback / blocking computation timeout (ms). Does NOT cap long-running event loops. */
   timeoutMs: number;
+  /** Cooperative time-slice budget (ms) for `on_start` coroutine preemption. */
+  timeSliceMs: number;
   autoOpenConsoleOnRun: boolean;
   executionSpeed: ExecutionSpeedId;
 }

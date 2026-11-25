@@ -16,6 +16,8 @@ export interface RunRequest {
   /** Instrumented async debug script used by sandbox WASM runners. */
   debugCode?: string;
   timeoutMs: number;
+  /** Cooperative time-slice (ms) for `on_start` coroutine preemption (default 20ms). */
+  timeSliceMs?: number;
   breakpoints?: string[];
   stepDelayMs?: number;
   startInStepMode?: boolean;
@@ -74,6 +76,7 @@ export interface ScriptRunner {
   pause?(): void;
   updateBreakpoints?(breakpoints: string[]): void;
   updateStepDelay?(stepDelayMs: number): void;
+  updateTimeSlice?(timeSliceMs: number): void;
   updateMockInputs?(mockInputs: Record<string, unknown>): void;
   emitEvent?(eventName: string, args: unknown[]): void;
   dispose(): void;

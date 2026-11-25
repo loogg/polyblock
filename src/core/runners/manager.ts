@@ -104,6 +104,10 @@ class RunnerManager {
     this.activeRunner?.updateStepDelay?.(stepDelayMs);
   }
 
+  updateActiveTimeSlice(timeSliceMs: number): void {
+    this.activeRunner?.updateTimeSlice?.(timeSliceMs);
+  }
+
   updateActiveMockInputs(mockInputs: Record<string, unknown>): void {
     this.activeRunner?.updateMockInputs?.(mockInputs);
   }
