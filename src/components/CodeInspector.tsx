@@ -19,7 +19,7 @@ import {
   CAP_RT_TIMERS,
   hasCapability,
 } from '../core/capabilities/registry';
-import { getWidgetDefaultValue } from '../core/extensions/simState';
+import { readPackWidgetValue } from '../core/extensions/simState';
 import type {
   PolyExtensionPack,
   SimStateMap,
@@ -55,6 +55,7 @@ interface CodeInspectorProps {
   activeHandle: RuntimeHandle;
   handleTelemetries: Record<string, RuntimeTelemetry>;
   onUpdateSimValues: (patch: Record<string, unknown>) => void;
+  onEmitWidgetEvent?: (eventName: string, args: unknown[]) => void;
   onResetSimPack: (pack: PolyExtensionPack) => void;
   onOpenHandleTimerSettings: (handleId: string) => void;
   onSelectBlockFromLine: (blockId: string) => void;
@@ -90,6 +91,7 @@ export function CodeInspector({
   activeHandle,
   handleTelemetries,
   onUpdateSimValues,
+  onEmitWidgetEvent,
   onResetSimPack,
   onOpenHandleTimerSettings,
   onSelectBlockFromLine,
@@ -121,29 +123,30 @@ export function CodeInspector({
 
   const showSimTab = hasSimPacks || hasRtLifecycle || hasRtTimers || anyEventLoopRunning;
 
-  const allSimWidgets = useMemo<SimWidgetSpec[]>(
-    () => simPacks.flatMap((p) => p.simWidgets ?? []),
+  const allSimWidgets = useMemo<Array<{ pack: PolyExtensionPack; widget: SimWidgetSpec }>>(
+    () =>
+      simPacks.flatMap((pack) =>
+        (pack.simWidgets ?? []).map((widget) => ({ pack, widget })),
+      ),
     [simPacks],
   );
 
   const anySimLedActive = useMemo(
     () =>
       allSimWidgets.some(
-        (w) => w.kind === 'led' && Boolean(simState[w.key]),
+        ({ pack, widget }) =>
+          widget.kind === 'led' &&
+          Boolean(readPackWidgetValue(simState, pack.id, widget)),
       ),
     [allSimWidgets, simState],
   );
 
   const miniPreviewWidgets = useMemo(() => {
-    const picked: SimWidgetSpec[] = [];
-    for (const w of allSimWidgets) {
-      if (
-        w.kind === 'led' ||
-        w.kind === 'rgb' ||
-        w.kind === 'bar' ||
-        w.kind === 'slider'
-      ) {
-        picked.push(w);
+    const picked: Array<{ pack: PolyExtensionPack; widget: SimWidgetSpec }> = [];
+    for (const item of allSimWidgets) {
+      const k = item.widget.kind;
+      if (k === 'led' || k === 'rgb' || k === 'bar' || k === 'slider') {
+        picked.push(item);
         if (picked.length >= 3) break;
       }
     }
@@ -438,16 +441,17 @@ export function CodeInspector({
               title="点击展开虚拟外设与定时器调度面板"
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                {miniPreviewWidgets.map((w) => {
-                  const val = Object.prototype.hasOwnProperty.call(simState, w.key)
-                    ? simState[w.key]
-                    : getWidgetDefaultValue(w);
+                {miniPreviewWidgets.map(({ pack, widget: w }) => {
+                  const val = readPackWidgetValue(simState, pack.id, w);
+                  const itemKey = `${pack.id}:${w.key}`;
+                  const tip = `${pack.name} · ${w.label}`;
                   if (w.kind === 'led') {
                     const on = Boolean(val);
                     const litColor = w.color || '#22c55e';
                     return (
                       <span
-                        key={w.key}
+                        key={itemKey}
+                        title={tip}
                         style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
                       >
                         <span
@@ -472,7 +476,8 @@ export function CodeInspector({
                     const isLit = hex !== '#1e293b' && hex !== '#334155';
                     return (
                       <span
-                        key={w.key}
+                        key={itemKey}
+                        title={tip}
                         style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
                       >
                         <span
@@ -489,7 +494,11 @@ export function CodeInspector({
                     );
                   }
                   return (
-                    <span key={w.key} style={{ fontFamily: 'var(--font-mono)' }}>
+                    <span
+                      key={itemKey}
+                      title={tip}
+                      style={{ fontFamily: 'var(--font-mono)' }}
+                    >
                       {String(val ?? 0)}
                       {w.unit ?? ''}
                     </span>
@@ -532,6 +541,7 @@ export function CodeInspector({
               packs={simPacks}
               simState={simState}
               onUpdateSimValues={onUpdateSimValues}
+              onEmitWidgetEvent={onEmitWidgetEvent}
               onResetPack={onResetSimPack}
             />
           )}

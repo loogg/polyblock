@@ -256,3 +256,16 @@ flowchart TD
   - **输入交互类**：`slider`（模拟量滑块）、`toggle`（拨动开关）、`button`（按键）。
 - **零硬编码狗粮验证**：内置示例 `virtual-board` 与示例模板 `SAMPLE_CUSTOM_EXTENSION_TEMPLATE` 均全面迁移至声明式 `simWidgets`，`CodeInspector` 中不再存在任何硬编码虚拟板 JSX。
 - **跨句柄共享模拟外设态**：统一在 Lua / Python Worker 暴露 `__poly_sim_set(key, val)` / `__poly_sim_get(key)`（Python：`_poly.sim_set` / `_poly.sim_get`，兼容旧 `__poly_device_emit` / `__poly_mock_input`）。任一句柄写入状态时，先即时镜像到本地 Worker 保证同句柄同步读写零延迟，再经主线程广播至其余所有并发句柄 Worker 与 UI 控件，完整模拟多 `lua_State*` 共享同一套底层硬件/C 状态。
+
+### 10.3 统一声明式扩展协议：包级命名空间隔离、声明式事件帽块与运行时扩展包
+在阶段九收口（Option B）中，PolyBlock 将「运行时能力模块」「硬件事件回调」与「第三方外设包」彻底统一到同一份 `.polyext.json` 声明式协议：
+1. **包级 `simWidgets` 自动命名空间隔离（零 Key 冲突）**：
+   - 任何包内声明的 `simWidgets[].key`（如短名称 `speed`、`led`、`estop`）以及该包 `sandboxMock` 内调用的 `__poly_sim_set("speed", v)` / `_poly.sim_get("speed")` 在运行时自动归入 `${packId}::${key}` 命名空间（Lua 通过 `load(..., _env)` 元表沙箱隔离，Python 通过模块专属 `_PolyScopedProxy` 隔离）。
+   - 多包同时使用同名短 key（如 `motor-a` 与 `motor-b` 同用 `"key": "speed"`）时，在 UI 卡片与双语言 Worker 中 100% 互相隔离；如需显式跨包共享总线状态，使用 `global:` 前缀（如 `global:vbus`）即可绕过前缀隔离。
+   - 每个项目的模拟外设状态按 `simStatesByProject[projectId]` 严格隔离，切换项目互不串扰。
+2. **声明式事件帽块（`kind: "hat"`）与通用事件触发（`emitEvent`）**：
+   - `.polyext.json` 积木新增 `kind: "hat"`（支持 `mode: "singleton"` 与 `mode: "dispatch"`），自动驱动干净顶层零闭包 Lua/Python 函数聚合生成、作用域树（`scopeAnalysis.ts`）节点归类、重名分支静态诊断与事件循环保活判定。
+   - `simWidgets` 交互控件新增 `emitEvent`（如 `{ "eventName": "on_button", "args": ["A", "$value"] }`），点击/拨动后通过统一 `EMIT_EVENT` 通道入队 `WorkerRuntimeScheduler.customEventQueue` 并实时派发至目标句柄回调；`sandboxMock` 也可直接调用 `__poly_emit_event` / `_poly.emit_event` 触发事件并在多句柄间转发。
+   - 原先硬编码在核心中的 `poly_on_button` 已 100% 迁移进 `VIRTUAL_BOARD_PACK` JSON 描述，第三方外设包现拥有与官方虚拟硬件包完全平等的事件中断定义能力。
+3. **运行时能力统一为内置声明式扩展包（`packKind: "runtime"`）**：
+   - `RT_LIFECYCLE_PACK`（`rt-lifecycle`，`on_run` / `on_stop`）与 `RT_TIMERS_PACK`（`rt-timers`，`handleChannelPool` + `field_channel_id` 动态通道下拉）已整体迁入 `BUILTIN_EXTENSION_PACKS`，核心积木定义（`definitions.ts`）、分类注册（`catalog.ts`）、双语言生成器（`luaBackend.ts` / `pythonBackend.ts`）与静态诊断（`sourceMap.ts`）全面瘦身至纯 Layer 0 语言内核，同时保持既有积木 ID 与历史项目 100% 向后兼容。

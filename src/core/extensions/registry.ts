@@ -1,15 +1,30 @@
 import * as Blockly from 'blockly';
 import { luaGenerator, Order as LuaOrder } from 'blockly/lua';
 import { Order as PyOrder, pythonGenerator } from 'blockly/python';
+import { codegenContext } from '../backends/codegenContext';
 import type { BlockCategorySpec, ToolboxBlockSpec } from '../blocks/catalog';
+import { createChannelIdField } from '../blocks/channelField';
+import {
+  formatTimerLabel,
+  getActiveTimerConfig,
+} from '../blocks/timerConfigBridge';
 import { BUILTIN_EXTENSION_PACKS } from './builtinPacks';
 import type {
   ExtensionBlockDef,
+  ExtensionHatSpec,
   ExtensionSandboxMock,
+  HandleChannelPoolSpec,
   PolyExtensionPack,
+  SimWidgetEventTrigger,
   SimWidgetKind,
   SimWidgetSpec,
 } from './types';
+
+export const STORAGE_CUSTOM_EXTENSIONS_KEY = 'polyblock.extensions.custom.v1';
+
+const SENTINEL_START = '__PB_S:';
+const SENTINEL_END = '__PB_E:';
+const PLACEHOLDER_RE = /\{\{([A-Za-z0-9_]+)(?::([a-z0-9_]+)(?::([A-Za-z0-9_]+))?)?\}\}/g;
 
 const VALID_SIM_WIDGET_KINDS = new Set<SimWidgetKind>([
   'led',
@@ -20,6 +35,438 @@ const VALID_SIM_WIDGET_KINDS = new Set<SimWidgetKind>([
   'toggle',
   'button',
 ]);
+
+function indentLines(code: string, extraSpaces: string): string {
+  if (!code) return '';
+  return code
+    .split('\n')
+    .map((line) => (line.length > 0 ? `${extraSpaces}${line}` : line))
+    .join('\n');
+}
+
+function buildArgKindMap(def: ExtensionBlockDef): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const arg of def.args0 ?? []) {
+    if (typeof arg.name === 'string' && typeof arg.type === 'string') {
+      map.set(arg.name, arg.type);
+    }
+  }
+  return map;
+}
+
+function renderTemplate(
+  template: string,
+  def: ExtensionBlockDef,
+  block: Blockly.Block,
+  lang: 'lua' | 'python',
+): string {
+  const argKinds = buildArgKindMap(def);
+
+  return template.replace(
+    PLACEHOLDER_RE,
+    (_full, argName: string, mod?: string, modParam?: string) => {
+      const argType = argKinds.get(argName);
+      let rawValue = '';
+
+      if (argType === 'input_value') {
+        if (lang === 'lua') {
+          rawValue = luaGenerator.valueToCode(block, argName, LuaOrder.NONE) || '""';
+        } else {
+          rawValue = pythonGenerator.valueToCode(block, argName, PyOrder.NONE) || '""';
+        }
+        return rawValue;
+      }
+
+      if (argType === 'field_variable') {
+        const varId = block.getFieldValue(argName);
+        return lang === 'lua'
+          ? luaGenerator.getVariableName(varId)
+          : pythonGenerator.getVariableName(varId);
+      }
+
+      rawValue = String(block.getFieldValue(argName) ?? '');
+
+      if (mod === 'json') {
+        return JSON.stringify(rawValue);
+      }
+      if (mod === 'int') {
+        const n = Number(rawValue);
+        return String(Number.isFinite(n) ? Math.trunc(n) : 0);
+      }
+      if (mod === 'min10_int') {
+        const n = Number(rawValue);
+        return String(Number.isFinite(n) ? Math.max(10, Math.round(n)) : 100);
+      }
+      if (mod === 'bool_lua') {
+        return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'
+          ? 'true'
+          : 'false';
+      }
+      if (mod === 'bool_py') {
+        return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'
+          ? 'True'
+          : 'False';
+      }
+      if (mod === 'edge_lua' || mod === 'edge_py') {
+        const param = modParam || 'pressed';
+        return rawValue === 'press' || rawValue === 'true' || rawValue === '1'
+          ? param
+          : `not ${param}`;
+      }
+      if (mod === 'edge_zh') {
+        return rawValue === 'press' || rawValue === 'true' || rawValue === '1'
+          ? '按下'
+          : '释放';
+      }
+      if (mod === 'action_run') {
+        return rawValue === 'stop' ? 'stop_run' : 'start_run';
+      }
+      if (mod === 'channel_comment_lua') {
+        const tid = Math.trunc(Number(rawValue || 0));
+        const alias = getActiveTimerConfig().aliases[String(tid)];
+        return alias ? ` -- T${tid}: ${alias}` : '';
+      }
+      if (mod === 'channel_comment_py') {
+        const tid = Math.trunc(Number(rawValue || 0));
+        const alias = getActiveTimerConfig().aliases[String(tid)];
+        return alias ? `  # T${tid}: ${alias}` : '';
+      }
+      if (mod === 'channel_label') {
+        const tid = Math.trunc(Number(rawValue || 0));
+        return formatTimerLabel(tid);
+      }
+      return rawValue;
+    },
+  );
+}
+
+/**
+ * Registers a single declarative block (including dynamic `field_channel_id` dropdowns
+ * and top-level `hat` event callbacks) into Blockly.
+ */
+function registerSingleBlockInBlockly(
+  pack: PolyExtensionPack,
+  b: ExtensionBlockDef,
+): void {
+  const hasChannelField = (b.args0 ?? []).some(
+    (arg) => arg.type === 'field_channel_id',
+  );
+
+  if (!hasChannelField) {
+    const jsonDef: Record<string, unknown> = {
+      type: b.type,
+      message0: b.message0,
+      args0: b.args0 ?? [],
+      inputsInline: b.inputsInline ?? true,
+      tooltip: b.tooltip ?? `${pack.name} · ${b.type}`,
+    };
+
+    if (b.blockStyle) {
+      jsonDef.style = b.blockStyle;
+    } else {
+      jsonDef.colour = pack.color;
+    }
+
+    if (b.kind === 'hat') {
+      jsonDef.message1 = '%1';
+      jsonDef.args1 = [{ type: 'input_statement', name: 'BODY' }];
+    } else if (b.kind === 'statement') {
+      jsonDef.previousStatement = null;
+      jsonDef.nextStatement = null;
+    } else {
+      jsonDef.output = b.outputType ?? null;
+    }
+
+    Blockly.defineBlocksWithJsonArray([jsonDef]);
+    return;
+  }
+
+  // Imperative Blockly builder for blocks using dynamic per-handle `field_channel_id` dropdowns
+  Blockly.Blocks[b.type] = {
+    init(this: Blockly.Block) {
+      const args = b.args0 ?? [];
+      const tokens = b.message0.split(/(%\d+)/g).filter((t) => t.length > 0);
+      let curDummy: Blockly.Input | null = null;
+
+      const ensureDummy = () => {
+        if (!curDummy) {
+          curDummy = this.appendDummyInput();
+        }
+        return curDummy;
+      };
+
+      for (const tok of tokens) {
+        const m = /^%(\d+)$/.exec(tok);
+        if (!m) {
+          const text = tok.trim();
+          if (text) {
+            ensureDummy().appendField(text);
+          }
+          continue;
+        }
+        const argIdx = Number(m[1]) - 1;
+        const arg = args[argIdx];
+        if (!arg) continue;
+        const argType = String(arg.type ?? '');
+        const argName = String(arg.name ?? `ARG${argIdx}`);
+
+        if (argType === 'field_channel_id') {
+          ensureDummy().appendField(createChannelIdField(), argName);
+        } else if (argType === 'input_value') {
+          curDummy = null;
+          const inp = this.appendValueInput(argName);
+          if (typeof arg.check === 'string' || Array.isArray(arg.check)) {
+            inp.setCheck(arg.check as string | string[]);
+          }
+        } else if (argType === 'field_dropdown' && Array.isArray(arg.options)) {
+          ensureDummy().appendField(
+            new Blockly.FieldDropdown(arg.options as Array<[string, string]>),
+            argName,
+          );
+        } else if (argType === 'field_number') {
+          ensureDummy().appendField(
+            new Blockly.FieldNumber(
+              Number(arg.value ?? 0),
+              typeof arg.min === 'number' ? arg.min : undefined,
+              typeof arg.max === 'number' ? arg.max : undefined,
+              typeof arg.precision === 'number' ? arg.precision : undefined,
+            ),
+            argName,
+          );
+        } else if (argType === 'field_input') {
+          ensureDummy().appendField(
+            new Blockly.FieldTextInput(String(arg.text ?? '')),
+            argName,
+          );
+        }
+      }
+
+      if (b.kind === 'hat') {
+        this.appendStatementInput('BODY');
+      } else if (b.kind === 'statement') {
+        this.setPreviousStatement(true, null);
+        this.setNextStatement(true, null);
+      } else {
+        this.setOutput(true, b.outputType ?? null);
+      }
+
+      this.setInputsInline(b.inputsInline ?? true);
+      if (b.blockStyle) {
+        this.setStyle(b.blockStyle);
+      } else {
+        this.setColour(pack.color);
+      }
+      this.setTooltip(b.tooltip ?? `${pack.name} · ${b.type}`);
+    },
+  };
+}
+
+function getPythonGlobalLine(): string {
+  if (codegenContext.pythonGlobalVarIdents.length === 0) return '';
+  return `  global ${codegenContext.pythonGlobalVarIdents.join(', ')}\n`;
+}
+
+function hoistImports(
+  generator: unknown,
+  packId: string,
+  imports: string[] | undefined,
+): void {
+  if (!imports || imports.length === 0) return;
+  const defs = (generator as { definitions_: Record<string, string> }).definitions_;
+  for (const [idx, imp] of imports.entries()) {
+    // Deduplicate common `rt` import identically across rt-lifecycle and rt-timers
+    const key =
+      imp === 'local rt = require("rt")' || imp === 'import rt'
+        ? 'import_rt'
+        : `ext_${packId}_imp_${idx}`;
+    defs[key] = imp;
+  }
+}
+
+function registerHatGenerators(
+  pack: PolyExtensionPack,
+  b: ExtensionBlockDef,
+  hatSpec: ExtensionHatSpec,
+): void {
+  const paramsStr = (hatSpec.params ?? []).join(', ');
+
+  // --- Lua Hat Generator ---
+  luaGenerator.forBlock[b.type] = (block, generator) => {
+    hoistImports(generator, pack.id, hatSpec.importsLua);
+
+    if (hatSpec.mode === 'singleton') {
+      const prelude = hatSpec.preludeLua
+        ? `${renderTemplate(hatSpec.preludeLua, b, block, 'lua')}\n`
+        : '';
+      const body = generator.statementToCode(block, 'BODY');
+      if (codegenContext.debugPass) {
+        return `${prelude}function ${hatSpec.eventName}(${paramsStr})\n${body}end\n`;
+      }
+      return (
+        `${SENTINEL_START}'${block.id}'__\n` +
+        `${prelude}` +
+        `function ${hatSpec.eventName}(${paramsStr})\n` +
+        `${body}` +
+        `end\n` +
+        `${SENTINEL_END}'${block.id}'__\n`
+      );
+    }
+
+    // Dispatch mode: aggregate all enabled hats of this block type into ONE top-level function
+    const dispatchKey = `${hatSpec.eventName}:${b.type}`;
+    if (codegenContext.emittedDispatchEvents.has(dispatchKey)) return '';
+    codegenContext.emittedDispatchEvents.add(dispatchKey);
+
+    const matchingHats = block.workspace
+      .getTopBlocks(true)
+      .filter((top) => top.type === b.type && !top.isShadow() && top.isEnabled());
+    if (matchingHats.length === 0) return '';
+
+    const branches: string[] = [];
+    matchingHats.forEach((hatBlk, idx) => {
+      const kw = idx === 0 ? 'if' : 'elseif';
+      const cond = hatSpec.conditionLua
+        ? renderTemplate(hatSpec.conditionLua, b, hatBlk, 'lua')
+        : 'true';
+      const comment = hatSpec.branchCommentLua
+        ? renderTemplate(hatSpec.branchCommentLua, b, hatBlk, 'lua')
+        : '';
+      const rawBody = generator.statementToCode(hatBlk, 'BODY');
+      const indentedBody = indentLines(rawBody, '  ');
+      if (codegenContext.debugPass) {
+        branches.push(`  ${kw} ${cond} then${comment}\n${indentedBody}`);
+      } else {
+        branches.push(
+          `${SENTINEL_START}'${hatBlk.id}'__\n` +
+            `  ${kw} ${cond} then${comment}\n` +
+            `${indentedBody}` +
+            `${SENTINEL_END}'${hatBlk.id}'__\n`,
+        );
+      }
+    });
+
+    return `function ${hatSpec.eventName}(${paramsStr})\n${branches.join('')}  end\nend\n`;
+  };
+
+  // --- Python Hat Generator ---
+  pythonGenerator.forBlock[b.type] = (block, generator) => {
+    hoistImports(generator, pack.id, hatSpec.importsPython);
+    const defKw = codegenContext.debugPass ? 'async def' : 'def';
+    const globalLine = getPythonGlobalLine();
+
+    if (hatSpec.mode === 'singleton') {
+      const prelude = hatSpec.preludePython
+        ? `${renderTemplate(hatSpec.preludePython, b, block, 'python')}\n`
+        : '';
+      const body = generator.statementToCode(block, 'BODY');
+      const safeBody = body.trim() ? body : '  pass\n';
+      if (codegenContext.debugPass) {
+        return `${prelude}${defKw} ${hatSpec.eventName}(${paramsStr}):\n${globalLine}${safeBody}\n`;
+      }
+      return (
+        `${SENTINEL_START}'${block.id}'__\n` +
+        `${prelude}` +
+        `${defKw} ${hatSpec.eventName}(${paramsStr}):\n` +
+        `${globalLine}${safeBody}` +
+        `${SENTINEL_END}'${block.id}'__\n`
+      );
+    }
+
+    const dispatchKey = `${hatSpec.eventName}:${b.type}`;
+    if (codegenContext.emittedDispatchEvents.has(dispatchKey)) return '';
+    codegenContext.emittedDispatchEvents.add(dispatchKey);
+
+    const matchingHats = block.workspace
+      .getTopBlocks(true)
+      .filter((top) => top.type === b.type && !top.isShadow() && top.isEnabled());
+    if (matchingHats.length === 0) return '';
+
+    const branches: string[] = [];
+    matchingHats.forEach((hatBlk, idx) => {
+      const kw = idx === 0 ? 'if' : 'elif';
+      const cond = hatSpec.conditionPython
+        ? renderTemplate(hatSpec.conditionPython, b, hatBlk, 'python')
+        : 'True';
+      const comment = hatSpec.branchCommentPython
+        ? renderTemplate(hatSpec.branchCommentPython, b, hatBlk, 'python')
+        : '';
+      const rawBody = generator.statementToCode(hatBlk, 'BODY');
+      const indentedBody = rawBody.trim() ? indentLines(rawBody, '  ') : '    pass\n';
+      if (codegenContext.debugPass) {
+        branches.push(`  ${kw} ${cond}:${comment}\n${indentedBody}`);
+      } else {
+        branches.push(
+          `${SENTINEL_START}'${hatBlk.id}'__\n` +
+            `  ${kw} ${cond}:${comment}\n` +
+            `${indentedBody}` +
+            `${SENTINEL_END}'${hatBlk.id}'__\n`,
+        );
+      }
+    });
+
+    return `${defKw} ${hatSpec.eventName}(${paramsStr}):\n${globalLine}${branches.join('')}\n`;
+  };
+}
+
+function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
+  for (const b of pack.blocks) {
+    registerSingleBlockInBlockly(pack, b);
+
+    if (b.kind === 'hat' && b.hat) {
+      registerHatGenerators(pack, b, b.hat);
+      continue;
+    }
+
+    if (b.lua) {
+      const luaSpec = b.lua;
+      luaGenerator.forBlock[b.type] = (block, generator) => {
+        hoistImports(generator, pack.id, luaSpec.imports);
+        const rendered = renderTemplate(luaSpec.template, b, block, 'lua');
+        if (b.kind === 'value') {
+          return [rendered, LuaOrder.ATOMIC];
+        }
+        return `${rendered}\n`;
+      };
+    }
+
+    if (b.python) {
+      const pySpec = b.python;
+      pythonGenerator.forBlock[b.type] = (block, generator) => {
+        hoistImports(generator, pack.id, pySpec.imports);
+        const rendered = renderTemplate(pySpec.template, b, block, 'python');
+        if (b.kind === 'value') {
+          return [rendered, PyOrder.ATOMIC];
+        }
+        return `${rendered}\n`;
+      };
+    }
+  }
+}
+
+function validateEmitEvent(raw: unknown): SimWidgetEventTrigger | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object') {
+    throw new Error('emitEvent 必须是对象');
+  }
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.eventName !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(obj.eventName)) {
+    throw new Error('emitEvent.eventName 必须是合法的函数名标识符（如 on_button / on_can_rx）');
+  }
+  return {
+    eventName: obj.eventName,
+    ...(Array.isArray(obj.args)
+      ? {
+          args: obj.args.filter(
+            (a): a is string | number | boolean =>
+              typeof a === 'string' || typeof a === 'number' || typeof a === 'boolean',
+          ),
+        }
+      : {}),
+    ...(obj.trigger === 'rising' || obj.trigger === 'change'
+      ? { trigger: obj.trigger }
+      : {}),
+  };
+}
 
 function validateSimWidgets(raw: unknown): SimWidgetSpec[] | undefined {
   if (raw === undefined || raw === null) return undefined;
@@ -46,6 +493,7 @@ function validateSimWidgets(raw: unknown): SimWidgetSpec[] | undefined {
     if (typeof w.label !== 'string' || !w.label.trim()) {
       throw new Error(`模拟控件 (${w.key}) 缺少非空 label 字段`);
     }
+    const emitEvent = validateEmitEvent(w.emitEvent);
     out.push({
       kind: w.kind as SimWidgetKind,
       key: w.key.trim(),
@@ -69,126 +517,44 @@ function validateSimWidgets(raw: unknown): SimWidgetSpec[] | undefined {
         : {}),
       ...(typeof w.activeLabel === 'string' ? { activeLabel: w.activeLabel } : {}),
       ...(typeof w.idleLabel === 'string' ? { idleLabel: w.idleLabel } : {}),
+      ...(emitEvent ? { emitEvent } : {}),
     });
   }
   return out.length > 0 ? out : undefined;
 }
 
-export const STORAGE_CUSTOM_EXTENSIONS_KEY = 'polyblock.extensions.custom.v1';
-
-const PLACEHOLDER_RE = /\{\{([A-Za-z0-9_]+)(?::([a-z_]+))?\}\}/g;
-
-function buildArgKindMap(
-  def: ExtensionBlockDef,
-): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const arg of def.args0 ?? []) {
-    if (typeof arg.name === 'string' && typeof arg.type === 'string') {
-      map.set(arg.name, arg.type);
-    }
-  }
-  return map;
-}
-
-function renderTemplate(
-  template: string,
-  def: ExtensionBlockDef,
-  block: Blockly.Block,
-  lang: 'lua' | 'python',
-): string {
-  const argKinds = buildArgKindMap(def);
-
-  return template.replace(PLACEHOLDER_RE, (_full, argName: string, mod?: string) => {
-    const argType = argKinds.get(argName);
-    let rawValue = '';
-
-    if (argType === 'input_value') {
-      if (lang === 'lua') {
-        rawValue = luaGenerator.valueToCode(block, argName, LuaOrder.NONE) || '""';
-      } else {
-        rawValue = pythonGenerator.valueToCode(block, argName, PyOrder.NONE) || '""';
-      }
-      return rawValue;
-    }
-
-    if (argType === 'field_variable') {
-      const varId = block.getFieldValue(argName);
-      return lang === 'lua'
-        ? luaGenerator.getVariableName(varId)
-        : pythonGenerator.getVariableName(varId);
-    }
-
-    rawValue = String(block.getFieldValue(argName) ?? '');
-
-    if (mod === 'json') {
-      return JSON.stringify(rawValue);
-    }
-    if (mod === 'bool_lua') {
-      return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'
-        ? 'true'
-        : 'false';
-    }
-    if (mod === 'bool_py') {
-      return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'
-        ? 'True'
-        : 'False';
-    }
-    return rawValue;
-  });
-}
-
-function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
-  const blockDefs = pack.blocks.map((b) => {
-    const jsonDef: Record<string, unknown> = {
-      type: b.type,
-      message0: b.message0,
-      args0: b.args0 ?? [],
-      inputsInline: b.inputsInline ?? true,
-      colour: pack.color,
-      tooltip: b.tooltip ?? `${pack.name} · ${b.type}`,
-    };
-
-    if (b.kind === 'statement') {
-      jsonDef.previousStatement = null;
-      jsonDef.nextStatement = null;
-    } else {
-      jsonDef.output = b.outputType ?? null;
-    }
-
-    return jsonDef;
-  });
-
-  Blockly.defineBlocksWithJsonArray(blockDefs);
-
-  for (const b of pack.blocks) {
-    // Lua code generator
-    luaGenerator.forBlock[b.type] = (block, generator) => {
-      const defs = (generator as unknown as { definitions_: Record<string, string> })
-        .definitions_;
-      for (const [idx, imp] of (b.lua.imports ?? []).entries()) {
-        defs[`ext_${pack.id}_imp_${idx}`] = imp;
-      }
-      const rendered = renderTemplate(b.lua.template, b, block, 'lua');
-      if (b.kind === 'value') {
-        return [rendered, LuaOrder.ATOMIC];
-      }
-      return `${rendered}\n`;
-    };
-
-    // Python code generator
-    pythonGenerator.forBlock[b.type] = (block, generator) => {
-      const defs = (generator as unknown as { definitions_: Record<string, string> })
-        .definitions_;
-      for (const [idx, imp] of (b.python.imports ?? []).entries()) {
-        defs[`ext_${pack.id}_imp_${idx}`] = imp;
-      }
-      const rendered = renderTemplate(b.python.template, b, block, 'python');
-      if (b.kind === 'value') {
-        return [rendered, PyOrder.ATOMIC];
-      }
-      return `${rendered}\n`;
-    };
-  }
+function validateHandleChannelPool(
+  raw: unknown,
+  packId: string,
+): HandleChannelPoolSpec | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object') throw new Error('handleChannelPool 必须是对象');
+  const obj = raw as Record<string, unknown>;
+  const min = Number.isFinite(Number(obj.min)) ? Math.max(1, Math.trunc(Number(obj.min))) : 1;
+  const max = Number.isFinite(Number(obj.max))
+    ? Math.max(min, Math.min(32, Math.trunc(Number(obj.max))))
+    : 32;
+  const defaultCount = Number.isFinite(Number(obj.defaultCount))
+    ? Math.max(min, Math.min(max, Math.trunc(Number(obj.defaultCount))))
+    : Math.min(max, 8);
+  return {
+    configKey:
+      typeof obj.configKey === 'string' && obj.configKey.trim()
+        ? obj.configKey.trim()
+        : packId,
+    label: typeof obj.label === 'string' && obj.label.trim() ? obj.label.trim() : '通道',
+    prefix: typeof obj.prefix === 'string' && obj.prefix.trim() ? obj.prefix.trim() : 'CH',
+    min,
+    max,
+    defaultCount,
+    ...(Array.isArray(obj.presets)
+      ? { presets: obj.presets.filter((n): n is number => typeof n === 'number' && Number.isFinite(n)) }
+      : {}),
+    ...(typeof obj.hint === 'string' ? { hint: obj.hint } : {}),
+    ...(typeof obj.fieldName === 'string' && obj.fieldName.trim()
+      ? { fieldName: obj.fieldName.trim() }
+      : {}),
+  };
 }
 
 export function validateExtensionPack(raw: unknown): PolyExtensionPack {
@@ -213,23 +579,38 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
     if (typeof blk.type !== 'string' || !blk.type.trim()) {
       throw new Error('每个积木必须包含非空 type 字段');
     }
-    if (blk.kind !== 'statement' && blk.kind !== 'value') {
-      throw new Error(`积木 ${blk.type} 的 kind 必须为 "statement" 或 "value"`);
+    if (blk.kind !== 'statement' && blk.kind !== 'value' && blk.kind !== 'hat') {
+      throw new Error(`积木 ${blk.type} 的 kind 必须为 "statement"、"value" 或 "hat"`);
     }
     if (typeof blk.message0 !== 'string' || !blk.message0.trim()) {
       throw new Error(`积木 ${blk.type} 缺少 message0`);
     }
-    const luaSpec = blk.lua as Record<string, unknown> | undefined;
-    const pySpec = blk.python as Record<string, unknown> | undefined;
-    if (!luaSpec || typeof luaSpec.template !== 'string') {
-      throw new Error(`积木 ${blk.type} 缺少 lua.template`);
-    }
-    if (!pySpec || typeof pySpec.template !== 'string') {
-      throw new Error(`积木 ${blk.type} 缺少 python.template`);
+    if (blk.kind === 'hat') {
+      const hatObj = blk.hat as Record<string, unknown> | undefined;
+      if (
+        !hatObj ||
+        typeof hatObj.eventName !== 'string' ||
+        !/^[A-Za-z_][A-Za-z0-9_]*$/.test(hatObj.eventName)
+      ) {
+        throw new Error(`事件帽块 ${blk.type} 缺少合法的 hat.eventName`);
+      }
+      if (hatObj.mode !== 'singleton' && hatObj.mode !== 'dispatch') {
+        throw new Error(`事件帽块 ${blk.type} 的 hat.mode 必须为 "singleton" 或 "dispatch"`);
+      }
+    } else {
+      const luaSpec = blk.lua as Record<string, unknown> | undefined;
+      const pySpec = blk.python as Record<string, unknown> | undefined;
+      if (!luaSpec || typeof luaSpec.template !== 'string') {
+        throw new Error(`积木 ${blk.type} 缺少 lua.template`);
+      }
+      if (!pySpec || typeof pySpec.template !== 'string') {
+        throw new Error(`积木 ${blk.type} 缺少 python.template`);
+      }
     }
   }
 
   const simWidgets = validateSimWidgets(obj.simWidgets);
+  const handleChannelPool = validateHandleChannelPool(obj.handleChannelPool, obj.id);
 
   return {
     format: 'polyblock-extension',
@@ -238,15 +619,49 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
     name: obj.name.trim(),
     packVersion: typeof obj.packVersion === 'string' ? obj.packVersion : '1.0.0',
     categoryLabel: obj.categoryLabel.trim().slice(0, 6),
-    color: typeof obj.color === 'string' && obj.color.startsWith('#') ? obj.color : '#6366f1',
+    color:
+      typeof obj.color === 'string' && obj.color.startsWith('#')
+        ? obj.color
+        : typeof obj.categoryColor === 'string' && obj.categoryColor.startsWith('#')
+          ? obj.categoryColor
+          : '#6366f1',
     description:
       typeof obj.description === 'string' ? obj.description : '用户自定义扩展积木包',
     builtin: Boolean(obj.builtin),
+    packKind: obj.packKind === 'runtime' ? 'runtime' : 'peripheral',
+    categoryTarget: obj.categoryTarget === 'event' ? 'event' : 'own',
+    ...(obj.flyoutButton && typeof obj.flyoutButton === 'object'
+      ? { flyoutButton: obj.flyoutButton as PolyExtensionPack['flyoutButton'] }
+      : {}),
+    hasRtMonitorUi: Boolean(obj.hasRtMonitorUi),
     hasVirtualBoardUi: Boolean(obj.hasVirtualBoardUi),
+    ...(handleChannelPool ? { handleChannelPool } : {}),
     blocks: obj.blocks as ExtensionBlockDef[],
     sandboxMock: obj.sandboxMock as ExtensionSandboxMock | undefined,
     ...(simWidgets ? { simWidgets } : {}),
   };
+}
+
+function buildToolboxBlocksForPack(pack: PolyExtensionPack): ToolboxBlockSpec[] {
+  return pack.blocks.map((b) => {
+    const inputs: Record<string, { shadow?: Record<string, unknown> }> = {};
+    for (const [argName, sh] of Object.entries(b.shadows ?? {})) {
+      inputs[argName] = {
+        shadow:
+          sh.type === 'math_number'
+            ? { type: 'math_number', fields: { NUM: sh.value } }
+            : { type: 'text', fields: { TEXT: sh.value } },
+      };
+    }
+
+    return {
+      kind: 'block',
+      type: b.type,
+      keywords: `${pack.name} ${pack.categoryLabel} ${b.keywords ?? ''} ${b.message0}`,
+      ...(b.fields ? { fields: b.fields } : {}),
+      ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
+    };
+  });
 }
 
 class ExtensionRegistry {
@@ -264,7 +679,6 @@ class ExtensionRegistry {
       this.register(pack, false);
     }
 
-    // Restore user-imported custom GLOBAL extension packs from localStorage
     try {
       const raw = localStorage.getItem(STORAGE_CUSTOM_EXTENSIONS_KEY);
       if (raw) {
@@ -287,7 +701,6 @@ class ExtensionRegistry {
 
   register(pack: PolyExtensionPack, persistCustom = true): void {
     this.packs.set(pack.id, pack);
-    // Only bind into Blockly immediately if not currently overridden by an active project-local pack
     if (!this.activeLocalPacks.has(pack.id)) {
       registerPackIntoBlocklyAndGenerators(pack);
     }
@@ -305,7 +718,6 @@ class ExtensionRegistry {
     const prevOverriddenIds = Array.from(this.activeLocalPacks.keys());
     this.activeLocalPacks.clear();
 
-    // Restore any global pack whose ID was previously overridden by the previous project
     for (const oldId of prevOverriddenIds) {
       const globalPack = this.packs.get(oldId);
       if (globalPack) {
@@ -313,7 +725,6 @@ class ExtensionRegistry {
       }
     }
 
-    // Register current project's embedded packs (overriding same-ID global packs)
     for (const rawPack of localPacks) {
       const normalized: PolyExtensionPack = { ...rawPack, builtin: false };
       this.activeLocalPacks.set(normalized.id, normalized);
@@ -321,7 +732,6 @@ class ExtensionRegistry {
     }
   }
 
-  /** Validates a project-embedded .polyext.json (disallows overriding built-in packs, allows overriding global custom packs). */
   validateProjectLocalPack(raw: unknown): PolyExtensionPack {
     this.ensureInitialized();
     const valid = validateExtensionPack(raw);
@@ -368,13 +778,15 @@ class ExtensionRegistry {
     return Array.from(this.packs.values());
   }
 
-  /** Looks up a pack in global library only. */
+  listByKind(kind: 'runtime' | 'peripheral'): PolyExtensionPack[] {
+    return this.listAll().filter((p) => (p.packKind ?? 'peripheral') === kind);
+  }
+
   get(packId: string): PolyExtensionPack | undefined {
     this.ensureInitialized();
     return this.packs.get(packId);
   }
 
-  /** Resolves a pack with project-local precedence over global library. */
   resolvePack(
     packId: string,
     localPacks?: PolyExtensionPack[],
@@ -390,7 +802,6 @@ class ExtensionRegistry {
     return this.packs.get(packId);
   }
 
-  /** Finds which extension pack (project-local or global) declares a given block type. */
   findPackForBlockType(blockType: string): PolyExtensionPack | undefined {
     this.ensureInitialized();
     for (const pack of this.activeLocalPacks.values()) {
@@ -404,6 +815,70 @@ class ExtensionRegistry {
       }
     }
     return undefined;
+  }
+
+  getBlockDef(
+    blockType: string,
+  ): { pack: PolyExtensionPack; block: ExtensionBlockDef } | undefined {
+    this.ensureInitialized();
+    for (const pack of this.activeLocalPacks.values()) {
+      const blk = pack.blocks.find((b) => b.type === blockType);
+      if (blk) return { pack, block: blk };
+    }
+    for (const pack of this.packs.values()) {
+      const blk = pack.blocks.find((b) => b.type === blockType);
+      if (blk) return { pack, block: blk };
+    }
+    return undefined;
+  }
+
+  getHatBlockDef(
+    blockType: string,
+  ): { pack: PolyExtensionPack; block: ExtensionBlockDef; hat: ExtensionHatSpec } | undefined {
+    const found = this.getBlockDef(blockType);
+    if (found && found.block.kind === 'hat' && found.block.hat) {
+      return { pack: found.pack, block: found.block, hat: found.block.hat };
+    }
+    return undefined;
+  }
+
+  isDeclarativeHatBlock(blockType: string): boolean {
+    return Boolean(this.getHatBlockDef(blockType));
+  }
+
+  isEventDrivenBlock(blockType: string): boolean {
+    const found = this.getBlockDef(blockType);
+    if (!found) return false;
+    return found.block.kind === 'hat' || found.pack.packKind === 'runtime';
+  }
+
+  renderHatScopeInfo(block: Blockly.Block): {
+    label: string;
+    shortLabel: string;
+    category: 'lifecycle' | 'timer' | 'button' | 'function';
+  } | null {
+    const found = this.getHatBlockDef(block.type);
+    if (!found) return null;
+    const { block: def, hat } = found;
+    const label = hat.scopeLabelTemplate
+      ? renderTemplate(hat.scopeLabelTemplate, def, block, 'lua')
+      : hat.eventName;
+    const shortLabel = hat.scopeShortTemplate
+      ? renderTemplate(hat.scopeShortTemplate, def, block, 'lua')
+      : hat.eventName;
+    return {
+      label,
+      shortLabel,
+      category: hat.scopeCategory ?? 'button',
+    };
+  }
+
+  renderHatDuplicateKey(block: Blockly.Block): string | null {
+    const found = this.getHatBlockDef(block.type);
+    if (!found || found.hat.mode !== 'dispatch' || !found.hat.duplicateKeyTemplate) {
+      return null;
+    }
+    return renderTemplate(found.hat.duplicateKeyTemplate, found.block, block, 'lua');
   }
 
   getEnabledPacks(
@@ -424,57 +899,71 @@ class ExtensionRegistry {
     return out;
   }
 
+  /** Returns toolbox blocks from enabled packs that merge into the core `事件` category (e.g. rt-lifecycle). */
+  getEventCategoryBlocks(
+    enabledIds: string[],
+    localPacks?: PolyExtensionPack[],
+  ): ToolboxBlockSpec[] {
+    const out: ToolboxBlockSpec[] = [];
+    for (const pack of this.getEnabledPacks(enabledIds, localPacks)) {
+      if (pack.categoryTarget === 'event') {
+        out.push(...buildToolboxBlocksForPack(pack));
+      }
+    }
+    return out;
+  }
+
   getSandboxMocks(
     enabledIds: string[],
     localPacks?: PolyExtensionPack[],
   ): ExtensionSandboxMock[] {
     return this.getEnabledPacks(enabledIds, localPacks)
-      .map((p) => p.sandboxMock)
-      .filter((m): m is ExtensionSandboxMock => Boolean(m));
+      .filter((p) => Boolean(p.sandboxMock))
+      .map((p) => ({
+        ...p.sandboxMock!,
+        packId: p.id,
+      }));
   }
 
+  getChannelPoolPacks(
+    enabledIds: string[],
+    localPacks?: PolyExtensionPack[],
+  ): PolyExtensionPack[] {
+    return this.getEnabledPacks(enabledIds, localPacks).filter((p) =>
+      Boolean(p.handleChannelPool),
+    );
+  }
+
+  hasRtMonitor(
+    enabledIds: string[],
+    localPacks?: PolyExtensionPack[],
+  ): boolean {
+    return this.getEnabledPacks(enabledIds, localPacks).some((p) =>
+      Boolean(p.hasRtMonitorUi),
+    );
+  }
+
+  /** Converts enabled standalone-category packs (`categoryTarget !== 'event'`) into Blockly toolbox categories. */
   toCategorySpecs(
     enabledIds: string[],
     localPacks?: PolyExtensionPack[],
+    filterKind?: 'runtime' | 'peripheral',
   ): BlockCategorySpec[] {
-    return this.getEnabledPacks(enabledIds, localPacks).map((pack) => {
-      const blocks: ToolboxBlockSpec[] = pack.blocks.map((b) => {
-        const inputs: Record<string, { shadow?: Record<string, unknown> }> = {};
-        for (const [argName, sh] of Object.entries(b.shadows ?? {})) {
-          inputs[argName] = {
-            shadow:
-              sh.type === 'math_number'
-                ? { type: 'math_number', fields: { NUM: sh.value } }
-                : { type: 'text', fields: { TEXT: sh.value } },
-          };
+    return this.getEnabledPacks(enabledIds, localPacks)
+      .filter((pack) => {
+        if (pack.categoryTarget === 'event') return false;
+        if (filterKind && (pack.packKind ?? 'peripheral') !== filterKind) {
+          return false;
         }
-
-        return {
-          kind: 'block',
-          type: b.type,
-          keywords: `${pack.name} ${pack.categoryLabel} ${b.keywords ?? ''} ${b.message0}`,
-          ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
-        };
-      });
-
-      // Attach hardware button edge callback hat directly to the virtual-board peripheral pack
-      // so projects without virtual-board never see button callback blocks.
-      if (pack.id === 'virtual-board') {
-        blocks.push({
-          kind: 'block',
-          type: 'poly_on_button',
-          keywords: '当按键 按下 释放 回调 硬件 事件 on_button key A B board',
-          fields: { KEY: 'A', EDGE: 'press' },
-        });
-      }
-
-      return {
-        id: `ext_${pack.id}`,
+        return true;
+      })
+      .map((pack) => ({
+        id: pack.id === 'rt-timers' ? 'timers' : `ext_${pack.id}`,
         label: pack.categoryLabel,
         color: pack.color,
-        blocks,
-      };
-    });
+        blocks: buildToolboxBlocksForPack(pack),
+        ...(pack.flyoutButton ? { flyoutButton: pack.flyoutButton } : {}),
+      }));
   }
 }
 

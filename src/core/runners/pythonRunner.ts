@@ -13,6 +13,7 @@ interface WorkerReply {
     | 'RESUMED'
     | 'WAITING'
     | 'DEVICE_EVENT'
+    | 'CUSTOM_EVENT'
     | 'RUNTIME_TELEMETRY'
     | 'DONE'
     | 'ERROR';
@@ -24,6 +25,8 @@ interface WorkerReply {
   active?: boolean;
   kind?: string;
   value?: unknown;
+  eventName?: string;
+  args?: unknown[];
   telemetry?: RuntimeTelemetry;
   message?: string;
   durationMs?: number;
@@ -178,6 +181,11 @@ export class MicroPythonWasmRunner implements ScriptRunner {
           return;
         }
 
+        if (msg.type === 'CUSTOM_EVENT' && msg.eventName) {
+          callbacks.onCustomEvent?.(msg.eventName, msg.args ?? []);
+          return;
+        }
+
         if (msg.type === 'RUNTIME_TELEMETRY' && msg.telemetry) {
           this.inEventLoop = msg.telemetry.eventLoopActive;
           callbacks.onRuntimeTelemetry?.(msg.telemetry);
@@ -283,6 +291,16 @@ export class MicroPythonWasmRunner implements ScriptRunner {
       type: 'UPDATE_MOCK_INPUTS',
       runId: this.activeRunId,
       mockInputs,
+    });
+  }
+
+  emitEvent(eventName: string, args: unknown[] = []): void {
+    if (!this.worker || !this.activeRunId) return;
+    this.worker.postMessage({
+      type: 'EMIT_EVENT',
+      runId: this.activeRunId,
+      eventName,
+      args,
     });
   }
 

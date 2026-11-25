@@ -95,6 +95,11 @@ export interface MultiHandleRunCallbacks {
     line?: number,
   ) => void;
   onDeviceEvent: (kind: string, value: unknown) => void;
+  onCustomEvent?: (
+    sourceHandleId: string,
+    eventName: string,
+    args: unknown[],
+  ) => void;
   onHandleTelemetry: (handleId: string, telemetry: RuntimeTelemetry | null) => void;
   onStatusChange: (status: RunnerStatus) => void;
 }
@@ -167,6 +172,8 @@ export class MultiHandleRunnerOrchestrator {
           onLog: (level, message, line) =>
             callbacks.onHandleLog(handle, level, message, line),
           onDeviceEvent: callbacks.onDeviceEvent,
+          onCustomEvent: (eventName, args) =>
+            callbacks.onCustomEvent?.(handle.id, eventName, args),
           onRuntimeTelemetry: (telemetry) =>
             callbacks.onHandleTelemetry(handle.id, telemetry),
         },
@@ -189,6 +196,17 @@ export class MultiHandleRunnerOrchestrator {
   updateMockInputs(mockInputs: Record<string, unknown>): void {
     for (const runner of this.activeRunners.values()) {
       runner.updateMockInputs?.(mockInputs);
+    }
+  }
+
+  emitEvent(
+    eventName: string,
+    args: unknown[] = [],
+    excludeHandleId?: string,
+  ): void {
+    for (const [hdlId, runner] of this.activeRunners.entries()) {
+      if (excludeHandleId && hdlId === excludeHandleId) continue;
+      runner.emitEvent?.(eventName, args);
     }
   }
 

@@ -4,16 +4,8 @@ import {
   getActiveProjectCapabilities,
   getActiveTimerConfig,
 } from '../blocks/timerConfigBridge';
-import {
-  CAP_RT_LIFECYCLE,
-  CAP_RT_TIMERS,
-  CAP_VIRTUAL_BOARD,
-} from '../capabilities/registry';
 import { extensionRegistry } from '../extensions/registry';
-import {
-  ALL_VALID_TOP_HAT_TYPES,
-  TIMER_ID_BLOCK_TYPES,
-} from './eventMode';
+import { isValidTopHatType } from './eventMode';
 
 export const SENTINEL_START_PREFIX = '__PB_S:';
 export const SENTINEL_END_PREFIX = '__PB_E:';
@@ -72,7 +64,6 @@ export function extractSourceMap(rawCode: string): StrippedCodeResult {
     }
   }
 
-  // Remove trailing blank lines while keeping single trailing newline clean
   while (cleanLines.length > 0 && cleanLines[cleanLines.length - 1].trim() === '') {
     cleanLines.pop();
   }
@@ -85,8 +76,12 @@ export function extractSourceMap(rawCode: string): StrippedCodeResult {
 }
 
 /**
- * Collects lightweight static diagnostics directly from the Blockly workspace,
- * including Phase 5 duplicate event-hat and out-of-range timer channel checks.
+ * Collects unified static diagnostics directly from the Blockly workspace:
+ * - Duplicate singleton hats (core `poly_on_start` + any declarative singleton hat)
+ * - Duplicate dispatch hat branches (timers, buttons, or any custom `.polyext.json` dispatch hat)
+ * - Floating blocks, empty `on_start`
+ * - Disabled / removed extension & runtime pack blocks
+ * - Out-of-range channel pool IDs for any pack declaring `handleChannelPool`
  */
 export function analyzeWorkspaceDiagnostics(
   workspace: Blockly.Workspace,
@@ -98,69 +93,75 @@ export function analyzeWorkspaceDiagnostics(
     return diagnostics;
   }
 
-  const checkSingletonHat = (type: string, label: string) => {
-    const matching = topBlocks.filter(
-      (b) => b.type === type && !b.isShadow() && b.isEnabled(),
-    );
-    if (matching.length > 1) {
-      for (let i = 1; i < matching.length; i++) {
+  const enabledTopBlocks = topBlocks.filter((b) => !b.isShadow() && b.isEnabled());
+
+  // 1. Check duplicate `poly_on_start` + any declarative singleton hat
+  const seenSingletons = new Map<string, number>();
+  const startBlocks: Blockly.Block[] = [];
+  for (const blk of enabledTopBlocks) {
+    if (blk.type === 'poly_on_start') {
+      startBlocks.push(blk);
+      const count = (seenSingletons.get(blk.type) ?? 0) + 1;
+      seenSingletons.set(blk.type, count);
+      if (count > 1) {
         diagnostics.push({
-          id: `multi-${type}-${matching[i].id}`,
+          id: `multi-poly_on_start-${blk.id}`,
           severity: 'warning',
-          message: `检测到多个“${label}”入口块，建议合并为一个入口以保证执行顺序明确。`,
-          blockId: matching[i].id,
+          message: '检测到多个“当程序启动”入口块，建议合并为一个入口以保证执行顺序明确。',
+          blockId: blk.id,
+        });
+      }
+      continue;
+    }
+
+    const hatDef = extensionRegistry.getHatBlockDef(blk.type);
+    if (hatDef && hatDef.hat.mode === 'singleton') {
+      const count = (seenSingletons.get(blk.type) ?? 0) + 1;
+      seenSingletons.set(blk.type, count);
+      if (count > 1) {
+        diagnostics.push({
+          id: `multi-${blk.type}-${blk.id}`,
+          severity: 'warning',
+          message: `检测到多个“${hatDef.hat.eventName}”回调块，建议合并为一个以保证执行顺序明确。`,
+          blockId: blk.id,
         });
       }
     }
-    return matching;
-  };
+  }
 
-  const startBlocks = checkSingletonHat('poly_on_start', '当程序启动');
-  checkSingletonHat('poly_on_run', '当周期运行 on_run');
-  checkSingletonHat('poly_on_stop', '当程序停止 on_stop');
+  // 2. Check duplicate dispatch hat branches generically across ALL declarative dispatch hats
+  const seenDispatchByType = new Map<string, Set<string>>();
+  for (const blk of enabledTopBlocks) {
+    const hatDef = extensionRegistry.getHatBlockDef(blk.type);
+    if (!hatDef || hatDef.hat.mode !== 'dispatch') continue;
+    const dupKey = extensionRegistry.renderHatDuplicateKey(blk);
+    if (dupKey === null) continue;
 
-  // Check duplicate timer ID hats
-  const seenTimerHats = new Set<number>();
-  for (const blk of topBlocks) {
-    if (blk.type !== 'poly_on_timer' || blk.isShadow() || !blk.isEnabled()) continue;
-    const tid = Math.trunc(Number(blk.getFieldValue('TIMER_ID') ?? 0));
-    if (seenTimerHats.has(tid)) {
+    let seen = seenDispatchByType.get(blk.type);
+    if (!seen) {
+      seen = new Set<string>();
+      seenDispatchByType.set(blk.type, seen);
+    }
+    if (seen.has(dupKey)) {
+      const isTimer = blk.type === 'poly_on_timer';
       diagnostics.push({
-        id: `dup-timer-hat-${tid}-${blk.id}`,
+        id: isTimer
+          ? `dup-timer-hat-${dupKey}-${blk.id}`
+          : `dup-hat-${blk.type}-${dupKey}-${blk.id}`,
         severity: 'warning',
-        message: `定时器通道 T${tid} 绑定了多个“当定时器触发”回调块，建议合并为一个。`,
+        message: isTimer
+          ? `定时器通道 T${dupKey} 绑定了多个“当定时器触发”回调块，建议合并为一个。`
+          : `回调 ${hatDef.hat.eventName}（条件 ${dupKey}）绑定了多个重复分支，建议合并。`,
         blockId: blk.id,
       });
     } else {
-      seenTimerHats.add(tid);
+      seen.add(dupKey);
     }
   }
 
-  // Check duplicate button (KEY, EDGE) hats
-  const seenButtonHats = new Set<string>();
-  for (const blk of topBlocks) {
-    if (blk.type !== 'poly_on_button' || blk.isShadow() || !blk.isEnabled()) continue;
-    const key = String(blk.getFieldValue('KEY') || 'A');
-    const edge = String(blk.getFieldValue('EDGE') || 'press');
-    const sig = `${key}:${edge}`;
-    if (seenButtonHats.has(sig)) {
-      diagnostics.push({
-        id: `dup-btn-hat-${sig}-${blk.id}`,
-        severity: 'warning',
-        message: `按键 ${key}（${edge === 'press' ? '按下' : '释放'}）绑定了多个回调块，建议合并。`,
-        blockId: blk.id,
-      });
-    } else {
-      seenButtonHats.add(sig);
-    }
-  }
-
-  for (const block of topBlocks) {
-    if (
-      !ALL_VALID_TOP_HAT_TYPES.has(block.type) &&
-      !block.isShadow() &&
-      block.isEnabled()
-    ) {
+  // 3. Floating top-level statements & empty on_start
+  for (const block of enabledTopBlocks) {
+    if (!isValidTopHatType(block.type)) {
       diagnostics.push({
         id: `floating-${block.id}`,
         severity: 'warning',
@@ -182,85 +183,57 @@ export function analyzeWorkspaceDiagnostics(
     }
   }
 
-  // Check capability gating & out-of-range timer channel IDs across ALL blocks
+  // 4. Unified pack/capability gating + channel pool OOB diagnostics across ALL blocks
   const activeCaps = getActiveProjectCapabilities();
-  const timersEnabled = activeCaps === null || activeCaps.includes(CAP_RT_TIMERS);
-  const lifecycleEnabled =
-    activeCaps === null || activeCaps.includes(CAP_RT_LIFECYCLE);
-  const vboardEnabled =
-    activeCaps === null || activeCaps.includes(CAP_VIRTUAL_BOARD);
-
   const timerCfg = getActiveTimerConfig();
+
   for (const blk of workspace.getAllBlocks(false)) {
     if (blk.isShadow() || !blk.isEnabled()) continue;
 
-    if (
-      !lifecycleEnabled &&
-      (blk.type === 'poly_on_run' ||
-        blk.type === 'poly_on_stop' ||
-        blk.type === 'poly_set_run_period' ||
-        blk.type === 'poly_run_control')
-    ) {
-      diagnostics.push({
-        id: `cap-missing-lifecycle-${blk.id}`,
-        severity: 'warning',
-        message:
-          '当前项目未启用「周期事件循环 (on_run / on_stop)」能力，请在项目配置的「能力与外设」中启用。',
-        blockId: blk.id,
-      });
-    }
+    const ownerPack = extensionRegistry.findPackForBlockType(blk.type);
 
-    if (!vboardEnabled && blk.type === 'poly_on_button') {
-      diagnostics.push({
-        id: `cap-missing-vboard-${blk.id}`,
-        severity: 'warning',
-        message:
-          '当前项目未启用「虚拟硬件外设包」，按键事件回调仅在具备按键外设的项目中生效。',
-        blockId: blk.id,
-      });
-    }
-
-    // Generic check for ALL built-in & custom extension pack blocks (global or project-local)
     if (activeCaps !== null) {
-      const ownerPack = extensionRegistry.findPackForBlockType(blk.type);
       if (ownerPack && !activeCaps.includes(ownerPack.id)) {
+        const diagId =
+          ownerPack.id === 'rt-timers'
+            ? `cap-missing-timers-${blk.id}`
+            : ownerPack.id === 'rt-lifecycle'
+              ? `cap-missing-lifecycle-${blk.id}`
+              : `cap-missing-ext-${ownerPack.id}-${blk.id}`;
         diagnostics.push({
-          id: `cap-missing-ext-${ownerPack.id}-${blk.id}`,
-          severity: 'error',
-          message: `当前项目未启用外设/扩展包「${ownerPack.name}」，请在项目配置的「能力与外设」中启用后再运行或导出。`,
+          id: diagId,
+          severity: ownerPack.id === 'rt-lifecycle' ? 'warning' : 'error',
+          message: `当前项目未启用「${ownerPack.name}」，请在项目配置的「能力与外设」中启用后再运行或导出。`,
           blockId: blk.id,
         });
-      } else if (!ownerPack && blk.type.startsWith('ext_')) {
+        continue;
+      }
+      if (!ownerPack && blk.type.startsWith('ext_')) {
         diagnostics.push({
           id: `cap-missing-ext-unknown-${blk.id}`,
           severity: 'error',
           message: `积木「${blk.type}」所属的自定义外设包已移除或未导入，请重新导入对应 .polyext.json。`,
           blockId: blk.id,
         });
+        continue;
       }
     }
 
-    if (!TIMER_ID_BLOCK_TYPES.has(blk.type)) continue;
-
-    if (!timersEnabled) {
-      diagnostics.push({
-        id: `cap-missing-timers-${blk.id}`,
-        severity: 'error',
-        message:
-          '当前项目未启用「多路编号定时器」能力，请在项目配置的「能力与外设」中启用后再使用定时器积木。',
-        blockId: blk.id,
-      });
-      continue;
-    }
-
-    const tid = Math.trunc(Number(blk.getFieldValue('TIMER_ID') ?? 0));
-    if (!Number.isInteger(tid) || tid < 0 || tid >= timerCfg.count) {
-      diagnostics.push({
-        id: `timer-oob-${tid}-${blk.id}`,
-        severity: 'error',
-        message: `定时器通道 T${tid} 超出当前句柄配置范围（0~${timerCfg.count - 1}），请更换通道或在句柄配置中调大定时器通道数。`,
-        blockId: blk.id,
-      });
+    // Channel pool range check (applies to rt-timers and any future pack with handleChannelPool)
+    if (ownerPack?.handleChannelPool) {
+      const pool = ownerPack.handleChannelPool;
+      const fieldName = pool.fieldName || 'TIMER_ID';
+      if (blk.getField(fieldName)) {
+        const cid = Math.trunc(Number(blk.getFieldValue(fieldName) ?? 0));
+        if (!Number.isInteger(cid) || cid < 0 || cid >= timerCfg.count) {
+          diagnostics.push({
+            id: `timer-oob-${cid}-${blk.id}`,
+            severity: 'error',
+            message: `${pool.label} ${pool.prefix}${cid} 超出当前句柄配置范围（0~${timerCfg.count - 1}），请更换通道或在句柄配置中调大通道数。`,
+            blockId: blk.id,
+          });
+        }
+      }
     }
   }
 

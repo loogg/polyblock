@@ -108,6 +108,10 @@ class RunnerManager {
     this.activeRunner?.updateMockInputs?.(mockInputs);
   }
 
+  emitActiveEvent(eventName: string, args: unknown[] = []): void {
+    this.activeRunner?.emitEvent?.(eventName, args);
+  }
+
   disposeAll(): void {
     for (const runner of this.runners.values()) {
       runner.dispose();

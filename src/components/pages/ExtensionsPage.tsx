@@ -1,10 +1,7 @@
 import { ArrowLeft, Cpu, Download, Trash2, Upload } from 'lucide-react';
 import { useRef } from 'react';
 import { backendRegistry } from '../../core/backends/registry';
-import {
-  BUILTIN_RUNTIME_CAPABILITIES,
-  SAMPLE_CUSTOM_BOARD_TEMPLATE,
-} from '../../core/capabilities/registry';
+import { SAMPLE_CUSTOM_BOARD_TEMPLATE } from '../../core/capabilities/registry';
 import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../../core/extensions/builtinPacks';
 import type { PolyExtensionPack } from '../../core/extensions/types';
 import type { TargetProfile } from '../../types/project';
@@ -57,6 +54,10 @@ export function ExtensionsPage({
   const extFileInputRef = useRef<HTMLInputElement | null>(null);
   const boardFileInputRef = useRef<HTMLInputElement | null>(null);
   const enabledSet = new Set(enabledCapabilityIds);
+  const runtimePacks = allPacks.filter((p) => p.packKind === 'runtime');
+  const peripheralPacks = allPacks.filter(
+    (p) => (p.packKind ?? 'peripheral') !== 'runtime',
+  );
   const backends = backendRegistry.list();
 
   const handleImportExtFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -178,20 +179,20 @@ export function ExtensionsPage({
         </div>
 
         <h2 className="section-heading">
-          运行时能力模块（按目标板按需开启，不污染纯脚本项目）
+          内置运行时扩展包（与外设包统一声明式协议 · 不污染纯脚本项目）
         </h2>
         <div className="card-grid">
-          {BUILTIN_RUNTIME_CAPABILITIES.map((cap) => {
-            const isEnabled = enabledSet.has(cap.id);
+          {runtimePacks.map((pack) => {
+            const isEnabled = enabledSet.has(pack.id);
             return (
               <div
-                key={cap.id}
+                key={pack.id}
                 className="ui-card"
                 style={
                   isEnabled
                     ? {
-                        borderColor: cap.color,
-                        boxShadow: `0 0 0 1px ${cap.color}33`,
+                        borderColor: pack.color,
+                        boxShadow: `0 0 0 1px ${pack.color}33`,
                       }
                     : undefined
                 }
@@ -200,24 +201,37 @@ export function ExtensionsPage({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div
                       className="card-icon"
-                      style={{ background: cap.color, fontSize: 11.5 }}
+                      style={{ background: pack.color, fontSize: 11.5 }}
                     >
-                      {cap.shortLabel.slice(0, 2)}
+                      {pack.categoryLabel}
                     </div>
                     <div>
                       <div style={{ fontWeight: 700, fontSize: 13.5 }}>
-                        {cap.name}
+                        {pack.name}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                        能力 ID：{cap.id} ·{' '}
-                        {cap.scope === 'handle' ? '按句柄独立配置' : '项目级能力'}
+                        v{pack.packVersion} · {pack.blocks.length} 个积木
+                        {pack.handleChannelPool ? ' · 句柄通道池' : ''}
                       </div>
                     </div>
                   </div>
-                  <span className="status-pill idle">运行时能力</span>
+                  <span className="status-pill idle">运行时扩展包</span>
                 </div>
 
-                <p className="card-desc">{cap.description}</p>
+                <p className="card-desc">{pack.description}</p>
+
+                <div className="paused-var-chips">
+                  {pack.blocks.slice(0, 4).map((b) => (
+                    <span key={b.type} className="var-chip" style={{ fontSize: 10.5 }}>
+                      {b.message0.replace(/%\d/g, '▢')}
+                    </span>
+                  ))}
+                  {pack.blocks.length > 4 && (
+                    <span className="var-chip" style={{ fontSize: 10.5 }}>
+                      +{pack.blocks.length - 4} 项
+                    </span>
+                  )}
+                </div>
 
                 <div className="card-footer">
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
@@ -228,7 +242,7 @@ export function ExtensionsPage({
                     className={`ext-toggle-btn ${isEnabled ? 'enabled' : 'disabled'}`}
                     style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
                     title={isEnabled ? '点击从当前项目停用' : '启用到当前项目'}
-                    onClick={() => onToggleCapability(cap.id)}
+                    onClick={() => onToggleCapability(pack.id)}
                   >
                     {isEnabled ? '已启用' : '+ 启用'}
                   </button>
@@ -240,11 +254,13 @@ export function ExtensionsPage({
 
         <h2 className="section-heading">
           全局硬件外设与扩展积木包（多项目复用 · 当前项目启用{' '}
-          {allPacks.filter((p) => enabledSet.has(p.id)).length} / {allPacks.length}）
+          {peripheralPacks.filter((p) => enabledSet.has(p.id)).length} /{' '}
+          {peripheralPacks.length}）
         </h2>
         <div className="card-grid">
-          {allPacks.map((pack) => {
+          {peripheralPacks.map((pack) => {
             const isEnabled = enabledSet.has(pack.id);
+            const hasHat = pack.blocks.some((b) => b.kind === 'hat');
             return (
               <div
                 key={pack.id}
@@ -272,6 +288,7 @@ export function ExtensionsPage({
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                         v{pack.packVersion} · {pack.blocks.length} 个积木
+                        {hasHat ? ' · 含事件回调' : ''}
                         {pack.sandboxMock ? ' · 含沙箱模拟' : ''}
                         {(pack.simWidgets?.length ?? 0) > 0
                           ? ` · ${pack.simWidgets!.length} 模拟控件`

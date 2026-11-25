@@ -1,5 +1,271 @@
 import type { PolyExtensionPack } from './types';
 
+export const RT_LIFECYCLE_PACK: PolyExtensionPack = {
+  format: 'polyblock-extension',
+  version: 1,
+  id: 'rt-lifecycle',
+  name: '周期事件循环 (on_run / on_stop)',
+  packVersion: '1.0.0',
+  categoryLabel: '周期',
+  color: '#e0911f',
+  description:
+    '为项目启用常驻周期回调 on_run（默认 100ms，可动态调频/启停）与安全停机 on_stop 积木，对应板端 rt 周期调度。',
+  builtin: true,
+  packKind: 'runtime',
+  categoryTarget: 'event',
+  hasRtMonitorUi: true,
+  blocks: [
+    {
+      type: 'poly_on_run',
+      kind: 'hat',
+      message0: '当周期运行 on_run 每 %1 ms',
+      args0: [
+        {
+          type: 'field_number',
+          name: 'PERIOD_MS',
+          value: 100,
+          min: 10,
+          max: 60000,
+          precision: 1,
+        },
+      ],
+      inputsInline: true,
+      blockStyle: 'event_blocks',
+      fields: { PERIOD_MS: 100 },
+      tooltip:
+        '周期主回调（on_run，默认每 100ms 触发一次），运行后进入常驻事件循环直到手动停止。',
+      keywords: '当周期运行 on_run 周期 主循环 loop 回调 100ms',
+      hat: {
+        eventName: 'on_run',
+        params: [],
+        mode: 'singleton',
+        importsLua: ['local rt = require("rt")'],
+        importsPython: ['import rt'],
+        preludeLua: 'rt.set_run_period({{PERIOD_MS:min10_int}})',
+        preludePython: 'rt.set_run_period({{PERIOD_MS:min10_int}})',
+        scopeLabelTemplate: 'on_run (每 {{PERIOD_MS:min10_int}}ms)',
+        scopeShortTemplate: 'on_run',
+        scopeCategory: 'lifecycle',
+        keepsAlive: true,
+      },
+    },
+    {
+      type: 'poly_set_run_period',
+      kind: 'statement',
+      message0: '设置 on_run 周期为 %1 ms',
+      args0: [{ type: 'input_value', name: 'MS', check: 'Number' }],
+      inputsInline: true,
+      blockStyle: 'event_stmt_blocks',
+      shadows: { MS: { type: 'math_number', value: 100 } },
+      tooltip: '动态修改 on_run 周期回调的触发间隔（毫秒）。',
+      keywords: '设置 on_run 周期 period ms 间隔 频率',
+      lua: {
+        imports: ['local rt = require("rt")'],
+        template: 'rt.set_run_period({{MS}})',
+      },
+      python: {
+        imports: ['import rt'],
+        template: 'rt.set_run_period({{MS}})',
+      },
+    },
+    {
+      type: 'poly_run_control',
+      kind: 'statement',
+      message0: '%1 on_run 周期运行',
+      args0: [
+        {
+          type: 'field_dropdown',
+          name: 'ACTION',
+          options: [
+            ['启动', 'start'],
+            ['停止', 'stop'],
+          ],
+        },
+      ],
+      inputsInline: true,
+      blockStyle: 'event_stmt_blocks',
+      fields: { ACTION: 'stop' },
+      tooltip: '在运行时启动或暂停 on_run 周期调度（对应 rt.start_run / rt.stop_run）。',
+      keywords: '启动 停止 暂停 on_run 周期运行 start_run stop_run',
+      lua: {
+        imports: ['local rt = require("rt")'],
+        template: 'rt.{{ACTION:action_run}}()',
+      },
+      python: {
+        imports: ['import rt'],
+        template: 'rt.{{ACTION:action_run}}()',
+      },
+    },
+    {
+      type: 'poly_on_stop',
+      kind: 'hat',
+      message0: '当程序停止 (on_stop)',
+      inputsInline: true,
+      blockStyle: 'event_blocks',
+      tooltip: '手动停止常驻事件循环时自动执行一次收尾清理（如熄灭 LED / 复位输出）。',
+      keywords: '当程序停止 on_stop 退出 收尾 清理 事件',
+      hat: {
+        eventName: 'on_stop',
+        params: [],
+        mode: 'singleton',
+        scopeLabelTemplate: 'on_stop (安全停机)',
+        scopeShortTemplate: 'on_stop',
+        scopeCategory: 'lifecycle',
+        keepsAlive: false,
+      },
+    },
+  ],
+};
+
+export const RT_TIMERS_PACK: PolyExtensionPack = {
+  format: 'polyblock-extension',
+  version: 1,
+  id: 'rt-timers',
+  name: '多路编号定时器 (rt.timer)',
+  packVersion: '1.0.0',
+  categoryLabel: '定时',
+  color: '#6366f1',
+  description:
+    '为项目内每个隔离句柄提供独立的整数通道定时器池（0~31 路）、画布就地别名与顶层零闭包 on_timer(id) 分发。',
+  builtin: true,
+  packKind: 'runtime',
+  categoryTarget: 'own',
+  hasRtMonitorUi: true,
+  flyoutButton: {
+    text: '⚙ 配置本句柄定时器通道',
+    callbackKey: 'OPEN_HANDLE_TIMER_CONFIG',
+  },
+  handleChannelPool: {
+    configKey: 'rt-timers',
+    label: '定时器通道',
+    prefix: 'T',
+    min: 1,
+    max: 32,
+    defaultCount: 8,
+    presets: [4, 8, 16, 32],
+    fieldName: 'TIMER_ID',
+    hint: '每个隔离句柄（独立 lua_State*）独享自己的定时器池与别名，彼此绝不窜扰；在画布上右键任意定时器积木也可就地修改别名。',
+  },
+  blocks: [
+    {
+      type: 'poly_on_timer',
+      kind: 'hat',
+      message0: '当定时器 %1 触发时',
+      args0: [{ type: 'field_channel_id', name: 'TIMER_ID' }],
+      inputsInline: true,
+      blockStyle: 'timer_hat_blocks',
+      fields: { TIMER_ID: '0' },
+      tooltip:
+        '绑定指定通道 ID 的定时器到期回调，自动聚合成顶层 on_timer(id) 分发函数（零闭包）。',
+      keywords: '当定时器 触发 回调 on_timer timer id 通道',
+      hat: {
+        eventName: 'on_timer',
+        params: ['id'],
+        mode: 'dispatch',
+        conditionLua: 'id == {{TIMER_ID:int}}',
+        conditionPython: 'id == {{TIMER_ID:int}}',
+        branchCommentLua: '{{TIMER_ID:channel_comment_lua}}',
+        branchCommentPython: '{{TIMER_ID:channel_comment_py}}',
+        duplicateKeyTemplate: '{{TIMER_ID:int}}',
+        scopeLabelTemplate: 'on_timer · {{TIMER_ID:channel_label}}',
+        scopeShortTemplate: 'T{{TIMER_ID:int}}',
+        scopeCategory: 'timer',
+        keepsAlive: false,
+      },
+    },
+    {
+      type: 'poly_start_timer',
+      kind: 'statement',
+      message0: '启动定时器 %1 周期 %2 ms 重复 %3 次',
+      args0: [
+        { type: 'field_channel_id', name: 'TIMER_ID' },
+        { type: 'input_value', name: 'PERIOD_MS', check: 'Number' },
+        { type: 'input_value', name: 'REPEAT', check: 'Number' },
+      ],
+      inputsInline: true,
+      blockStyle: 'timer_blocks',
+      fields: { TIMER_ID: '0' },
+      shadows: {
+        PERIOD_MS: { type: 'math_number', value: 500 },
+        REPEAT: { type: 'math_number', value: 0 },
+      },
+      tooltip:
+        '启动或重置指定通道定时器（rt.start_timer(id, period_ms, repeat)）：repeat=0 持续循环，1 单次，N 触发 N 次后停止。',
+      keywords: '启动定时器 start_timer 周期 重复 循环 单次 timer',
+      lua: {
+        imports: ['local rt = require("rt")'],
+        template:
+          'rt.start_timer({{TIMER_ID:int}}, {{PERIOD_MS}}, {{REPEAT}}){{TIMER_ID:channel_comment_lua}}',
+      },
+      python: {
+        imports: ['import rt'],
+        template:
+          'rt.start_timer({{TIMER_ID:int}}, {{PERIOD_MS}}, {{REPEAT}}){{TIMER_ID:channel_comment_py}}',
+      },
+    },
+    {
+      type: 'poly_stop_timer',
+      kind: 'statement',
+      message0: '停止定时器 %1',
+      args0: [{ type: 'field_channel_id', name: 'TIMER_ID' }],
+      inputsInline: true,
+      blockStyle: 'timer_blocks',
+      fields: { TIMER_ID: '0' },
+      tooltip: '停止指定通道定时器（rt.stop_timer(id)）。',
+      keywords: '停止定时器 stop_timer 关闭 取消 timer',
+      lua: {
+        imports: ['local rt = require("rt")'],
+        template: 'rt.stop_timer({{TIMER_ID:int}}){{TIMER_ID:channel_comment_lua}}',
+      },
+      python: {
+        imports: ['import rt'],
+        template: 'rt.stop_timer({{TIMER_ID:int}}){{TIMER_ID:channel_comment_py}}',
+      },
+    },
+    {
+      type: 'poly_get_timer_value',
+      kind: 'value',
+      outputType: 'Number',
+      message0: '定时器 %1 已过毫秒数',
+      args0: [{ type: 'field_channel_id', name: 'TIMER_ID' }],
+      inputsInline: true,
+      blockStyle: 'timer_blocks',
+      fields: { TIMER_ID: '0' },
+      tooltip:
+        '读取指定定时器本周期已流逝的毫秒数（rt.get_timer_value(id)，0 → period_ms，未运行返回 0）。',
+      keywords: '读取 定时器 已过 毫秒 get_timer_value elapsed timer',
+      lua: {
+        imports: ['local rt = require("rt")'],
+        template: 'rt.get_timer_value({{TIMER_ID:int}})',
+      },
+      python: {
+        imports: ['import rt'],
+        template: 'rt.get_timer_value({{TIMER_ID:int}})',
+      },
+    },
+    {
+      type: 'poly_is_timer_running',
+      kind: 'value',
+      outputType: 'Boolean',
+      message0: '定时器 %1 正在运行?',
+      args0: [{ type: 'field_channel_id', name: 'TIMER_ID' }],
+      inputsInline: true,
+      blockStyle: 'timer_blocks',
+      fields: { TIMER_ID: '0' },
+      tooltip: '检查指定通道定时器当前是否处于运行状态（rt.is_timer_running(id)）。',
+      keywords: '定时器 正在运行 状态 is_timer_running running timer',
+      lua: {
+        imports: ['local rt = require("rt")'],
+        template: 'rt.is_timer_running({{TIMER_ID:int}})',
+      },
+      python: {
+        imports: ['import rt'],
+        template: 'rt.is_timer_running({{TIMER_ID:int}})',
+      },
+    },
+  ],
+};
+
 export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
   format: 'polyblock-extension',
   version: 1,
@@ -9,8 +275,9 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
   categoryLabel: '硬件',
   color: '#0ea5e9',
   description:
-    '提供板载 LED、RGB 彩灯、OLED 文本屏、温度传感器与按键 A/B 积木；导出标准 board 模块代码供真机运行，浏览器沙箱内置实时交互模拟。',
+    '提供板载 LED、RGB 彩灯、OLED 文本屏、温度传感器与按键 A/B 回调积木；导出标准 board 模块代码供真机运行，浏览器沙箱内置实时交互模拟。',
   builtin: true,
+  packKind: 'peripheral',
   hasVirtualBoardUi: true,
   blocks: [
     {
@@ -145,6 +412,47 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
         template: 'board.is_pressed({{BTN:json}})',
       },
     },
+    {
+      type: 'poly_on_button',
+      kind: 'hat',
+      message0: '当按键 %1 %2 时',
+      args0: [
+        {
+          type: 'field_dropdown',
+          name: 'KEY',
+          options: [
+            ['按键 A', 'A'],
+            ['按键 B', 'B'],
+          ],
+        },
+        {
+          type: 'field_dropdown',
+          name: 'EDGE',
+          options: [
+            ['按下', 'press'],
+            ['释放', 'release'],
+          ],
+        },
+      ],
+      inputsInline: true,
+      blockStyle: 'event_blocks',
+      fields: { KEY: 'A', EDGE: 'press' },
+      tooltip:
+        '硬件按键边沿事件回调，自动聚合成顶层 on_button(key, pressed) 分发函数（零闭包）。',
+      keywords: '当按键 按下 释放 回调 硬件 事件 on_button key A B board',
+      hat: {
+        eventName: 'on_button',
+        params: ['key', 'pressed'],
+        mode: 'dispatch',
+        conditionLua: 'key == {{KEY:json}} and {{EDGE:edge_lua:pressed}}',
+        conditionPython: 'key == {{KEY:json}} and {{EDGE:edge_py:pressed}}',
+        duplicateKeyTemplate: '{{KEY}}:{{EDGE}}',
+        scopeLabelTemplate: 'on_button · 按键 {{KEY}} {{EDGE:edge_zh}}',
+        scopeShortTemplate: '按键{{KEY}}',
+        scopeCategory: 'button',
+        keepsAlive: true,
+      },
+    },
   ],
   sandboxMock: {
     moduleName: 'board',
@@ -230,6 +538,11 @@ def is_pressed(btn):
       default: false,
       activeLabel: '按下中',
       idleLabel: '释放',
+      emitEvent: {
+        eventName: 'on_button',
+        args: ['A', '$value'],
+        trigger: 'change',
+      },
     },
     {
       kind: 'button',
@@ -238,6 +551,11 @@ def is_pressed(btn):
       default: false,
       activeLabel: '按下中',
       idleLabel: '释放',
+      emitEvent: {
+        eventName: 'on_button',
+        args: ['B', '$value'],
+        trigger: 'change',
+      },
     },
   ],
 };
@@ -253,6 +571,7 @@ export const DICT_JSON_PACK: PolyExtensionPack = {
   description:
     '提供跨 Lua table 与 Python dict 的键值对操作积木及字符串替换工具，生成原生标准语法，零额外依赖。',
   builtin: true,
+  packKind: 'peripheral',
   blocks: [
     {
       type: 'ext_dict_new',
@@ -333,7 +652,10 @@ export const DICT_JSON_PACK: PolyExtensionPack = {
         OLD: { type: 'text', value: 'world' },
         NEW: { type: 'text', value: 'PolyBlock' },
       },
-      lua: { template: '(string.gsub(tostring({{SRC}}), tostring({{OLD}}), tostring({{NEW}})))' },
+      lua: {
+        template:
+          '(string.gsub(tostring({{SRC}}), tostring({{OLD}}), tostring({{NEW}})))',
+      },
       python: { template: 'str({{SRC}}).replace(str({{OLD}}), str({{NEW}}))' },
     },
   ],
@@ -350,6 +672,7 @@ export const CLOCK_TIMER_PACK: PolyExtensionPack = {
   description:
     '提供高精度毫秒秒表积木，便于测量循环耗时、定时轮询与节拍控制。',
   builtin: true,
+  packKind: 'peripheral',
   blocks: [
     {
       type: 'ext_clock_millis',
@@ -409,12 +732,14 @@ def reset():
 };
 
 export const BUILTIN_EXTENSION_PACKS: PolyExtensionPack[] = [
+  RT_LIFECYCLE_PACK,
+  RT_TIMERS_PACK,
   VIRTUAL_BOARD_PACK,
   DICT_JSON_PACK,
   CLOCK_TIMER_PACK,
 ];
 
-/** Clean downloadable JSON template showing users how to author custom .polyext.json packs. */
+/** Clean downloadable JSON template showing users how to author custom .polyext.json packs (including hat callbacks + simWidgets!). */
 export const SAMPLE_CUSTOM_EXTENSION_TEMPLATE: PolyExtensionPack = {
   format: 'polyblock-extension',
   version: 1,
@@ -423,7 +748,8 @@ export const SAMPLE_CUSTOM_EXTENSION_TEMPLATE: PolyExtensionPack = {
   packVersion: '1.0.0',
   categoryLabel: '机器人',
   color: '#ec4899',
-  description: '演示如何通过纯 JSON 声明一份自己的设备/业务 API 积木扩展包并同时生成 Lua 与 Python 代码。',
+  description:
+    '演示如何通过纯 JSON 声明一套完整外设包：普通积木 + 顶层事件回调帽块 (hat) + 双语模拟桩 + 可视化模拟控件。',
   blocks: [
     {
       type: 'ext_robot_move',
@@ -471,27 +797,57 @@ export const SAMPLE_CUSTOM_EXTENSION_TEMPLATE: PolyExtensionPack = {
         template: 'robot.battery()',
       },
     },
+    {
+      type: 'ext_robot_on_estop',
+      kind: 'hat',
+      message0: '当机器人急停 %1 时',
+      args0: [
+        {
+          type: 'field_dropdown',
+          name: 'STATE',
+          options: [
+            ['触发', 'press'],
+            ['解除', 'release'],
+          ],
+        },
+      ],
+      inputsInline: true,
+      tooltip: '自定义硬件中断回调示例：聚合成顶层 on_robot_estop(active) 函数。',
+      keywords: '机器人 急停 回调 estop hat 事件',
+      hat: {
+        eventName: 'on_robot_estop',
+        params: ['active'],
+        mode: 'dispatch',
+        conditionLua: '{{STATE:edge_lua:active}}',
+        conditionPython: '{{STATE:edge_py:active}}',
+        duplicateKeyTemplate: '{{STATE}}',
+        scopeLabelTemplate: 'on_robot_estop · {{STATE:edge_zh}}',
+        scopeShortTemplate: '急停',
+        scopeCategory: 'button',
+        keepsAlive: true,
+      },
+    },
   ],
   sandboxMock: {
     moduleName: 'robot',
     luaSource: `
 local M = {}
 function M.move(dir, speed)
-  if __poly_sim_get("robot_estop") == true then
-    __poly_sim_set("robot_moving", false)
-    __poly_sim_set("robot_speed", 0)
-    __poly_sim_set("robot_log:append", "[ESTOP] 急停已触发，忽略移动指令")
+  if __poly_sim_get("estop") == true then
+    __poly_sim_set("moving", false)
+    __poly_sim_set("speed", 0)
+    __poly_sim_set("log:append", "[ESTOP] 急停已触发，忽略移动指令")
     print("[WARN] [Mock Robot] E-Stop active, move ignored")
     return
   end
   local spd = tonumber(speed) or 0
-  __poly_sim_set("robot_moving", spd > 0)
-  __poly_sim_set("robot_speed", spd)
-  __poly_sim_set("robot_log:append", "move(" .. tostring(dir) .. ", " .. tostring(spd) .. "%)")
+  __poly_sim_set("moving", spd > 0)
+  __poly_sim_set("speed", spd)
+  __poly_sim_set("log:append", "move(" .. tostring(dir) .. ", " .. tostring(spd) .. "%)")
   print("[INFO] [Mock Robot] move(" .. tostring(dir) .. ", speed=" .. tostring(spd) .. ")")
 end
 function M.battery()
-  local v = tonumber(__poly_sim_get("robot_battery"))
+  local v = tonumber(__poly_sim_get("battery"))
   return v or 88
 end
 return M
@@ -499,33 +855,33 @@ return M
     pythonSource: `
 import _poly
 def move(dir_name, speed):
-    if _poly.sim_get("robot_estop") is True:
-        _poly.sim_set("robot_moving", False)
-        _poly.sim_set("robot_speed", 0)
-        _poly.sim_set("robot_log:append", "[ESTOP] 急停已触发，忽略移动指令")
+    if _poly.sim_get("estop") is True:
+        _poly.sim_set("moving", False)
+        _poly.sim_set("speed", 0)
+        _poly.sim_set("log:append", "[ESTOP] 急停已触发，忽略移动指令")
         print("[WARN] [Mock Robot] E-Stop active, move ignored")
         return
     spd = float(speed)
-    _poly.sim_set("robot_moving", spd > 0)
-    _poly.sim_set("robot_speed", spd)
-    _poly.sim_set("robot_log:append", f"move({dir_name}, {int(spd)}%)")
+    _poly.sim_set("moving", spd > 0)
+    _poly.sim_set("speed", spd)
+    _poly.sim_set("log:append", f"move({dir_name}, {int(spd)}%)")
     print("[INFO] [Mock Robot] move(" + str(dir_name) + ", speed=" + str(speed) + ")")
 def battery():
-    v = _poly.sim_get("robot_battery")
+    v = _poly.sim_get("battery")
     return int(v) if v is not None else 88
 `,
   },
   simWidgets: [
     {
       kind: 'led',
-      key: 'robot_moving',
+      key: 'moving',
       label: '运动状态',
       color: '#10b981',
       default: false,
     },
     {
       kind: 'bar',
-      key: 'robot_speed',
+      key: 'speed',
       label: '当前车速',
       hint: 'robot.move',
       min: 0,
@@ -536,14 +892,14 @@ def battery():
     },
     {
       kind: 'screen',
-      key: 'robot_log',
+      key: 'log',
       label: '机器人指令终端',
       maxLines: 3,
       default: ['[Robot Ready] 等待指令...'],
     },
     {
       kind: 'slider',
-      key: 'robot_battery',
+      key: 'battery',
       label: '模拟电池电量',
       hint: 'robot.battery',
       min: 0,
@@ -555,10 +911,15 @@ def battery():
     },
     {
       kind: 'toggle',
-      key: 'robot_estop',
+      key: 'estop',
       label: '急停开关 (E-Stop)',
       color: '#ef4444',
       default: false,
+      emitEvent: {
+        eventName: 'on_robot_estop',
+        args: ['$value'],
+        trigger: 'change',
+      },
     },
   ],
 };

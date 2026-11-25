@@ -15,13 +15,13 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
 import {
-  BUILTIN_RUNTIME_CAPABILITIES,
   CAP_RT_TIMERS,
   hasCapability,
   SAMPLE_CUSTOM_BOARD_TEMPLATE,
   targetProfileRegistry,
 } from '../core/capabilities/registry';
 import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../core/extensions/builtinPacks';
+import { extensionRegistry } from '../core/extensions/registry';
 import type { PolyExtensionPack } from '../core/extensions/types';
 import {
   countProjectScripts,
@@ -144,7 +144,16 @@ export function ProjectSettingsModal({
   const enabledSet = new Set(project.enabledCapabilities);
   const localPacks = project.localExtensions ?? [];
   const localPackIds = new Set(localPacks.map((p) => p.id));
+  const runtimePacks = allExtensionPacks.filter((p) => p.packKind === 'runtime');
+  const peripheralPacks = allExtensionPacks.filter(
+    (p) => (p.packKind ?? 'peripheral') !== 'runtime',
+  );
   const globalPackIds = new Set(allExtensionPacks.map((p) => p.id));
+  const channelPoolPacks = extensionRegistry.getChannelPoolPacks(
+    project.enabledCapabilities,
+    project.localExtensions,
+  );
+  const activeChannelPool = channelPoolPacks[0]?.handleChannelPool ?? null;
 
   const downloadPackJson = (fileName: string, data: unknown, toastText: string) => {
     const blob = new Blob([JSON.stringify(data, null, 2)], {
@@ -471,35 +480,40 @@ export function ProjectSettingsModal({
             {tab === 'capabilities' && (
               <div className="settings-section-stack">
                 <div className="settings-field-group">
-                  <label className="settings-label">运行时能力模块（按项目按需装配）</label>
+                  <label className="settings-label">
+                    内置运行时扩展包（与外设包统一声明式协议 · 按需启用）
+                  </label>
                   <p className="settings-hint">
-                    核心语言积木零硬编码硬件概念；只有当目标设备/固件提供 <code>rt</code> 周期循环或编号定时器时才勾选启用。
+                    核心语言积木零硬编码硬件概念；<code>rt-lifecycle</code> 与 <code>rt-timers</code> 均已统一为声明式扩展包，按目标板能力自由开关。
                   </p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {BUILTIN_RUNTIME_CAPABILITIES.map((cap) => {
-                      const enabled = enabledSet.has(cap.id);
+                    {runtimePacks.map((pack) => {
+                      const enabled = enabledSet.has(pack.id);
                       return (
-                        <div key={cap.id} className="settings-ext-row">
+                        <div key={pack.id} className="settings-ext-row">
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <span
                               className="card-icon"
                               style={{
-                                background: cap.color,
+                                background: pack.color,
                                 width: 32,
                                 height: 28,
-                                fontSize: 10,
+                                fontSize: 10.5,
                                 borderRadius: 7,
                                 flexShrink: 0,
                               }}
                             >
-                              {cap.shortLabel.slice(0, 2)}
+                              {pack.categoryLabel}
                             </span>
                             <div>
                               <div style={{ fontWeight: 600, fontSize: 12.5 }}>
-                                {cap.name}
+                                {pack.name}
                               </div>
                               <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                {cap.description}
+                                {pack.blocks.length} 个积木 ·{' '}
+                                {pack.handleChannelPool
+                                  ? `每句柄通道池 (${pack.handleChannelPool.prefix}0~${pack.handleChannelPool.max - 1})`
+                                  : '顶层生命周期回调'}
                               </div>
                             </div>
                           </div>
@@ -508,7 +522,7 @@ export function ProjectSettingsModal({
                             className={`ext-toggle-btn ${enabled ? 'enabled' : 'disabled'}`}
                             style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
                             onClick={() =>
-                              onToggleCapabilityForProject(project.id, cap.id)
+                              onToggleCapabilityForProject(project.id, pack.id)
                             }
                           >
                             {enabled ? '已启用' : '启用'}
@@ -720,7 +734,7 @@ export function ProjectSettingsModal({
                     通用 SDK / 协议包统一在全局扩展页维护，此处按项目勾选启用；导出项目时若使用了全局自定义包，会自动附带快照保证他人打开开箱即用。
                   </p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {allExtensionPacks.map((pack) => {
+                    {peripheralPacks.map((pack) => {
                       const enabled = enabledSet.has(pack.id);
                       const overridden = localPackIds.has(pack.id);
                       return (
@@ -902,7 +916,7 @@ export function ProjectSettingsModal({
                     </div>
                   </div>
 
-                  {hasTimers ? (
+                  {activeChannelPool ? (
                     <>
                       <div className="settings-field-group" style={{ marginTop: 6 }}>
                         <div
@@ -920,11 +934,11 @@ export function ProjectSettingsModal({
                           >
                             <Timer size={13} style={{ color: 'var(--accent)' }} />
                             <span>
-                              本句柄独立定时器通道数（ID 0 ~ {timerCfg.count - 1}）
+                              本句柄独立{activeChannelPool.label}数（ID 0 ~ {timerCfg.count - 1}）
                             </span>
                           </span>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                            {[4, 8, 16, 32].map((preset) => (
+                            {(activeChannelPool.presets ?? [4, 8, 16, 32]).map((preset) => (
                               <button
                                 key={preset}
                                 type="button"
@@ -942,15 +956,16 @@ export function ProjectSettingsModal({
                               aria-label="句柄自定义定时器通道数"
                               className="template-select"
                               style={{ width: 58, height: 26, textAlign: 'center' }}
-                              min={1}
-                              max={32}
+                              min={activeChannelPool.min}
+                              max={activeChannelPool.max}
                               value={timerCfg.count}
                               onChange={(e) => handleSetCount(Number(e.target.value))}
                             />
                           </div>
                         </div>
                         <p className="settings-hint">
-                          每个隔离句柄（独立 <code>lua_State*</code>）独享自己的定时器池与别名，彼此绝不窜扰；在画布上右键任意定时器积木也可就地修改别名。
+                          {activeChannelPool.hint ??
+                            '每个隔离句柄（独立 lua_State*）独享自己的通道池与别名，彼此绝不窜扰；在画布上右键任意通道积木也可就地修改别名。'}
                         </p>
                       </div>
 

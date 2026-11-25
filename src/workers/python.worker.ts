@@ -34,6 +34,57 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
     },
   });
 
+  const qualifyPyKey = (packId: string | undefined, rawKey: string): string => {
+    if (!packId || rawKey.startsWith('global:') || rawKey.includes('::')) {
+      return rawKey;
+    }
+    if (rawKey === 'oled_clear' || rawKey === 'oled_show') {
+      return rawKey;
+    }
+    return `${packId}::${rawKey}`;
+  };
+
+  const emitScopedPy = (
+    packId: string | undefined,
+    rawKind: string,
+    value: unknown,
+  ) => {
+    const k = qualifyPyKey(packId, String(rawKind));
+    if (k === 'oled_clear') {
+      currentMockInputs['virtual-board::oled'] = [];
+    } else if (k === 'oled_show') {
+      const prev = Array.isArray(currentMockInputs['virtual-board::oled'])
+        ? (currentMockInputs['virtual-board::oled'] as string[])
+        : [];
+      currentMockInputs['virtual-board::oled'] = [...prev, String(value)].slice(-8);
+    } else if (k.endsWith(':clear')) {
+      currentMockInputs[k.slice(0, -6)] = [];
+    } else if (k.endsWith(':append')) {
+      const base = k.slice(0, -7);
+      const prev = Array.isArray(currentMockInputs[base])
+        ? (currentMockInputs[base] as string[])
+        : [];
+      currentMockInputs[base] = [...prev, String(value)].slice(-8);
+    } else {
+      currentMockInputs[k] = value;
+    }
+    self.postMessage({
+      type: 'DEVICE_EVENT',
+      runId: activeRunId,
+      kind: k,
+      value,
+    });
+  };
+
+  const getScopedPy = (packId: string | undefined, rawKey: string) => {
+    const keyStr = String(rawKey);
+    const full = qualifyPyKey(packId, keyStr);
+    if (Object.prototype.hasOwnProperty.call(currentMockInputs, full)) {
+      return currentMockInputs[full];
+    }
+    return currentMockInputs[keyStr];
+  };
+
   mpInstance.registerJsModule('_poly', {
     step: (blockId: string, varsJson: string) => {
       if (!activeSession) return Promise.resolve();
@@ -46,58 +97,32 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
     final_snap: (varsJson: string) => {
       activeSession?.setFinalVars(varsJson);
     },
-    emit_device: (kind: string, value: unknown) => {
-      const k = String(kind);
-      if (k === 'oled_clear') {
-        currentMockInputs.oled = [];
-      } else if (k === 'oled_show') {
-        const prev = Array.isArray(currentMockInputs.oled)
-          ? (currentMockInputs.oled as string[])
-          : [];
-        currentMockInputs.oled = [...prev, String(value)].slice(-8);
-      } else if (k.endsWith(':clear')) {
-        currentMockInputs[k.slice(0, -6)] = [];
-      } else if (k.endsWith(':append')) {
-        const base = k.slice(0, -7);
-        const prev = Array.isArray(currentMockInputs[base])
-          ? (currentMockInputs[base] as string[])
-          : [];
-        currentMockInputs[base] = [...prev, String(value)].slice(-8);
-      } else {
-        currentMockInputs[k] = value;
+    emit_device: (kind: string, value: unknown) => emitScopedPy(undefined, kind, value),
+    sim_set: (kind: string, value: unknown) => emitScopedPy(undefined, kind, value),
+    sim_set_scoped: (packId: string, kind: string, value: unknown) =>
+      emitScopedPy(String(packId), kind, value),
+    get_input: (key: string) => getScopedPy(undefined, key),
+    sim_get: (key: string) => getScopedPy(undefined, key),
+    sim_get_scoped: (packId: string, key: string) =>
+      getScopedPy(String(packId), key),
+    emit_event: (eventName: string, argsJson?: string) => {
+      const ename = String(eventName);
+      let args: unknown[] = [];
+      if (typeof argsJson === 'string' && argsJson.trim()) {
+        try {
+          const parsed = JSON.parse(argsJson);
+          if (Array.isArray(parsed)) args = parsed;
+        } catch {
+          // ignore malformed args json
+        }
       }
+      activeScheduler?.enqueueEvent(ename, args);
       self.postMessage({
-        type: 'DEVICE_EVENT',
+        type: 'CUSTOM_EVENT',
         runId: activeRunId,
-        kind: k,
-        value,
+        eventName: ename,
+        args,
       });
-    },
-    sim_set: (kind: string, value: unknown) => {
-      const k = String(kind);
-      if (k.endsWith(':clear')) {
-        currentMockInputs[k.slice(0, -6)] = [];
-      } else if (k.endsWith(':append')) {
-        const base = k.slice(0, -7);
-        const prev = Array.isArray(currentMockInputs[base])
-          ? (currentMockInputs[base] as string[])
-          : [];
-        currentMockInputs[base] = [...prev, String(value)].slice(-8);
-      } else {
-        currentMockInputs[k] = value;
-      }
-      self.postMessage({
-        type: 'DEVICE_EVENT',
-        runId: activeRunId,
-        kind: k,
-        value,
-      });
-    },
-    get_input: (key: string) => {
-      return currentMockInputs[String(key)];
-    },
-    sim_get: (key: string) => {
-      return currentMockInputs[String(key)];
     },
     now_ms: () => {
       return performance.now();
@@ -200,6 +225,12 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     }
     return;
   }
+  if (msg.type === 'EMIT_EVENT') {
+    if (activeScheduler?.runId === msg.runId) {
+      activeScheduler.enqueueEvent(msg.eventName, msg.args);
+    }
+    return;
+  }
 
   if (msg.type !== 'RUN') return;
 
@@ -253,7 +284,43 @@ for _mn in ${JSON.stringify(mountedModuleNames)}:
     for (const mod of mockModules ?? []) {
       if (!mod.pythonSource || !mod.moduleName) continue;
       mountedModuleNames.push(mod.moduleName);
-      mp.runPython(`
+      if (mod.packId) {
+        const proxyModName = `_poly__${mod.packId.replace(/[^A-Za-z0-9_]/g, '_')}`;
+        mountedModuleNames.push(proxyModName);
+        const rewrittenSource = mod.pythonSource.replace(
+          /\bimport\s+_poly\b/g,
+          `import ${proxyModName} as _poly`,
+        );
+        mp.runPython(`
+import sys, json, _poly as _poly_base
+class _PolyScopedProxy:
+  def __init__(self, pid):
+    self._pid = pid
+  def sim_set(self, k, v):
+    return _poly_base.sim_set_scoped(self._pid, k, v)
+  def emit_device(self, k, v):
+    return _poly_base.sim_set_scoped(self._pid, k, v)
+  def sim_get(self, k):
+    return _poly_base.sim_get_scoped(self._pid, k)
+  def get_input(self, k):
+    return _poly_base.sim_get_scoped(self._pid, k)
+  def emit_event(self, ename, *eargs):
+    return _poly_base.emit_event(ename, json.dumps(list(eargs)))
+  def now_ms(self):
+    return _poly_base.now_ms()
+sys.modules[${JSON.stringify(proxyModName)}] = _PolyScopedProxy(${JSON.stringify(mod.packId)})
+_poly_mod_ns = {'_poly': sys.modules[${JSON.stringify(proxyModName)}]}
+exec(${JSON.stringify(rewrittenSource)}, _poly_mod_ns)
+class _PolyVirtualMod:
+  pass
+_poly_m = _PolyVirtualMod()
+for _mk, _mv in _poly_mod_ns.items():
+  if not _mk.startswith("__"):
+    setattr(_poly_m, _mk, _mv)
+sys.modules[${JSON.stringify(mod.moduleName)}] = _poly_m
+`);
+      } else {
+        mp.runPython(`
 import sys
 _poly_mod_ns = {}
 exec(${JSON.stringify(mod.pythonSource)}, _poly_mod_ns)
@@ -265,6 +332,7 @@ for _mk, _mv in _poly_mod_ns.items():
     setattr(_poly_m, _mk, _mv)
 sys.modules[${JSON.stringify(mod.moduleName)}] = _poly_m
 `);
+      }
     }
 
     await mp.runPythonAsync(code);

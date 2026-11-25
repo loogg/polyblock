@@ -28,7 +28,6 @@ import {
   setActiveTimerConfig,
 } from './core/blocks/timerConfigBridge';
 import {
-  BUILTIN_RUNTIME_CAPABILITIES,
   CAP_RT_TIMERS,
   hasCapability,
   targetProfileRegistry,
@@ -244,6 +243,7 @@ export function App() {
       extensionRegistry.toCategorySpecs(
         activeProject.enabledCapabilities,
         activeProject.localExtensions,
+        'peripheral',
       ),
     [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
   );
@@ -500,9 +500,8 @@ export function App() {
     (projectId: string, capId: string) => {
       const curProj = storeRef.current.projects.find((p) => p.id === projectId);
       if (!curProj) return;
-      const rtCap = BUILTIN_RUNTIME_CAPABILITIES.find((c) => c.id === capId);
       const extPack = extensionRegistry.resolvePack(capId, curProj.localExtensions);
-      const displayName = rtCap?.name ?? extPack?.name ?? capId;
+      const displayName = extPack?.name ?? capId;
 
       const exists = curProj.enabledCapabilities.includes(capId);
       const nextCaps = exists
@@ -746,6 +745,14 @@ export function App() {
       notify(`已复位「${pack.name}」模拟状态`);
     },
     [handleUpdateSimValues, notify],
+  );
+
+  const handleEmitSimEvent = useCallback(
+    (eventName: string, args: unknown[] = [], excludeHandleId?: string) => {
+      runnerManager.emitActiveEvent(eventName, args);
+      multiHandleOrchestrator.emitEvent(eventName, args, excludeHandleId);
+    },
+    [],
   );
 
   const handleDeviceEvent = useCallback((kind: string, value: unknown) => {
@@ -1474,6 +1481,9 @@ export function App() {
           });
         },
         onDeviceEvent: handleDeviceEvent,
+        onCustomEvent: (sourceHandleId, eventName, args) => {
+          multiHandleOrchestrator.emitEvent(eventName, args, sourceHandleId);
+        },
         onHandleTelemetry: (handleId, tele) => {
           setHandleTelemetries((prev) => {
             if (!tele) {
@@ -1712,6 +1722,7 @@ export function App() {
                   activeHandle={activeHandle}
                   handleTelemetries={handleTelemetries}
                   onUpdateSimValues={handleUpdateSimValues}
+                  onEmitWidgetEvent={(ename, args) => handleEmitSimEvent(ename, args)}
                   onResetSimPack={handleResetSimPack}
                   onOpenHandleTimerSettings={(hdlId) =>
                     setSettingsModal({

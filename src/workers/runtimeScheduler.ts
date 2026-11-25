@@ -18,6 +18,11 @@ interface QueuedButtonEvent {
   pressed: boolean;
 }
 
+interface QueuedCustomEvent {
+  eventName: string;
+  args: unknown[];
+}
+
 export interface RuntimeSchedulerConfig {
   runId: string;
   timerCount: number;
@@ -47,6 +52,8 @@ export class WorkerRuntimeScheduler {
 
   private timers = new Map<number, TimerSlot>();
   private buttonQueue: QueuedButtonEvent[] = [];
+  private customEventQueue: QueuedCustomEvent[] = [];
+  private lastCustomEvent: QueuedCustomEvent | null = null;
   private stopRequested = false;
 
   private wakeFn: (() => void) | null = null;
@@ -180,6 +187,32 @@ export class WorkerRuntimeScheduler {
     }
   }
 
+  /** Enqueues a generic declarative event (e.g. `on_button`, `on_robot_estop`, `on_can_rx`). */
+  enqueueEvent(eventName: string, args: unknown[] = []): void {
+    if (!eventName) return;
+    this.customEventQueue.push({
+      eventName: String(eventName),
+      args: Array.isArray(args) ? args : [],
+    });
+    this.wake();
+  }
+
+  getLastEventName(): string {
+    return this.lastCustomEvent?.eventName ?? '';
+  }
+
+  getLastEventArgCount(): number {
+    return this.lastCustomEvent?.args.length ?? 0;
+  }
+
+  getLastEventArg(oneBasedIndex: number): unknown {
+    const idx = Math.trunc(Number(oneBasedIndex)) - 1;
+    if (!this.lastCustomEvent || idx < 0 || idx >= this.lastCustomEvent.args.length) {
+      return undefined;
+    }
+    return this.lastCustomEvent.args[idx];
+  }
+
   requestGracefulStop(): void {
     this.stopRequested = true;
     this.wake();
@@ -265,6 +298,13 @@ export class WorkerRuntimeScheduler {
         this.setWaiting(false);
         this.emitTelemetry(true);
         return 'stop';
+      }
+
+      if (this.customEventQueue.length > 0) {
+        const ev = this.customEventQueue.shift()!;
+        this.lastCustomEvent = ev;
+        this.setWaiting(false);
+        return `event:${JSON.stringify([ev.eventName, ev.args])}`;
       }
 
       if (this.buttonQueue.length > 0) {

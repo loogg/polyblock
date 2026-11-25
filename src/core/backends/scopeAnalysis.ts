@@ -3,7 +3,7 @@ import type {
   ScopedVariableItem,
   VariableScopeNode,
 } from '../../types/project';
-import { formatTimerLabel } from '../blocks/timerConfigBridge';
+import { extensionRegistry } from '../extensions/registry';
 
 const RESERVED_IDENTS = new Set([
   'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
@@ -44,35 +44,6 @@ function describeTopScope(block: Blockly.Block): {
   if (block.type === 'poly_on_start') {
     return { label: 'on_start (主启动)', shortLabel: 'on_start', category: 'lifecycle' };
   }
-  if (block.type === 'poly_on_run') {
-    const ms = Math.max(10, Math.round(Number(block.getFieldValue('PERIOD_MS') ?? 100)));
-    return {
-      label: `on_run (每 ${ms}ms)`,
-      shortLabel: 'on_run',
-      category: 'lifecycle',
-    };
-  }
-  if (block.type === 'poly_on_stop') {
-    return { label: 'on_stop (安全停机)', shortLabel: 'on_stop', category: 'lifecycle' };
-  }
-  if (block.type === 'poly_on_timer') {
-    const tid = Math.trunc(Number(block.getFieldValue('TIMER_ID') ?? 0));
-    const tLabel = formatTimerLabel(tid);
-    return {
-      label: `on_timer · ${tLabel}`,
-      shortLabel: `T${tid}`,
-      category: 'timer',
-    };
-  }
-  if (block.type === 'poly_on_button') {
-    const key = String(block.getFieldValue('KEY') || 'A');
-    const edge = String(block.getFieldValue('EDGE') || 'press') === 'press' ? '按下' : '释放';
-    return {
-      label: `on_button · 按键 ${key} ${edge}`,
-      shortLabel: `按键${key}`,
-      category: 'button',
-    };
-  }
   if (
     block.type === 'procedures_defnoreturn' ||
     block.type === 'procedures_defreturn'
@@ -83,6 +54,10 @@ function describeTopScope(block: Blockly.Block): {
       shortLabel: fnName,
       category: 'function',
     };
+  }
+  const extHatScope = extensionRegistry.renderHatScopeInfo(block);
+  if (extHatScope) {
+    return extHatScope;
   }
   return { label: '顶层脚本', shortLabel: '顶层', category: 'top' };
 }

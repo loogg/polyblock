@@ -144,6 +144,12 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     }
     return;
   }
+  if (msg.type === 'EMIT_EVENT') {
+    if (activeScheduler?.runId === msg.runId) {
+      activeScheduler.enqueueEvent(msg.eventName, msg.args);
+    }
+    return;
+  }
 
   if (msg.type !== 'RUN') return;
 
@@ -201,17 +207,29 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
         session.setFinalVars(varsJson);
       });
 
-      const emitDeviceState = (kind: string, value: unknown) => {
-        const k = String(kind);
-        // Mirror scalar writes immediately into local worker state so synchronous
-        // read-after-write in the same handle sees the updated value with zero latency.
+      const qualifyKey = (packId: string | undefined, rawKey: string): string => {
+        if (!packId || rawKey.startsWith('global:') || rawKey.includes('::')) {
+          return rawKey;
+        }
+        if (rawKey === 'oled_clear' || rawKey === 'oled_show') {
+          return rawKey;
+        }
+        return `${packId}::${rawKey}`;
+      };
+
+      const emitScopedState = (
+        packId: string | undefined,
+        rawKind: string,
+        value: unknown,
+      ) => {
+        const k = qualifyKey(packId, String(rawKind));
         if (k === 'oled_clear') {
-          currentMockInputs.oled = [];
+          currentMockInputs['virtual-board::oled'] = [];
         } else if (k === 'oled_show') {
-          const prev = Array.isArray(currentMockInputs.oled)
-            ? (currentMockInputs.oled as string[])
+          const prev = Array.isArray(currentMockInputs['virtual-board::oled'])
+            ? (currentMockInputs['virtual-board::oled'] as string[])
             : [];
-          currentMockInputs.oled = [...prev, String(value)].slice(-8);
+          currentMockInputs['virtual-board::oled'] = [...prev, String(value)].slice(-8);
         } else if (k.endsWith(':clear')) {
           currentMockInputs[k.slice(0, -6)] = [];
         } else if (k.endsWith(':append')) {
@@ -226,12 +244,39 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
         self.postMessage({ type: 'DEVICE_EVENT', runId, kind: k, value });
       };
 
-      const getSimState = (key: string) => currentMockInputs[String(key)];
+      const getScopedState = (packId: string | undefined, rawKey: string) => {
+        const keyStr = String(rawKey);
+        const full = qualifyKey(packId, keyStr);
+        if (Object.prototype.hasOwnProperty.call(currentMockInputs, full)) {
+          return currentMockInputs[full];
+        }
+        return currentMockInputs[keyStr];
+      };
+
+      const emitDeviceState = (kind: string, value: unknown) =>
+        emitScopedState(undefined, kind, value);
+      const getSimState = (key: string) => getScopedState(undefined, key);
 
       engine.global.set('__poly_device_emit', emitDeviceState);
       engine.global.set('__poly_sim_set', emitDeviceState);
+      engine.global.set('__poly_sim_set_scoped', (packId: string, kind: string, value: unknown) =>
+        emitScopedState(String(packId), kind, value),
+      );
       engine.global.set('__poly_mock_input', getSimState);
       engine.global.set('__poly_sim_get', getSimState);
+      engine.global.set('__poly_sim_get_scoped', (packId: string, key: string) =>
+        getScopedState(String(packId), key),
+      );
+      engine.global.set('__poly_emit_event', (eventName: string, ...args: unknown[]) => {
+        const ename = String(eventName);
+        scheduler.enqueueEvent(ename, args);
+        self.postMessage({ type: 'CUSTOM_EVENT', runId, eventName: ename, args });
+      });
+      engine.global.set('__poly_last_event_name', () => scheduler.getLastEventName());
+      engine.global.set('__poly_last_event_argc', () => scheduler.getLastEventArgCount());
+      engine.global.set('__poly_last_event_arg', (idx: number) =>
+        scheduler.getLastEventArg(idx),
+      );
 
       engine.global.set('__poly_now_ms', () => {
         return performance.now();
@@ -270,18 +315,36 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
 
       await engine.doString(`math.randomseed(${seed})\n${LUA_BOOTSTRAP}`);
 
-      // Mount sandbox extension mock modules into Lua's package.preload
+      // Mount sandbox extension mock modules into Lua's package.preload with automatic packId scoping
       for (const mod of mockModules ?? []) {
         if (!mod.luaSource || !mod.moduleName) continue;
         const safeModName = JSON.stringify(mod.moduleName);
         const safeSrc = JSON.stringify(mod.luaSource);
-        await engine.doString(`
-          package.preload[${safeModName}] = function()
-            local chunk, err = load(${safeSrc}, "@" .. ${safeModName})
-            if not chunk then error(err) end
-            return chunk()
-          end
-        `);
+        if (mod.packId) {
+          const safePackId = JSON.stringify(mod.packId);
+          await engine.doString(`
+            package.preload[${safeModName}] = function()
+              local _pid = ${safePackId}
+              local _env = setmetatable({
+                __poly_sim_set = function(k, v) return __poly_sim_set_scoped(_pid, k, v) end,
+                __poly_device_emit = function(k, v) return __poly_sim_set_scoped(_pid, k, v) end,
+                __poly_sim_get = function(k) return __poly_sim_get_scoped(_pid, k) end,
+                __poly_mock_input = function(k) return __poly_sim_get_scoped(_pid, k) end,
+              }, { __index = _G })
+              local chunk, err = load(${safeSrc}, "@" .. ${safeModName}, "t", _env)
+              if not chunk then error(err) end
+              return chunk()
+            end
+          `);
+        } else {
+          await engine.doString(`
+            package.preload[${safeModName}] = function()
+              local chunk, err = load(${safeSrc}, "@" .. ${safeModName})
+              if not chunk then error(err) end
+              return chunk()
+            end
+          `);
+        }
       }
 
       await engine.doString(code);

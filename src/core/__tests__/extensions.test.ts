@@ -21,6 +21,9 @@ import {
   applySimDeviceEvent,
   buildDefaultSimState,
   buildPackResetPatch,
+  qualifySimKey,
+  readPackWidgetValue,
+  resolveWidgetEventArgs,
 } from '../extensions/simState';
 import {
   buildExportableProjectJson,
@@ -75,21 +78,35 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(targetProfileRegistry.removeCustomProfile(imported.id)).toBe(true);
   });
 
-  it('registers all 3 built-in packs and converts enabled packs to toolbox categories', () => {
+  it('registers all 5 unified built-in packs (runtime + peripheral) and converts enabled packs to toolbox categories', () => {
     const all = extensionRegistry.listAll();
     expect(all.map((p) => p.id)).toEqual(
+      expect.arrayContaining([
+        'rt-lifecycle',
+        'rt-timers',
+        'virtual-board',
+        'dict-json',
+        'clock-timer',
+      ]),
+    );
+    expect(extensionRegistry.listByKind('runtime').map((p) => p.id)).toEqual([
+      'rt-lifecycle',
+      'rt-timers',
+    ]);
+    expect(extensionRegistry.listByKind('peripheral').map((p) => p.id)).toEqual(
       expect.arrayContaining(['virtual-board', 'dict-json', 'clock-timer']),
     );
 
     const cats = extensionRegistry.toCategorySpecs(['virtual-board', 'dict-json']);
     expect(cats).toHaveLength(2);
     expect(cats[0].label).toBe('硬件');
-    expect(cats[0].blocks.length).toBeGreaterThanOrEqual(6);
+    expect(cats[0].blocks.length).toBeGreaterThanOrEqual(7);
     expect(cats[1].label).toBe('字典');
 
     const mocks = extensionRegistry.getSandboxMocks(['virtual-board', 'dict-json']);
     expect(mocks).toHaveLength(1);
     expect(mocks[0].moduleName).toBe('board');
+    expect(mocks[0].packId).toBe('virtual-board');
   });
 
   it('generates clean deduplicated Lua & Python board code for virtual_board_demo project', () => {
@@ -341,7 +358,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
 
-  it('validates declarative simWidgets and updates/resets shared simulator state across append, clear, and scalar events', () => {
+  it('validates declarative simWidgets, isolates pack-scoped keys across colliding packs, and handles append/clear/reset', () => {
     expect(() =>
       validateExtensionPack({
         ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
@@ -354,36 +371,193 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
 
     const packs = [VIRTUAL_BOARD_PACK, validatedSample];
     let state = buildDefaultSimState(packs);
-    expect(state.led).toBe(false);
-    expect(state.temp).toBe(28);
-    expect(state.robot_battery).toBe(88);
-    expect(state.robot_estop).toBe(false);
+    expect(state['virtual-board::led']).toBe(false);
+    expect(state['virtual-board::temp']).toBe(28);
+    expect(state['my-robot-api::battery']).toBe(88);
+    expect(state['my-robot-api::estop']).toBe(false);
 
-    // Scalar set + broadcast patch
-    const r1 = applySimDeviceEvent(state, 'robot_speed', 75, packs);
+    // Pack-scoped scalar set + broadcast patch
+    const r1 = applySimDeviceEvent(state, 'my-robot-api::speed', 75, packs);
     state = r1.next;
-    expect(state.robot_speed).toBe(75);
-    expect(r1.broadcastPatch).toEqual({ robot_speed: 75 });
+    expect(state['my-robot-api::speed']).toBe(75);
+    expect(r1.broadcastPatch).toEqual({ 'my-robot-api::speed': 75 });
 
     // Multi-line screen append respects maxLines=3
-    state = applySimDeviceEvent(state, 'robot_log:clear', true, packs).next;
-    expect(state.robot_log).toEqual([]);
-    state = applySimDeviceEvent(state, 'robot_log:append', 'L1', packs).next;
-    state = applySimDeviceEvent(state, 'robot_log:append', 'L2', packs).next;
-    state = applySimDeviceEvent(state, 'robot_log:append', 'L3', packs).next;
-    state = applySimDeviceEvent(state, 'robot_log:append', 'L4', packs).next;
-    expect(state.robot_log).toEqual(['L2', 'L3', 'L4']);
+    state = applySimDeviceEvent(state, 'my-robot-api::log:clear', true, packs).next;
+    expect(state['my-robot-api::log']).toEqual([]);
+    state = applySimDeviceEvent(state, 'my-robot-api::log:append', 'L1', packs).next;
+    state = applySimDeviceEvent(state, 'my-robot-api::log:append', 'L2', packs).next;
+    state = applySimDeviceEvent(state, 'my-robot-api::log:append', 'L3', packs).next;
+    state = applySimDeviceEvent(state, 'my-robot-api::log:append', 'L4', packs).next;
+    expect(state['my-robot-api::log']).toEqual(['L2', 'L3', 'L4']);
 
-    // Legacy oled_show / oled_clear aliases still route cleanly to `oled`
+    // Legacy oled_show / oled_clear aliases still route cleanly to `virtual-board::oled`
     state = applySimDeviceEvent(state, 'oled_clear', true, packs).next;
     state = applySimDeviceEvent(state, 'oled_show', 'Hello OLED', packs).next;
-    expect(state.oled).toEqual(['Hello OLED']);
+    expect(state['virtual-board::oled']).toEqual(['Hello OLED']);
 
     // Per-pack reset restores only that pack's widgets
     const resetRobot = buildPackResetPatch(validatedSample);
-    expect(resetRobot.robot_speed).toBe(0);
-    expect(resetRobot.robot_battery).toBe(88);
-    expect(resetRobot).not.toHaveProperty('temp');
+    expect(resetRobot['my-robot-api::speed']).toBe(0);
+    expect(resetRobot['my-robot-api::battery']).toBe(88);
+    expect(resetRobot).not.toHaveProperty('virtual-board::temp');
+
+    // Explicit two-pack key collision isolation (`motor-a` & `motor-b` both use `key: 'speed'`, plus shared `global:vbus`)
+    const motorA = validateExtensionPack({
+      ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+      id: 'motor-a',
+      name: '左轮电机包',
+      blocks: [
+        {
+          type: 'ext_motor_a_set',
+          kind: 'statement',
+          message0: '左轮速度 %1',
+          args0: [{ type: 'field_number', name: 'V', value: 30 }],
+          lua: { template: 'motor_a.set({{V}})' },
+          python: { template: 'motor_a.set({{V}})' },
+        },
+      ],
+      simWidgets: [
+        { kind: 'bar', key: 'speed', label: '当前转速', default: 30 },
+        { kind: 'slider', key: 'global:vbus', label: '共享总线电压', default: 12 },
+      ],
+    });
+    const motorB = validateExtensionPack({
+      ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+      id: 'motor-b',
+      name: '右轮电机包',
+      blocks: [
+        {
+          type: 'ext_motor_b_set',
+          kind: 'statement',
+          message0: '右轮速度 %1',
+          args0: [{ type: 'field_number', name: 'V', value: 80 }],
+          lua: { template: 'motor_b.set({{V}})' },
+          python: { template: 'motor_b.set({{V}})' },
+        },
+      ],
+      simWidgets: [
+        { kind: 'bar', key: 'speed', label: '当前转速', default: 80 },
+        { kind: 'bar', key: 'global:vbus', label: '总线电压监测', default: 12 },
+      ],
+    });
+
+    expect(qualifySimKey('motor-a', 'speed')).toBe('motor-a::speed');
+    expect(qualifySimKey('motor-b', 'speed')).toBe('motor-b::speed');
+    expect(qualifySimKey('motor-a', 'global:vbus')).toBe('global:vbus');
+
+    let dualState = buildDefaultSimState([motorA, motorB]);
+    expect(readPackWidgetValue(dualState, 'motor-a', motorA.simWidgets![0])).toBe(30);
+    expect(readPackWidgetValue(dualState, 'motor-b', motorB.simWidgets![0])).toBe(80);
+    expect(dualState['global:vbus']).toBe(12);
+
+    // Updating motor-a::speed must NEVER touch motor-b::speed
+    dualState = applySimDeviceEvent(dualState, 'motor-a::speed', 95, [motorA, motorB]).next;
+    expect(readPackWidgetValue(dualState, 'motor-a', motorA.simWidgets![0])).toBe(95);
+    expect(readPackWidgetValue(dualState, 'motor-b', motorB.simWidgets![0])).toBe(80);
+
+    // Updating global:vbus shares across both packs intentionally
+    dualState = applySimDeviceEvent(dualState, 'global:vbus', 24, [motorA, motorB]).next;
+    expect(readPackWidgetValue(dualState, 'motor-a', motorA.simWidgets![1])).toBe(24);
+    expect(readPackWidgetValue(dualState, 'motor-b', motorB.simWidgets![1])).toBe(24);
+  });
+
+  it('supports declarative kind:"hat" callbacks in custom .polyext.json packs with codegen, scope tree, duplicate diagnostics, and emitEvent arg resolution', () => {
+    const imported = extensionRegistry.importCustomPack(SAMPLE_CUSTOM_EXTENSION_TEMPLATE);
+    const estopWidget = imported.simWidgets!.find((w) => w.key === 'estop')!;
+    expect(resolveWidgetEventArgs(imported.id, estopWidget, true, {})).toEqual([true]);
+
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'ext_robot_on_estop',
+              id: 'estop_press_1',
+              fields: { STATE: 'press' },
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'poly_print',
+                    id: 'estop_p1',
+                    inputs: {
+                      VALUE: {
+                        block: {
+                          type: 'text',
+                          id: 'estop_t1',
+                          fields: { TEXT: 'E-STOP ENGAGED' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            {
+              type: 'ext_robot_on_estop',
+              id: 'estop_release',
+              fields: { STATE: 'release' },
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'poly_print',
+                    id: 'estop_p2',
+                    inputs: {
+                      VALUE: {
+                        block: {
+                          type: 'text',
+                          id: 'estop_t2',
+                          fields: { TEXT: 'E-STOP CLEARED' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            {
+              type: 'ext_robot_on_estop',
+              id: 'estop_press_dup',
+              fields: { STATE: 'press' },
+            },
+          ],
+        },
+      },
+      ws,
+    );
+
+    const luaRes = backendRegistry.get('lua').generate(ws);
+    expect(luaRes.isEventDriven).toBe(true);
+    expect(luaRes.code).toContain('function on_robot_estop(active)');
+    expect(luaRes.code).toContain('if active then');
+    expect(luaRes.code).toContain('elseif not active then');
+    expect(luaRes.code).toContain("print('E-STOP ENGAGED')");
+    expect(luaRes.code).toContain("print('E-STOP CLEARED')");
+    expect(luaRes.debugCode).toContain('_ev:sub(1, 6) == "event:"');
+    expect(luaRes.debugCode).toContain('__poly_last_event_name()');
+    // Must NOT be flagged as floating top-level blocks, and SHOULD warn on duplicate press branch
+    expect(luaRes.diagnostics.some((d) => d.id.startsWith('floating-'))).toBe(false);
+    expect(
+      luaRes.diagnostics.some((d) =>
+        d.id.startsWith('dup-hat-ext_robot_on_estop-press-'),
+      ),
+    ).toBe(true);
+    expect(
+      luaRes.variableScopes?.some((s) => s.label.includes('on_robot_estop')),
+    ).toBe(true);
+
+    const pyRes = backendRegistry.get('python').generate(ws);
+    expect(pyRes.isEventDriven).toBe(true);
+    expect(pyRes.code).toContain('def on_robot_estop(active):');
+    expect(pyRes.code).toContain('if active:');
+    expect(pyRes.code).toContain('elif not active:');
+    expect(pyRes.debugCode).toContain('async def on_robot_estop(active):');
+    expect(pyRes.debugCode).toContain("_ev.startswith('event:')");
+
+    ws.dispose();
+    extensionRegistry.removeCustomPack(imported.id);
   });
 
   it('flags static error diagnostics when workspace uses blocks from a disabled or removed extension pack', () => {

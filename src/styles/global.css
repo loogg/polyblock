@@ -1060,6 +1060,7 @@ select {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
   box-shadow: var(--shadow-sm);
 }
 
@@ -1071,6 +1072,7 @@ select {
   padding: 8px 10px;
   background: var(--bg-chrome);
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .sim-pack-title-btn {
@@ -1213,6 +1215,7 @@ select {
   padding: 11px 12px;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
   gap: 10px;
 }
 

@@ -1,9 +1,5 @@
 import * as Blockly from 'blockly';
-import {
-  CAP_RT_LIFECYCLE,
-  CAP_RT_TIMERS,
-  hasCapability,
-} from '../capabilities/registry';
+import { extensionRegistry } from '../extensions/registry';
 
 export interface ToolboxBlockSpec {
   kind: 'block';
@@ -19,6 +15,7 @@ export interface BlockCategorySpec {
   label: string;
   color: string;
   custom?: 'VARIABLE' | 'PROCEDURE';
+  flyoutButton?: { text: string; callbackKey: string };
   blocks: ToolboxBlockSpec[];
 }
 
@@ -43,76 +40,6 @@ const CORE_EVENT_BLOCKS: ToolboxBlockSpec[] = [
     keywords: '注释 comment 备注 说明',
   },
 ];
-
-/** Optional lifecycle blocks enabled ONLY when capability 'rt-lifecycle' is active. */
-const RT_LIFECYCLE_BLOCKS: ToolboxBlockSpec[] = [
-  {
-    kind: 'block',
-    type: 'poly_on_run',
-    keywords: '当周期运行 on_run 周期 主循环 loop 回调 100ms',
-    fields: { PERIOD_MS: 100 },
-  },
-  {
-    kind: 'block',
-    type: 'poly_set_run_period',
-    keywords: '设置 on_run 周期 period ms 间隔 频率',
-    inputs: { MS: numShadow(100) },
-  },
-  {
-    kind: 'block',
-    type: 'poly_run_control',
-    keywords: '启动 停止 暂停 on_run 周期运行 start_run stop_run',
-    fields: { ACTION: 'stop' },
-  },
-  {
-    kind: 'block',
-    type: 'poly_on_stop',
-    keywords: '当程序停止 on_stop 退出 收尾 清理 事件',
-  },
-];
-
-/** Optional multi-channel ID timer category enabled ONLY when capability 'rt-timers' is active. */
-export const RT_TIMERS_CATEGORY: BlockCategorySpec = {
-  id: 'timers',
-  label: '定时',
-  color: '#6366f1',
-  blocks: [
-    {
-      kind: 'block',
-      type: 'poly_on_timer',
-      keywords: '当定时器 触发 回调 on_timer timer id 通道',
-      fields: { TIMER_ID: '0' },
-    },
-    {
-      kind: 'block',
-      type: 'poly_start_timer',
-      keywords: '启动定时器 start_timer 周期 重复 循环 单次 timer',
-      fields: { TIMER_ID: '0' },
-      inputs: {
-        PERIOD_MS: numShadow(500),
-        REPEAT: numShadow(0),
-      },
-    },
-    {
-      kind: 'block',
-      type: 'poly_stop_timer',
-      keywords: '停止定时器 stop_timer 关闭 取消 timer',
-      fields: { TIMER_ID: '0' },
-    },
-    {
-      kind: 'block',
-      type: 'poly_get_timer_value',
-      keywords: '读取 定时器 已过 毫秒 get_timer_value elapsed timer',
-      fields: { TIMER_ID: '0' },
-    },
-    {
-      kind: 'block',
-      type: 'poly_is_timer_running',
-      keywords: '定时器 正在运行 状态 is_timer_running running timer',
-      fields: { TIMER_ID: '0' },
-    },
-  ],
-};
 
 export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
   {
@@ -383,33 +310,32 @@ function stripKeywords(spec: ToolboxBlockSpec): Record<string, unknown> {
 }
 
 /**
- * Computes the project's active core categories strictly gated by enabledCapabilities:
- * - Pure-script projects see ONLY Layer 0 language categories (no on_run, no timers, no button hats).
- * - Enabling 'rt-lifecycle' injects on_run/on_stop blocks into 事件.
- * - Enabling 'rt-timers' adds the 定时 category.
+ * Computes the project's active core + runtime-pack categories dynamically from ExtensionRegistry:
+ * - Pure-script projects see ONLY Layer 0 language categories (zero hardware / zero timer / zero on_run).
+ * - Any enabled pack with `categoryTarget === 'event'` (e.g. `rt-lifecycle`) merges cleanly into `事件`.
+ * - Any enabled `packKind === 'runtime'` standalone category (e.g. `rt-timers` -> `定时`) slots right below `事件`.
  */
 export function getCoreCategoriesForCapabilities(
   enabledCapabilities: string[] = [],
 ): BlockCategorySpec[] {
-  const hasLifecycle = hasCapability(enabledCapabilities, CAP_RT_LIFECYCLE);
-  const hasTimers = hasCapability(enabledCapabilities, CAP_RT_TIMERS);
+  const eventPackBlocks = extensionRegistry.getEventCategoryBlocks(enabledCapabilities);
+  const runtimeCategories = extensionRegistry.toCategorySpecs(
+    enabledCapabilities,
+    undefined,
+    'runtime',
+  );
 
   const out: BlockCategorySpec[] = [];
   for (const cat of BLOCK_CATEGORIES) {
     if (cat.id === 'event') {
       out.push({
         ...cat,
-        blocks: hasLifecycle
-          ? [
-              CORE_EVENT_BLOCKS[0],
-              ...RT_LIFECYCLE_BLOCKS,
-              CORE_EVENT_BLOCKS[1],
-            ]
-          : CORE_EVENT_BLOCKS,
+        blocks:
+          eventPackBlocks.length > 0
+            ? [CORE_EVENT_BLOCKS[0], ...eventPackBlocks, CORE_EVENT_BLOCKS[1]]
+            : CORE_EVENT_BLOCKS,
       });
-      if (hasTimers) {
-        out.push(RT_TIMERS_CATEGORY);
-      }
+      out.push(...runtimeCategories);
     } else {
       out.push(cat);
     }
@@ -574,16 +500,16 @@ export function buildFlyoutToolbox(
     return { kind: 'flyoutToolbox', contents: items };
   }
 
-  if (category.id === 'timers') {
+  if (category.flyoutButton) {
     return {
       kind: 'flyoutToolbox',
       contents: [
         topSpacer,
-        { kind: 'label', text: '多路定时器 (rt · 本句柄独立)' },
+        { kind: 'label', text: category.label },
         {
           kind: 'button',
-          text: '⚙ 配置本句柄定时器通道',
-          callbackkey: 'OPEN_HANDLE_TIMER_CONFIG',
+          text: category.flyoutButton.text,
+          callbackkey: category.flyoutButton.callbackKey,
         },
         ...category.blocks.map(
           (b) => stripKeywords(b) as unknown as Blockly.utils.toolbox.BlockInfo,

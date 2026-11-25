@@ -1,6 +1,10 @@
 import { ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
-import { getWidgetDefaultValue } from '../core/extensions/simState';
+import {
+  qualifySimKey,
+  readPackWidgetValue,
+  resolveWidgetEventArgs,
+} from '../core/extensions/simState';
 import type {
   PolyExtensionPack,
   SimStateMap,
@@ -11,6 +15,7 @@ interface SimWidgetPanelProps {
   packs: PolyExtensionPack[];
   simState: SimStateMap;
   onUpdateSimValues: (patch: Record<string, unknown>) => void;
+  onEmitWidgetEvent?: (eventName: string, args: unknown[]) => void;
   onResetPack: (pack: PolyExtensionPack) => void;
 }
 
@@ -49,19 +54,32 @@ function groupWidgets(widgets: SimWidgetSpec[]): WidgetGroup[] {
   return groups;
 }
 
-function readVal(simState: SimStateMap, w: SimWidgetSpec): unknown {
-  return Object.prototype.hasOwnProperty.call(simState, w.key)
-    ? simState[w.key]
-    : getWidgetDefaultValue(w);
-}
-
 export function SimWidgetPanel({
   packs,
   simState,
   onUpdateSimValues,
+  onEmitWidgetEvent,
   onResetPack,
 }: SimWidgetPanelProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  const triggerBooleanWidget = (
+    pack: PolyExtensionPack,
+    w: SimWidgetSpec,
+    nextVal: boolean,
+  ) => {
+    const fullKey = qualifySimKey(pack.id, w.key);
+    onUpdateSimValues({ [fullKey]: nextVal });
+    if (w.emitEvent) {
+      const shouldFire =
+        w.emitEvent.trigger === 'rising' ? nextVal === true : true;
+      if (shouldFire) {
+        const nextSnapshot = { ...simState, [fullKey]: nextVal };
+        const args = resolveWidgetEventArgs(pack.id, w, nextVal, nextSnapshot);
+        onEmitWidgetEvent?.(w.emitEvent.eventName, args);
+      }
+    }
+  };
 
   return (
     <>
@@ -118,7 +136,7 @@ export function SimWidgetPanel({
                       <div key={`lamps-${gIdx}`} className="sim-lamp-bar">
                         {grp.widgets.map((w) => {
                           if (w.kind === 'led') {
-                            const on = Boolean(readVal(simState, w));
+                            const on = Boolean(readPackWidgetValue(simState, pack.id, w));
                             const litColor = w.color || '#22c55e';
                             return (
                               <div key={w.key} className="vboard-lamp-item">
@@ -141,7 +159,9 @@ export function SimWidgetPanel({
                               </div>
                             );
                           }
-                          const hex = String(readVal(simState, w) || '#1e293b');
+                          const hex = String(
+                            readPackWidgetValue(simState, pack.id, w) || '#1e293b',
+                          );
                           const active = hex !== '#1e293b' && hex !== '#334155';
                           return (
                             <div key={w.key} className="vboard-lamp-item">
@@ -168,7 +188,9 @@ export function SimWidgetPanel({
                       <div key={`btns-${gIdx}`} className="sim-sub-card">
                         <div className="vboard-btn-row">
                           {grp.widgets.map((w) => {
-                            const pressed = Boolean(readVal(simState, w));
+                            const pressed = Boolean(
+                              readPackWidgetValue(simState, pack.id, w),
+                            );
                             const statusText = pressed
                               ? (w.activeLabel ?? '按下中')
                               : (w.idleLabel ?? '释放');
@@ -177,9 +199,7 @@ export function SimWidgetPanel({
                                 key={w.key}
                                 type="button"
                                 className={`vboard-key-btn ${pressed ? 'pressed' : ''}`}
-                                onClick={() =>
-                                  onUpdateSimValues({ [w.key]: !pressed })
-                                }
+                                onClick={() => triggerBooleanWidget(pack, w, !pressed)}
                               >
                                 {w.label} · {statusText}
                               </button>
@@ -194,7 +214,7 @@ export function SimWidgetPanel({
                     return (
                       <div key={`toggles-${gIdx}`} className="sim-sub-card">
                         {grp.widgets.map((w) => {
-                          const on = Boolean(readVal(simState, w));
+                          const on = Boolean(readPackWidgetValue(simState, pack.id, w));
                           const litColor = w.color || 'var(--accent)';
                           return (
                             <div key={w.key} className="sim-toggle-row">
@@ -215,7 +235,7 @@ export function SimWidgetPanel({
                                     ? { background: litColor, borderColor: litColor }
                                     : undefined
                                 }
-                                onClick={() => onUpdateSimValues({ [w.key]: !on })}
+                                onClick={() => triggerBooleanWidget(pack, w, !on)}
                               >
                                 <span className="sim-switch-thumb" />
                                 <span className="sim-switch-label">
@@ -231,7 +251,7 @@ export function SimWidgetPanel({
 
                   const w = grp.widget;
                   if (w.kind === 'screen') {
-                    const rawVal = readVal(simState, w);
+                    const rawVal = readPackWidgetValue(simState, pack.id, w);
                     const screenLines = Array.isArray(rawVal)
                       ? rawVal.map((item) => String(item))
                       : rawVal !== undefined && rawVal !== null && String(rawVal) !== ''
@@ -255,7 +275,7 @@ export function SimWidgetPanel({
                   if (w.kind === 'bar') {
                     const min = w.min ?? 0;
                     const max = w.max ?? 100;
-                    const rawNum = Number(readVal(simState, w));
+                    const rawNum = Number(readPackWidgetValue(simState, pack.id, w));
                     const num = Number.isFinite(rawNum) ? rawNum : min;
                     const span = Math.max(1e-6, max - min);
                     const pct = Math.max(
@@ -289,8 +309,9 @@ export function SimWidgetPanel({
                   const min = w.min ?? 0;
                   const max = w.max ?? 100;
                   const step = w.step ?? 1;
-                  const rawNum = Number(readVal(simState, w));
+                  const rawNum = Number(readPackWidgetValue(simState, pack.id, w));
                   const num = Number.isFinite(rawNum) ? rawNum : min;
+                  const fullKey = qualifySimKey(pack.id, w.key);
                   return (
                     <div key={w.key} className="sim-sub-card">
                       <div className="vboard-slider-head">
@@ -311,7 +332,7 @@ export function SimWidgetPanel({
                         step={step}
                         value={num}
                         onChange={(e) =>
-                          onUpdateSimValues({ [w.key]: Number(e.target.value) })
+                          onUpdateSimValues({ [fullKey]: Number(e.target.value) })
                         }
                         style={{
                           width: '100%',

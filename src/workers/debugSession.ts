@@ -9,6 +9,7 @@ export interface WorkerMockModule {
   moduleName: string;
   luaSource?: string;
   pythonSource?: string;
+  packId?: string;
 }
 
 export type WorkerControlMessage =
@@ -34,6 +35,12 @@ export type WorkerControlMessage =
       type: 'UPDATE_MOCK_INPUTS';
       runId: string;
       mockInputs: Record<string, unknown>;
+    }
+  | {
+      type: 'EMIT_EVENT';
+      runId: string;
+      eventName: string;
+      args: unknown[];
     };
 
 export function parseVarsJson(raw: unknown): Record<string, string> {

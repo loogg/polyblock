@@ -5,7 +5,10 @@ import { LuaFactory } from 'wasmoon';
 import { loadMicroPython } from '@micropython/micropython-webassembly-pyscript';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
-import { VIRTUAL_BOARD_PACK } from '../extensions/builtinPacks';
+import {
+  SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+  VIRTUAL_BOARD_PACK,
+} from '../extensions/builtinPacks';
 import { extensionRegistry } from '../extensions/registry';
 import {
   getHandleTimerConfig,
@@ -249,5 +252,156 @@ sys.modules["rt"] = _Rt()
     expect(pyLogs.some((l) => l.includes('T0 触发次数 = 2'))).toBe(true);
     expect(pyLogs.some((l) => l.includes('T0 触发次数 = 3'))).toBe(true);
     expect(pyLogs.some((l) => l.includes('3 次定时任务全部完成'))).toBe(true);
+  });
+
+  it('dispatches custom declarative kind:"hat" callbacks via enqueueEvent in BOTH Wasmoon Lua 5.4 and MicroPython WASM', async () => {
+    const imported = extensionRegistry.importCustomPack(SAMPLE_CUSTOM_EXTENSION_TEMPLATE);
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'ext_robot_on_estop',
+              id: 'w_estop_on',
+              fields: { STATE: 'press' },
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'poly_print',
+                    id: 'w_p1',
+                    inputs: {
+                      VALUE: {
+                        block: {
+                          type: 'text',
+                          id: 'w_t1',
+                          fields: { TEXT: 'CUSTOM_HAT:ESTOP_ON' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            {
+              type: 'ext_robot_on_estop',
+              id: 'w_estop_off',
+              fields: { STATE: 'release' },
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'poly_print',
+                    id: 'w_p2',
+                    inputs: {
+                      VALUE: {
+                        block: {
+                          type: 'text',
+                          id: 'w_t2',
+                          fields: { TEXT: 'CUSTOM_HAT:ESTOP_OFF' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      ws,
+    );
+
+    const luaDebug = backendRegistry.get('lua').generate(ws).debugCode;
+    const pyDebug = backendRegistry.get('python').generate(ws).debugCode;
+    ws.dispose();
+    extensionRegistry.removeCustomPack(imported.id);
+
+    // 1. Wasmoon Lua 5.4 custom hat event dispatch
+    const luaLogs: string[] = [];
+    const luaFactory = new LuaFactory();
+    const lua = await luaFactory.createEngine({ openStandardLibs: true });
+    const luaSession = new WorkerDebugSession(
+      { runId: 'hat-lua', breakpoints: [], stepDelayMs: 0 },
+      () => {},
+    );
+    const luaSched = new WorkerRuntimeScheduler({
+      runId: 'hat-lua',
+      timerCount: 8,
+      post: () => {},
+    });
+    try {
+      lua.global.set('__poly_print', (...args: unknown[]) =>
+        luaLogs.push(args.map(String).join(' ')),
+      );
+      lua.global.set('__poly_step', (bid: string, vars: string) =>
+        luaSession.onStep(String(bid), vars),
+      );
+      lua.global.set('__poly_sleep', (ms: number) => luaSession.onSleep(ms));
+      lua.global.set('__poly_final_snap', (vars: string) =>
+        luaSession.setFinalVars(vars),
+      );
+      lua.global.set('__poly_should_loop', (r: unknown, t: unknown, b: unknown) =>
+        luaSched.shouldEnterEventLoop(Boolean(r), Boolean(t), Boolean(b)),
+      );
+      lua.global.set('__poly_next_event', () => luaSched.nextEvent());
+      lua.global.set('__poly_last_event_name', () => luaSched.getLastEventName());
+      lua.global.set('__poly_last_event_argc', () => luaSched.getLastEventArgCount());
+      lua.global.set('__poly_last_event_arg', (idx: number) =>
+        luaSched.getLastEventArg(idx),
+      );
+      await lua.doString(`
+        function __poly_snap() return "{}" end
+        print = function(...) __poly_print(...) end
+      `);
+      // Enqueue events after loop enters wait, then stop cleanly once dispatched
+      setTimeout(() => {
+        luaSched.enqueueEvent('on_robot_estop', [true]);
+        luaSched.enqueueEvent('on_robot_estop', [false]);
+      }, 20);
+      setTimeout(() => {
+        luaSched.requestGracefulStop();
+      }, 80);
+      await lua.doString(luaDebug);
+    } finally {
+      lua.global.close();
+    }
+
+    expect(luaLogs).toContain('CUSTOM_HAT:ESTOP_ON');
+    expect(luaLogs).toContain('CUSTOM_HAT:ESTOP_OFF');
+
+    // 2. MicroPython WASM custom hat event dispatch
+    const pyLogs: string[] = [];
+    const pySession = new WorkerDebugSession(
+      { runId: 'hat-py', breakpoints: [], stepDelayMs: 0 },
+      () => {},
+    );
+    const pySched = new WorkerRuntimeScheduler({
+      runId: 'hat-py',
+      timerCount: 8,
+      post: () => {},
+    });
+    const mp = await loadMicroPython({
+      stdout: (line) => pyLogs.push(line),
+    });
+    mp.registerJsModule('_poly', {
+      step: (bid: string, vars: string) => pySession.onStep(String(bid), vars),
+      sleep: (ms: number) => pySession.onSleep(ms),
+      final_snap: (vars: string) => pySession.setFinalVars(vars),
+      should_loop: (r: unknown, t: unknown, b: unknown) =>
+        pySched.shouldEnterEventLoop(Boolean(r), Boolean(t), Boolean(b)),
+      next_event: () => pySched.nextEvent(),
+    });
+    setTimeout(() => {
+      pySched.enqueueEvent('on_robot_estop', [true]);
+      pySched.enqueueEvent('on_robot_estop', [false]);
+    }, 20);
+    setTimeout(() => {
+      pySched.requestGracefulStop();
+    }, 80);
+    await mp.runPythonAsync(pyDebug);
+
+    expect(pyLogs).toContain('CUSTOM_HAT:ESTOP_ON');
+    expect(pyLogs).toContain('CUSTOM_HAT:ESTOP_OFF');
   });
 });

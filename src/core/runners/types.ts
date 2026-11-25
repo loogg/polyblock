@@ -39,6 +39,7 @@ export interface RunCallbacks {
   ) => void;
   onResumed?: () => void;
   onDeviceEvent?: (kind: string, value: unknown) => void;
+  onCustomEvent?: (eventName: string, args: unknown[]) => void;
   onRuntimeTelemetry?: (telemetry: RuntimeTelemetry) => void;
 }
 
@@ -74,5 +75,6 @@ export interface ScriptRunner {
   updateBreakpoints?(breakpoints: string[]): void;
   updateStepDelay?(stepDelayMs: number): void;
   updateMockInputs?(mockInputs: Record<string, unknown>): void;
+  emitEvent?(eventName: string, args: unknown[]): void;
   dispose(): void;
 }
