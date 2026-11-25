@@ -964,7 +964,35 @@ select {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
+}
+
+.vboard-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vboard-reset-btn {
+  color: #94a3b8;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 2px 5px;
+  border-radius: 5px;
+  transition: color 0.14s, background 0.14s;
+}
+
+.vboard-reset-btn:hover {
+  color: #f8fafc;
+  background: rgba(148, 163, 184, 0.15);
 }
 
 .vboard-indicators {
@@ -1317,7 +1345,12 @@ select {
   padding: 0 10px;
   background: var(--bg-panel-subtle);
   border-bottom: 1px solid var(--border);
-  gap: 8px;
+  gap: 6px;
+}
+
+.pane-header.has-board {
+  padding: 0 8px;
+  gap: 4px;
 }
 
 .pane-tabs {
@@ -1325,12 +1358,15 @@ select {
   align-items: center;
   gap: 2px;
   height: 100%;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
 }
 
 .code-tab-filename {
   max-width: 112px;
+  min-width: 0;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1348,6 +1384,18 @@ select {
   border-bottom: 2px solid transparent;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.pane-header.has-board .pane-tab {
+  padding: 0 5px;
+  gap: 3px;
+  font-size: 11.5px;
+}
+
+.pane-header.has-board .pane-tab-code {
+  flex: 0 1 auto;
+  min-width: 44px;
+  overflow: hidden;
 }
 
 .pane-tab:hover {

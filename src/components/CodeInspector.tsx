@@ -134,19 +134,15 @@ export function CodeInspector({
 
   return (
     <aside className="inspector-pane" aria-label="实时代码、模拟外设、变量与校验面板">
-      <div className="pane-header">
+      <div className={`pane-header ${showVirtualBoard ? 'has-board' : ''}`}>
         <div className="pane-tabs">
           <button
             type="button"
-            className={`pane-tab ${activeTab === 'code' ? 'active' : ''}`}
+            className={`pane-tab pane-tab-code ${activeTab === 'code' ? 'active' : ''}`}
             onClick={() => setActiveTab('code')}
           >
-            <Code2 size={14} style={{ flexShrink: 0 }} />
-            <span
-              className="code-tab-filename"
-              style={showVirtualBoard ? { maxWidth: 70 } : undefined}
-              title={displayFileName}
-            >
+            <Code2 size={13} style={{ flexShrink: 0 }} />
+            <span className="code-tab-filename" title={displayFileName}>
               {displayFileName}
             </span>
             {breakpoints.length > 0 && (
@@ -166,7 +162,7 @@ export function CodeInspector({
               onClick={() => setActiveTab('board')}
               title="虚拟硬件外设模拟面板"
             >
-              <Cpu size={13} />
+              <Cpu size={12} style={{ flexShrink: 0 }} />
               <span>模拟</span>
               {virtualBoard.led && (
                 <span
@@ -176,6 +172,7 @@ export function CodeInspector({
                     borderRadius: '50%',
                     background: '#22c55e',
                     display: 'inline-block',
+                    flexShrink: 0,
                   }}
                 />
               )}
@@ -187,7 +184,7 @@ export function CodeInspector({
             className={`pane-tab ${activeTab === 'vars' ? 'active' : ''}`}
             onClick={() => setActiveTab('vars')}
           >
-            <Eye size={13} />
+            <Eye size={12} style={{ flexShrink: 0 }} />
             <span>变量</span>
             <span className="count-badge">{displayVariables.length}</span>
           </button>
@@ -210,7 +207,7 @@ export function CodeInspector({
           </button>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
           {breakpoints.length > 0 && activeTab === 'code' && (
             <button
               type="button"
@@ -383,22 +380,16 @@ export function CodeInspector({
         <div className="vboard-wrap">
           <div className="vboard-pcb">
             <div className="vboard-top-row">
-              <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4 }}>
+              <span className="vboard-title" title="POLYBLOCK VIRTUAL BOARD v1">
                 POLYBLOCK VIRTUAL BOARD v1
               </span>
               <button
                 type="button"
+                className="vboard-reset-btn"
                 onClick={onResetVirtualBoard}
                 title="复位虚拟外设输出"
-                style={{
-                  color: '#94a3b8',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  fontSize: 11,
-                }}
               >
-                <RotateCcw size={11} />
+                <RotateCcw size={11} style={{ flexShrink: 0 }} />
                 <span>复位</span>
               </button>
             </div>
