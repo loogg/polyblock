@@ -6,9 +6,11 @@ import {
   WorkerDebugSession,
   type WorkerControlMessage,
 } from './debugSession';
+import { WorkerRuntimeScheduler } from './runtimeScheduler';
 
 let activeRunId = '';
 let activeSession: WorkerDebugSession | null = null;
+let activeScheduler: WorkerRuntimeScheduler | null = null;
 let mpInstance: MicroPythonInstance | null = null;
 let cachedWasmUrl: string | null = null;
 let stderrLines: string[] = [];
@@ -58,6 +60,27 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
     now_ms: () => {
       return performance.now();
     },
+    // Phase 5 rt scheduler bindings (delegated to active isolated scheduler)
+    rt_set_run_period: (ms: unknown) => activeScheduler?.setRunPeriod(ms),
+    rt_start_run: () => activeScheduler?.startRun(),
+    rt_stop_run: () => activeScheduler?.stopRun(),
+    rt_start_timer: (id: unknown, periodMs: unknown, repeat: unknown) =>
+      activeScheduler?.startTimer(id, periodMs, repeat ?? 0),
+    rt_stop_timer: (id: unknown) => activeScheduler?.stopTimer(id),
+    rt_get_timer_value: (id: unknown) =>
+      activeScheduler ? activeScheduler.getTimerValue(id) : 0,
+    rt_is_timer_running: (id: unknown) =>
+      activeScheduler ? activeScheduler.isTimerRunning(id) : false,
+    should_loop: (hasRun: unknown, hasTimer: unknown, hasBtn: unknown) =>
+      activeScheduler
+        ? activeScheduler.shouldEnterEventLoop(
+            Boolean(hasRun),
+            Boolean(hasTimer),
+            Boolean(hasBtn),
+          )
+        : false,
+    next_event: () =>
+      activeScheduler ? activeScheduler.nextEvent() : Promise.resolve('done'),
   });
 
   cachedWasmUrl = wasmUrl;
@@ -68,6 +91,26 @@ const RESET_GLOBALS_SNIPPET = `
 for _k in list(globals().keys()):
   if _k not in ('__name__', '__file__', '__builtins__'):
     del globals()[_k]
+`;
+
+const MOUNT_RT_MODULE_SNIPPET = `
+import sys, _poly
+class _PolyRtModule:
+  def set_run_period(self, ms):
+    return _poly.rt_set_run_period(ms)
+  def start_run(self):
+    return _poly.rt_start_run()
+  def stop_run(self):
+    return _poly.rt_stop_run()
+  def start_timer(self, tid, period_ms, repeat=0):
+    return _poly.rt_start_timer(tid, period_ms, repeat)
+  def stop_timer(self, tid):
+    return _poly.rt_stop_timer(tid)
+  def get_timer_value(self, tid):
+    return _poly.rt_get_timer_value(tid)
+  def is_timer_running(self, tid):
+    return _poly.rt_is_timer_running(tid)
+sys.modules["rt"] = _PolyRtModule()
 `;
 
 self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
@@ -86,6 +129,15 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     if (activeSession?.runId === msg.runId) activeSession.pause();
     return;
   }
+  if (msg.type === 'STOP_GRACEFUL') {
+    if (activeScheduler?.runId === msg.runId) {
+      activeScheduler.requestGracefulStop();
+    }
+    if (activeSession?.runId === msg.runId) {
+      activeSession.resume();
+    }
+    return;
+  }
   if (msg.type === 'SET_BREAKPOINTS') {
     if (activeSession?.runId === msg.runId) {
       activeSession.setBreakpoints(msg.breakpoints);
@@ -99,7 +151,11 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     return;
   }
   if (msg.type === 'UPDATE_MOCK_INPUTS') {
+    const prev = currentMockInputs;
     currentMockInputs = { ...currentMockInputs, ...msg.mockInputs };
+    if (activeScheduler?.runId === msg.runId) {
+      activeScheduler.onMockInputsDelta(prev, currentMockInputs);
+    }
     return;
   }
 
@@ -112,6 +168,7 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     breakpoints,
     stepDelayMs,
     startInStepMode,
+    timerCount,
     mockModules,
     mockInputs,
   } = msg;
@@ -120,11 +177,18 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
   currentMockInputs = { ...(mockInputs ?? {}) };
   const startedAt = performance.now();
 
+  const post = (payload: Record<string, unknown>) => self.postMessage(payload);
   const session = new WorkerDebugSession(
     { runId, breakpoints, stepDelayMs, startInStepMode },
-    (payload) => self.postMessage(payload),
+    post,
   );
+  const scheduler = new WorkerRuntimeScheduler({
+    runId,
+    timerCount: timerCount ?? 8,
+    post,
+  });
   activeSession = session;
+  activeScheduler = scheduler;
 
   try {
     const mp = await ensureMicroPython(wasmUrl);
@@ -140,6 +204,9 @@ for _mn in ${JSON.stringify(mountedModuleNames)}:
 `);
       mountedModuleNames = [];
     }
+
+    // Mount core rt scheduler module
+    mp.runPython(MOUNT_RT_MODULE_SNIPPET);
 
     for (const mod of mockModules ?? []) {
       if (!mod.pythonSource || !mod.moduleName) continue;
@@ -177,5 +244,6 @@ sys.modules[${JSON.stringify(mod.moduleName)}] = _poly_m
     });
   } finally {
     if (activeSession === session) activeSession = null;
+    if (activeScheduler === scheduler) activeScheduler = null;
   }
 };

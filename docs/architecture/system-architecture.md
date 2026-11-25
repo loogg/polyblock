@@ -145,3 +145,52 @@ WorkspaceStore (localStorage: polyblock.store.v2，自动兼容迁移 v1 数据)
 
 
 
+
+## 8. 事件驱动生命周期、多路编号定时器与硬件事件回调架构（Phase 5）
+
+为让沙箱仿真完整对齐真实嵌入式 Lua/Python 固件（特别是多隔离 `lua_State*` 句柄场景），Phase 5 引入零闭包、纯整数通道 ID 的顶层事件分发 ABI 与协作式 WASM 事件循环：
+
+### 8.1 顶层零闭包导出协议（Board-Ready ABI）
+- **设计约束**：不在 C 层维护 `luaL_ref` 回调闭包表；所有事件回调均导出为顶层标准函数，嵌入式 C 宿主仅需 `lua_getglobal(L, "on_timer")` + `lua_pushinteger(L, id)` + `lua_pcall` 即可安全派发，多隔离 `lua_State*` 句柄天然互不窜扰。
+- **生命周期与事件入口**：
+  - `on_start()`：启动后执行一次初始化；
+  - `on_run()`：周期主回调（默认 `100ms`，可通过 `rt.set_run_period(ms)` / `rt.start_run()` / `rt.stop_run()` 控制）；
+  - `on_timer(id)`：由代码生成器自动将画布上多个 `当定时器 [Ti] 触发时` 帽子积木聚合为单一 `if id == 0 ... elseif id == 1 ...` 分发函数；
+  - `on_button(key, pressed)`：聚合虚拟板卡 `当按键 [A/B] [按下/释放] 时` 回调；
+  - `on_stop()`：手动停止时优雅触发安全收尾。
+- **精简 `rt` 运行时 API**（Lua 顶部导出 `local rt = require("rt")`，Python 顶部导出 `import rt`）：
+  - `rt.set_run_period(ms)` / `rt.start_run()` / `rt.stop_run()`
+  - `rt.start_timer(id, period_ms, repeat)`：`repeat = 0` 表示持续循环，`1` 表示单次触发，`N > 1` 表示触发 `N` 次后自动停止；对运行中通道再次调用按嵌入式惯例重置倒计时（re-arm）。
+  - `rt.stop_timer(id)`：停止指定通道。
+  - `rt.get_timer_value(id)`：返回本周期已流逝毫秒数（`0 -> period_ms`，未运行返回 `0`）。
+  - `rt.is_timer_running(id)`：返回通道是否处于运行态（布尔值）。
+
+### 8.2 项目级定时器能力配置（`ProjectTimerConfig`）
+- `ProjectModel.timerConfig` 记录当前目标板/项目支持的定时器通道数 `count`（默认 `8`，可配置范围 `1 ~ 32`，对应 ID `0 ~ count-1`）及可选通道别名 `aliases`（如 `"0": "心跳灯"`）。
+- 积木下拉框自动展示 `T0 · 心跳灯`，但生成代码始终输出纯整数 ID（`0`），兼顾可读性与嵌入式零字符串开销。
+- 静态诊断自动检测重复帽子（如同一通道绑定两个 `on_timer`）与越界通道 ID。
+
+### 8.3 协作式 WASM 事件循环调度器（`WorkerRuntimeScheduler`）
+```mermaid
+sequenceDiagram
+  participant UI as React 工作台 / 模拟面板
+  participant R as Runner (Watchdog)
+  participant W as Lua / Python Worker
+  participant S as WorkerRuntimeScheduler
+
+  UI->>R: 点击运行 (含 timerConfig + mockInputs)
+  R->>W: RUN (debugCode + rt 模块)
+  W->>W: 执行 on_start()
+  loop 常驻事件循环 (有 on_run / 活跃定时器 / on_button)
+    W->>S: await nextEvent()
+    S-->>R: WAITING=true (暂停死循环看门狗)
+    S-->>UI: RUNTIME_TELEMETRY (on_run 周期 + 各定时器进度)
+    UI->>W: UPDATE_MOCK_INPUTS (实时拖动温度 / 点击按键 A/B)
+    S-->>R: WAITING=false (恢复单次回调看门狗)
+    S-->>W: 返回 "run" / "timer:0" / "button:A:1"
+    W->>W: 调度对应回调 (支持逐块高亮与断点单步)
+  end
+  UI->>W: STOP_GRACEFUL (点击停止)
+  S-->>W: 返回 "stop"
+  W->>W: 执行 on_stop() 并上报 DONE
+```

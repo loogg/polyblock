@@ -80,8 +80,8 @@ class RunnerManager {
     return this.activeRunner;
   }
 
-  stopActive(): void {
-    this.activeRunner?.stop();
+  stopActive(force = false): void {
+    this.activeRunner?.stop(force);
   }
 
   resumeActive(): void {

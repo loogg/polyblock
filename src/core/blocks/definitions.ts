@@ -2,8 +2,37 @@ import * as Blockly from 'blockly';
 import '@blockly/block-plus-minus';
 import * as zhHans from 'blockly/msg/zh-hans';
 import { extensionRegistry } from '../extensions/registry';
+import { buildTimerDropdownOptions } from './timerConfigBridge';
 
 let blocksRegistered = false;
+
+class TimerIdFieldDropdown extends Blockly.FieldDropdown {
+  private pendingValue: string | null = null;
+
+  constructor() {
+    super(function (this: Blockly.FieldDropdown) {
+      const self = this as TimerIdFieldDropdown;
+      return buildTimerDropdownOptions(self.pendingValue ?? self.getValue());
+    });
+  }
+
+  protected override doClassValidation_(newValue?: string): string | null {
+    if (typeof newValue === 'string' && /^\d+$/.test(newValue)) {
+      const n = Number(newValue);
+      if (Number.isInteger(n) && n >= 0 && n < 32) {
+        this.pendingValue = newValue;
+        this.getOptions(false);
+      }
+    }
+    const res = super.doClassValidation_(newValue);
+    this.pendingValue = null;
+    return res;
+  }
+}
+
+function createTimerIdField(): Blockly.FieldDropdown {
+  return new TimerIdFieldDropdown();
+}
 
 export function registerPolyBlocks(): void {
   if (blocksRegistered) return;
@@ -12,14 +41,99 @@ export function registerPolyBlocks(): void {
   Blockly.setLocale(zhHans as unknown as Record<string, string>);
 
   const customBlockDefs = [
-    // --- 事件 (Event) ---
+    // --- 事件与生命周期 (Event & Lifecycle) ---
     {
       type: 'poly_on_start',
       message0: '当程序启动',
       message1: '%1',
       args1: [{ type: 'input_statement', name: 'BODY' }],
       style: 'event_blocks',
-      tooltip: '程序主入口，点击运行后从此处按顺序执行。',
+      tooltip: '程序主入口（on_start），点击运行后执行一次初始化逻辑。',
+    },
+    {
+      type: 'poly_on_run',
+      message0: '当周期运行 on_run 每 %1 ms',
+      args0: [
+        {
+          type: 'field_number',
+          name: 'PERIOD_MS',
+          value: 100,
+          min: 10,
+          max: 60000,
+          precision: 1,
+        },
+      ],
+      message1: '%1',
+      args1: [{ type: 'input_statement', name: 'BODY' }],
+      inputsInline: true,
+      style: 'event_blocks',
+      tooltip:
+        '周期主回调（on_run，默认每 100ms 触发一次），运行后进入常驻事件循环直到手动停止。',
+    },
+    {
+      type: 'poly_on_stop',
+      message0: '当程序停止 (on_stop)',
+      message1: '%1',
+      args1: [{ type: 'input_statement', name: 'BODY' }],
+      style: 'event_blocks',
+      tooltip: '手动停止常驻事件循环时自动执行一次收尾清理（如熄灭 LED / 复位输出）。',
+    },
+    {
+      type: 'poly_set_run_period',
+      message0: '设置 on_run 周期为 %1 ms',
+      args0: [{ type: 'input_value', name: 'MS', check: 'Number' }],
+      inputsInline: true,
+      previousStatement: null,
+      nextStatement: null,
+      style: 'event_stmt_blocks',
+      tooltip: '动态修改 on_run 周期回调的触发间隔（毫秒）。',
+    },
+    {
+      type: 'poly_run_control',
+      message0: '%1 on_run 周期运行',
+      args0: [
+        {
+          type: 'field_dropdown',
+          name: 'ACTION',
+          options: [
+            ['启动', 'start'],
+            ['停止', 'stop'],
+          ],
+        },
+      ],
+      inputsInline: true,
+      previousStatement: null,
+      nextStatement: null,
+      style: 'event_stmt_blocks',
+      tooltip: '在运行时启动或暂停 on_run 周期调度（对应 rt.start_run / rt.stop_run）。',
+    },
+    {
+      type: 'poly_on_button',
+      message0: '当按键 %1 %2 时',
+      args0: [
+        {
+          type: 'field_dropdown',
+          name: 'KEY',
+          options: [
+            ['按键 A', 'A'],
+            ['按键 B', 'B'],
+          ],
+        },
+        {
+          type: 'field_dropdown',
+          name: 'EDGE',
+          options: [
+            ['按下', 'press'],
+            ['释放', 'release'],
+          ],
+        },
+      ],
+      message1: '%1',
+      args1: [{ type: 'input_statement', name: 'BODY' }],
+      inputsInline: true,
+      style: 'event_blocks',
+      tooltip:
+        '硬件按键边沿事件回调，自动聚合成顶层 on_button(key, pressed) 分发函数（零闭包）。',
     },
 
     // --- 打印与日志 (Print & Logging) ---
@@ -151,6 +265,85 @@ export function registerPolyBlocks(): void {
 
   Blockly.defineBlocksWithJsonArray(customBlockDefs);
 
+  // --- 多路硬件风格定时器积木（动态读取当前项目通道数 0..N-1 与别名）---
+  Blockly.Blocks['poly_on_timer'] = {
+    init(this: Blockly.Block) {
+      this.appendDummyInput()
+        .appendField('当定时器')
+        .appendField(createTimerIdField(), 'TIMER_ID')
+        .appendField('触发时');
+      this.appendStatementInput('BODY');
+      this.setInputsInline(true);
+      this.setStyle('timer_hat_blocks');
+      this.setTooltip(
+        '绑定指定通道 ID 的定时器到期回调，自动聚合成顶层 on_timer(id) 分发函数（零闭包）。',
+      );
+    },
+  };
+
+  Blockly.Blocks['poly_start_timer'] = {
+    init(this: Blockly.Block) {
+      this.appendDummyInput()
+        .appendField('启动定时器')
+        .appendField(createTimerIdField(), 'TIMER_ID');
+      this.appendValueInput('PERIOD_MS')
+        .setCheck('Number')
+        .appendField('周期');
+      this.appendValueInput('REPEAT')
+        .setCheck('Number')
+        .appendField('ms 重复');
+      this.appendDummyInput().appendField('次');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setStyle('timer_blocks');
+      this.setTooltip(
+        '启动或重置指定通道定时器（rt.start_timer(id, period_ms, repeat)）：repeat=0 持续循环，1 单次，N 触发 N 次后停止。',
+      );
+    },
+  };
+
+  Blockly.Blocks['poly_stop_timer'] = {
+    init(this: Blockly.Block) {
+      this.appendDummyInput()
+        .appendField('停止定时器')
+        .appendField(createTimerIdField(), 'TIMER_ID');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setStyle('timer_blocks');
+      this.setTooltip('停止指定通道定时器（rt.stop_timer(id)）。');
+    },
+  };
+
+  Blockly.Blocks['poly_get_timer_value'] = {
+    init(this: Blockly.Block) {
+      this.appendDummyInput()
+        .appendField('定时器')
+        .appendField(createTimerIdField(), 'TIMER_ID')
+        .appendField('已过毫秒数');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Number');
+      this.setStyle('timer_blocks');
+      this.setTooltip(
+        '读取指定定时器本周期已流逝的毫秒数（rt.get_timer_value(id)，0 → period_ms，未运行返回 0）。',
+      );
+    },
+  };
+
+  Blockly.Blocks['poly_is_timer_running'] = {
+    init(this: Blockly.Block) {
+      this.appendDummyInput()
+        .appendField('定时器')
+        .appendField(createTimerIdField(), 'TIMER_ID')
+        .appendField('正在运行?');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Boolean');
+      this.setStyle('timer_blocks');
+      this.setTooltip('检查指定通道定时器当前是否处于运行状态（rt.is_timer_running(id)）。');
+    },
+  };
+
   // Align selected built-in block styles with our MicroBlocks palette
   const styleOverrides: Record<string, string> = {
     controls_if: 'control_blocks',
@@ -161,10 +354,10 @@ export function registerPolyBlocks(): void {
     math_change: 'variable_blocks',
     math_number: 'math_blocks',
     math_arithmetic: 'math_blocks',
-    math_single: 'math_blocks',
     math_modulo: 'math_blocks',
-    math_round: 'math_blocks',
     math_random_int: 'math_blocks',
+    math_round: 'math_blocks',
+    math_single: 'math_blocks',
     logic_compare: 'logic_blocks',
     logic_operation: 'logic_blocks',
     logic_negate: 'logic_blocks',
@@ -181,19 +374,21 @@ export function registerPolyBlocks(): void {
     procedures_defreturn: 'procedure_blocks',
     procedures_callnoreturn: 'procedure_blocks',
     procedures_callreturn: 'procedure_blocks',
-    procedures_ifreturn: 'procedure_blocks',
   };
 
   for (const [blockType, styleName] of Object.entries(styleOverrides)) {
     const def = Blockly.Blocks[blockType];
-    if (!def) continue;
-    const originalInit = def.init;
-    def.init = function (this: Blockly.Block) {
-      originalInit.call(this);
-      this.setStyle(styleName);
-    };
+    if (def && typeof def.init === 'function') {
+      const origInit = def.init;
+      def.init = function patchedInit(this: Blockly.Block) {
+        origInit.call(this);
+        this.setStyle(styleName);
+      };
+    }
   }
 
+  // Also ensure built-in & saved custom extension packs are registered into Blockly & generators
   extensionRegistry.ensureInitialized();
+
   blocksRegistered = true;
 }

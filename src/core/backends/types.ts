@@ -16,6 +16,8 @@ export interface GeneratedCodeResult {
   diagnostics: DiagnosticItem[];
   blockCount: number;
   variableNames: string[];
+  /** True when the script uses on_run, timers, on_stop, or hardware event callbacks. */
+  isEventDriven?: boolean;
 }
 
 /**

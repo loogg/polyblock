@@ -20,12 +20,14 @@ export type WorkerControlMessage =
       breakpoints: string[];
       stepDelayMs: number;
       startInStepMode?: boolean;
+      timerCount?: number;
       mockModules?: WorkerMockModule[];
       mockInputs?: Record<string, unknown>;
     }
   | { type: 'RESUME'; runId: string }
   | { type: 'STEP_NEXT'; runId: string }
   | { type: 'PAUSE'; runId: string }
+  | { type: 'STOP_GRACEFUL'; runId: string }
   | { type: 'SET_BREAKPOINTS'; runId: string; breakpoints: string[] }
   | { type: 'SET_SPEED'; runId: string; stepDelayMs: number }
   | {

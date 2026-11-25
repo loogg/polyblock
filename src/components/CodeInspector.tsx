@@ -6,16 +6,23 @@ import {
   Cpu,
   Eye,
   RotateCcw,
+  Timer,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
 import type { GeneratedCodeResult } from '../core/backends/types';
+import { formatTimerLabel } from '../core/blocks/timerConfigBridge';
 import type {
   VirtualBoardInputs,
   VirtualBoardState,
 } from '../core/extensions/types';
 import { highlightCodeLine } from '../core/highlight';
-import type { ScriptLanguageId } from '../types/project';
+import type { RunnerStatus } from '../core/runners/types';
+import type {
+  ProjectTimerConfig,
+  RuntimeTelemetry,
+  ScriptLanguageId,
+} from '../types/project';
 
 interface CodeInspectorProps {
   language: ScriptLanguageId;
@@ -24,12 +31,15 @@ interface CodeInspectorProps {
   selectedBlockId: string | null;
   executingBlockId: string | null;
   isPaused: boolean;
+  runnerStatus: RunnerStatus;
   breakpoints: string[];
   variables: Record<string, string>;
   errorLine: number | null;
   showVirtualBoard: boolean;
   virtualBoard: VirtualBoardState;
   mockInputs: VirtualBoardInputs;
+  timerConfig: ProjectTimerConfig;
+  runtimeTelemetry: RuntimeTelemetry | null;
   onUpdateMockInputs: (patch: Partial<VirtualBoardInputs>) => void;
   onResetVirtualBoard: () => void;
   onSelectBlockFromLine: (blockId: string) => void;
@@ -45,12 +55,15 @@ export function CodeInspector({
   selectedBlockId,
   executingBlockId,
   isPaused,
+  runnerStatus,
   breakpoints,
   variables,
   errorLine,
   showVirtualBoard,
   virtualBoard,
   mockInputs,
+  timerConfig,
+  runtimeTelemetry,
   onUpdateMockInputs,
   onResetVirtualBoard,
   onSelectBlockFromLine,
@@ -65,13 +78,17 @@ export function CodeInspector({
   const backend = backendRegistry.get(language);
   const displayFileName = `${scriptName}.${backend.extension}`;
   const breakpointSet = useMemo(() => new Set(breakpoints), [breakpoints]);
+  const showSimTab =
+    showVirtualBoard ||
+    Boolean(generated.isEventDriven) ||
+    Boolean(runtimeTelemetry?.eventLoopActive);
 
-  // Fall back to code tab if virtual board pack gets disabled
+  // Fall back to code tab if neither virtual board nor event/timer runtime applies
   useEffect(() => {
-    if (!showVirtualBoard && activeTab === 'board') {
+    if (!showSimTab && activeTab === 'board') {
       setActiveTab('code');
     }
-  }, [showVirtualBoard, activeTab]);
+  }, [showSimTab, activeTab]);
 
   const lines = useMemo(() => generated.code.split('\n'), [generated.code]);
 
@@ -90,7 +107,15 @@ export function CodeInspector({
         const lineText = (lines[range.startLine - 1] ?? '').trim();
         if (
           !lineText.startsWith('-- 当程序启动') &&
-          !lineText.startsWith('# 当程序启动')
+          !lineText.startsWith('# 当程序启动') &&
+          !lineText.startsWith('function on_') &&
+          !lineText.startsWith('def on_') &&
+          !lineText.startsWith('if id ==') &&
+          !lineText.startsWith('elseif id ==') &&
+          !lineText.startsWith('elif id ==') &&
+          !lineText.startsWith('if key ==') &&
+          !lineText.startsWith('elseif key ==') &&
+          !lineText.startsWith('elif key ==')
         ) {
           map[range.startLine] = blockId;
         }
@@ -131,10 +156,13 @@ export function CodeInspector({
   }, [activeTab, execRange, activeRange]);
 
   const rgbActive = virtualBoard.rgb !== '#1e293b' && virtualBoard.rgb !== '#334155';
+  const isEventLoopRunning =
+    (runnerStatus === 'running' || runnerStatus === 'paused') &&
+    Boolean(runtimeTelemetry?.eventLoopActive);
 
   return (
     <aside className="inspector-pane" aria-label="实时代码、模拟外设、变量与校验面板">
-      <div className={`pane-header ${showVirtualBoard ? 'has-board' : ''}`}>
+      <div className={`pane-header ${showSimTab ? 'has-board' : ''}`}>
         <div className="pane-tabs">
           <button
             type="button"
@@ -155,16 +183,16 @@ export function CodeInspector({
             )}
           </button>
 
-          {showVirtualBoard && (
+          {showSimTab && (
             <button
               type="button"
               className={`pane-tab ${activeTab === 'board' ? 'active' : ''}`}
               onClick={() => setActiveTab('board')}
-              title="虚拟硬件外设模拟面板"
+              title="虚拟硬件外设与事件定时器模拟面板"
             >
               <Cpu size={12} style={{ flexShrink: 0 }} />
               <span>模拟</span>
-              {virtualBoard.led && (
+              {(virtualBoard.led || isEventLoopRunning) && (
                 <span
                   style={{
                     width: 6,
@@ -338,37 +366,50 @@ export function CodeInspector({
             </div>
           )}
 
-          {showVirtualBoard && !isPaused && (
+          {showSimTab && !isPaused && (
             <div
               className="vboard-mini-strip"
               onClick={() => setActiveTab('board')}
-              title="点击展开虚拟外设模拟面板"
+              title="点击展开虚拟外设与定时器调度面板"
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <span
-                    className={`vboard-led ${virtualBoard.led ? 'on' : ''}`}
-                    style={{ width: 9, height: 9 }}
-                  />
-                  LED
-                </span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <span
-                    className="vboard-rgb"
-                    style={{
-                      width: 10,
-                      height: 10,
-                      background: virtualBoard.rgb,
-                      boxShadow: rgbActive ? `0 0 8px ${virtualBoard.rgb}` : 'none',
-                    }}
-                  />
-                  RGB
-                </span>
-                <span style={{ fontFamily: 'var(--font-mono)' }}>
-                  {mockInputs.temp}°C
-                </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                {showVirtualBoard && (
+                  <>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <span
+                        className={`vboard-led ${virtualBoard.led ? 'on' : ''}`}
+                        style={{ width: 9, height: 9 }}
+                      />
+                      LED
+                    </span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <span
+                        className="vboard-rgb"
+                        style={{
+                          width: 10,
+                          height: 10,
+                          background: virtualBoard.rgb,
+                          boxShadow: rgbActive ? `0 0 8px ${virtualBoard.rgb}` : 'none',
+                        }}
+                      />
+                      RGB
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)' }}>
+                      {mockInputs.temp}°C
+                    </span>
+                  </>
+                )}
+                {isEventLoopRunning && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--success)', fontWeight: 600 }}>
+                    <span className="rt-pulse-dot" />
+                    事件循环
+                    {runtimeTelemetry && runtimeTelemetry.timers.length > 0
+                      ? ` · ${runtimeTelemetry.timers.length}定时`
+                      : ''}
+                  </span>
+                )}
               </div>
-              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>
+              <span style={{ color: 'var(--accent)', fontWeight: 600, flexShrink: 0 }}>
                 打开模拟面板 →
               </span>
             </div>
@@ -376,109 +417,178 @@ export function CodeInspector({
         </>
       )}
 
-      {activeTab === 'board' && showVirtualBoard && (
+      {activeTab === 'board' && showSimTab && (
         <div className="vboard-wrap">
-          <div className="vboard-pcb">
-            <div className="vboard-top-row">
-              <span className="vboard-title" title="POLYBLOCK VIRTUAL BOARD v1">
-                POLYBLOCK VIRTUAL BOARD v1
-              </span>
-              <button
-                type="button"
-                className="vboard-reset-btn"
-                onClick={onResetVirtualBoard}
-                title="复位虚拟外设输出"
-              >
-                <RotateCcw size={11} style={{ flexShrink: 0 }} />
-                <span>复位</span>
-              </button>
-            </div>
+          {showVirtualBoard && (
+            <>
+              <div className="vboard-pcb">
+                <div className="vboard-top-row">
+                  <span className="vboard-title" title="POLYBLOCK VIRTUAL BOARD v1">
+                    POLYBLOCK VIRTUAL BOARD v1
+                  </span>
+                  <button
+                    type="button"
+                    className="vboard-reset-btn"
+                    onClick={onResetVirtualBoard}
+                    title="复位虚拟外设输出"
+                  >
+                    <RotateCcw size={11} style={{ flexShrink: 0 }} />
+                    <span>复位</span>
+                  </button>
+                </div>
 
-            <div className="vboard-indicators">
-              <div className="vboard-lamp-item">
-                <span
-                  className={`vboard-led ${virtualBoard.led ? 'on' : ''}`}
-                  aria-label={virtualBoard.led ? 'LED 已点亮' : 'LED 已熄灭'}
-                />
-                <span>板载 LED：{virtualBoard.led ? 'ON' : 'OFF'}</span>
+                <div className="vboard-indicators">
+                  <div className="vboard-lamp-item">
+                    <span
+                      className={`vboard-led ${virtualBoard.led ? 'on' : ''}`}
+                      aria-label={virtualBoard.led ? 'LED 已点亮' : 'LED 已熄灭'}
+                    />
+                    <span>板载 LED：{virtualBoard.led ? 'ON' : 'OFF'}</span>
+                  </div>
+
+                  <div className="vboard-lamp-item">
+                    <span
+                      className="vboard-rgb"
+                      style={{
+                        background: virtualBoard.rgb,
+                        boxShadow: rgbActive
+                          ? `0 0 14px ${virtualBoard.rgb}, 0 0 4px #ffffff`
+                          : 'none',
+                      }}
+                    />
+                    <span>RGB</span>
+                  </div>
+                </div>
+
+                <div className="vboard-oled" aria-label="虚拟 OLED 显示屏">
+                  {virtualBoard.oledLines.length === 0 ? (
+                    <span style={{ opacity: 0.45 }}>[OLED 已清空]</span>
+                  ) : (
+                    virtualBoard.oledLines.map((line, i) => (
+                      <div key={i}>{line}</div>
+                    ))
+                  )}
+                </div>
               </div>
 
-              <div className="vboard-lamp-item">
-                <span
-                  className="vboard-rgb"
+              <div className="vboard-control-card">
+                <div className="vboard-slider-head">
+                  <span>模拟温度传感器 (board.read_temp)</span>
+                  <span className="vboard-temp-val">{mockInputs.temp}°C</span>
+                </div>
+                <input
+                  type="range"
+                  aria-label="模拟温度传感器滑块"
+                  min={15}
+                  max={95}
+                  step={1}
+                  value={mockInputs.temp}
+                  onChange={(e) =>
+                    onUpdateMockInputs({ temp: Number(e.target.value) })
+                  }
+                  style={{ width: '100%', accentColor: 'var(--accent)' }}
+                />
+                <div
                   style={{
-                    background: virtualBoard.rgb,
-                    boxShadow: rgbActive
-                      ? `0 0 14px ${virtualBoard.rgb}, 0 0 4px #ffffff`
-                      : 'none',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 10.5,
+                    color: 'var(--text-muted)',
                   }}
-                />
-                <span>RGB</span>
+                >
+                  <span>15°C (低温)</span>
+                  <span>35°C (演示阈值)</span>
+                  <span>95°C (高温)</span>
+                </div>
               </div>
-            </div>
 
-            <div className="vboard-oled" aria-label="虚拟 OLED 显示屏">
-              {virtualBoard.oledLines.length === 0 ? (
-                <span style={{ opacity: 0.45 }}>[OLED 已清空]</span>
-              ) : (
-                virtualBoard.oledLines.map((line, i) => (
-                  <div key={i}>{line}</div>
-                ))
-              )}
-            </div>
-          </div>
+              <div className="vboard-control-card">
+                <div className="vboard-slider-head">
+                  <span>模拟按键 (board / on_button)</span>
+                </div>
+                <div className="vboard-btn-row">
+                  <button
+                    type="button"
+                    className={`vboard-key-btn ${mockInputs.btnA ? 'pressed' : ''}`}
+                    onClick={() => onUpdateMockInputs({ btnA: !mockInputs.btnA })}
+                  >
+                    按键 A · {mockInputs.btnA ? '按下中' : '释放'}
+                  </button>
+                  <button
+                    type="button"
+                    className={`vboard-key-btn ${mockInputs.btnB ? 'pressed' : ''}`}
+                    onClick={() => onUpdateMockInputs({ btnB: !mockInputs.btnB })}
+                  >
+                    按键 B · {mockInputs.btnB ? '按下中' : '释放'}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
 
-          <div className="vboard-control-card">
+          <div className="vboard-control-card rt-monitor-card" aria-label="运行时事件循环与定时器监控">
             <div className="vboard-slider-head">
-              <span>模拟温度传感器 (board.read_temp)</span>
-              <span className="vboard-temp-val">{mockInputs.temp}°C</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
+                <Timer size={13} style={{ flexShrink: 0 }} />
+                <span>事件与定时器 (rt 0~{timerConfig.count - 1})</span>
+              </span>
+              <span
+                className={`status-pill ${isEventLoopRunning ? 'ok' : 'idle'}`}
+                style={{ fontSize: 10.5, padding: '1px 7px' }}
+              >
+                {isEventLoopRunning ? '事件循环中' : generated.isEventDriven ? '待机' : '单次模式'}
+              </span>
             </div>
-            <input
-              type="range"
-              aria-label="模拟温度传感器滑块"
-              min={15}
-              max={95}
-              step={1}
-              value={mockInputs.temp}
-              onChange={(e) =>
-                onUpdateMockInputs({ temp: Number(e.target.value) })
-              }
-              style={{ width: '100%', accentColor: 'var(--accent)' }}
-            />
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: 10.5,
-                color: 'var(--text-muted)',
-              }}
-            >
-              <span>15°C (低温)</span>
-              <span>35°C (演示阈值)</span>
-              <span>95°C (高温)</span>
-            </div>
-          </div>
 
-          <div className="vboard-control-card">
-            <div className="vboard-slider-head">
-              <span>模拟板载按键 (board.is_pressed)</span>
+            <div className="rt-run-meta">
+              <span>
+                <code>on_run</code>：
+                {runtimeTelemetry?.hasOnRun
+                  ? runtimeTelemetry.runActive
+                    ? `每 ${runtimeTelemetry.runPeriodMs}ms（已执行 ${runtimeTelemetry.runCount} 次）`
+                    : `已暂停（周期 ${runtimeTelemetry.runPeriodMs}ms）`
+                  : generated.isEventDriven
+                    ? '等待启动'
+                    : '未定义'}
+              </span>
             </div>
-            <div className="vboard-btn-row">
-              <button
-                type="button"
-                className={`vboard-key-btn ${mockInputs.btnA ? 'pressed' : ''}`}
-                onClick={() => onUpdateMockInputs({ btnA: !mockInputs.btnA })}
-              >
-                按键 A · {mockInputs.btnA ? '按下中' : '释放'}
-              </button>
-              <button
-                type="button"
-                className={`vboard-key-btn ${mockInputs.btnB ? 'pressed' : ''}`}
-                onClick={() => onUpdateMockInputs({ btnB: !mockInputs.btnB })}
-              >
-                按键 B · {mockInputs.btnB ? '按下中' : '释放'}
-              </button>
-            </div>
+
+            {runtimeTelemetry && runtimeTelemetry.timers.length > 0 ? (
+              <div className="rt-timer-list">
+                {runtimeTelemetry.timers.map((t) => {
+                  const pct = Math.min(
+                    100,
+                    Math.round((t.elapsedMs / Math.max(1, t.periodMs)) * 100),
+                  );
+                  const repText =
+                    t.repeat === 0
+                      ? `循环 · 第 ${t.firedCount} 次`
+                      : `${t.firedCount}/${t.repeat} 次`;
+                  return (
+                    <div key={t.id} className="rt-timer-row">
+                      <div className="rt-timer-head">
+                        <span className="rt-timer-label">
+                          {formatTimerLabel(t.id, timerConfig)}
+                        </span>
+                        <span className="rt-timer-meta">
+                          {t.elapsedMs}/{t.periodMs}ms · {repText}
+                        </span>
+                      </div>
+                      <div className="rt-timer-bar-track">
+                        <div
+                          className="rt-timer-bar-fill"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                当前无活跃定时器；在积木中调用 <code>rt.start_timer(id, ms, repeat)</code> 后将在此实时展示进度。
+              </div>
+            )}
           </div>
         </div>
       )}

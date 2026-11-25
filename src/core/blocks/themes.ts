@@ -7,6 +7,22 @@ const BLOCK_STYLES: Record<string, Partial<Blockly.Theme.BlockStyle>> = {
     colourTertiary: '#b36b0e',
     hat: 'cap',
   },
+  event_stmt_blocks: {
+    colourPrimary: '#e0911f',
+    colourSecondary: '#c77c14',
+    colourTertiary: '#b36b0e',
+  },
+  timer_hat_blocks: {
+    colourPrimary: '#6366f1',
+    colourSecondary: '#4f46e5',
+    colourTertiary: '#4338ca',
+    hat: 'cap',
+  },
+  timer_blocks: {
+    colourPrimary: '#6366f1',
+    colourSecondary: '#4f46e5',
+    colourTertiary: '#4338ca',
+  },
   control_blocks: {
     colourPrimary: '#d97706',
     colourSecondary: '#b45309',

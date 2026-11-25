@@ -1,4 +1,5 @@
 import mpWasmAsset from '@micropython/micropython-webassembly-pyscript/micropython.wasm?url';
+import type { RuntimeTelemetry } from '../../types/project';
 import PythonWorker from '../../workers/python.worker.ts?worker';
 import { extractErrorLine, parseStdoutLine } from './logParser';
 import type { RunCallbacks, RunRequest, RunResult, ScriptRunner } from './types';
@@ -12,6 +13,7 @@ interface WorkerReply {
     | 'RESUMED'
     | 'WAITING'
     | 'DEVICE_EVENT'
+    | 'RUNTIME_TELEMETRY'
     | 'DONE'
     | 'ERROR';
   runId: string;
@@ -22,6 +24,7 @@ interface WorkerReply {
   active?: boolean;
   kind?: string;
   value?: unknown;
+  telemetry?: RuntimeTelemetry;
   message?: string;
   durationMs?: number;
 }
@@ -33,7 +36,7 @@ export class MicroPythonWasmRunner implements ScriptRunner {
   readonly kind = 'browser-wasm' as const;
   readonly supportedLanguages = ['python' as const];
   readonly description =
-    '基于 MicroPython WebAssembly 的轻量 Python 3 调试沙箱，支持异步延时、逐块高亮、断点暂停与单步执行。';
+    '基于 MicroPython WebAssembly 的轻量 Python 3 调试沙箱，支持常驻事件循环、多路编号定时器与异步断点单步。';
   readonly availability = 'builtin' as const;
   readonly supportsDebugging = true;
 
@@ -41,9 +44,11 @@ export class MicroPythonWasmRunner implements ScriptRunner {
   private activeRunId: string | null = null;
   private activeResolve: ((res: RunResult) => void) | null = null;
   private timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  private gracefulStopHandle: ReturnType<typeof setTimeout> | null = null;
   private activeCallbacks: RunCallbacks | null = null;
   private activeTimeoutMs = 5000;
   private startedAt = 0;
+  private inEventLoop = false;
 
   private resolveWasmUrl(): string {
     return new URL(mpWasmAsset, window.location.href).href;
@@ -60,6 +65,13 @@ export class MicroPythonWasmRunner implements ScriptRunner {
     if (this.timeoutHandle !== null) {
       clearTimeout(this.timeoutHandle);
       this.timeoutHandle = null;
+    }
+  }
+
+  private clearGracefulStop(): void {
+    if (this.gracefulStopHandle !== null) {
+      clearTimeout(this.gracefulStopHandle);
+      this.gracefulStopHandle = null;
     }
   }
 
@@ -88,13 +100,15 @@ export class MicroPythonWasmRunner implements ScriptRunner {
 
   private cleanupRun(): void {
     this.pauseWatchdog();
+    this.clearGracefulStop();
     this.activeRunId = null;
     this.activeResolve = null;
     this.activeCallbacks = null;
+    this.inEventLoop = false;
   }
 
   run(request: RunRequest, callbacks: RunCallbacks): Promise<RunResult> {
-    this.stop();
+    this.stop(true);
 
     const worker = this.ensureWorker();
     const runId = `py-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -102,6 +116,7 @@ export class MicroPythonWasmRunner implements ScriptRunner {
     this.activeCallbacks = callbacks;
     this.activeTimeoutMs = request.timeoutMs;
     this.startedAt = performance.now();
+    this.inEventLoop = false;
     callbacks.onStatusChange?.('running');
 
     return new Promise<RunResult>((resolve) => {
@@ -163,11 +178,19 @@ export class MicroPythonWasmRunner implements ScriptRunner {
           return;
         }
 
+        if (msg.type === 'RUNTIME_TELEMETRY' && msg.telemetry) {
+          this.inEventLoop = msg.telemetry.eventLoopActive;
+          callbacks.onRuntimeTelemetry?.(msg.telemetry);
+          return;
+        }
+
         if (msg.type === 'DONE') {
+          const wasGracefulStop = this.gracefulStopHandle !== null;
           this.cleanupRun();
           callbacks.onStatusChange?.('ready');
           resolve({
-            ok: true,
+            ok: !wasGracefulStop,
+            aborted: wasGracefulStop || undefined,
             durationMs: msg.durationMs ?? 1,
             finalVars: msg.vars,
           });
@@ -214,6 +237,7 @@ export class MicroPythonWasmRunner implements ScriptRunner {
         breakpoints: request.breakpoints ?? [],
         stepDelayMs: request.stepDelayMs ?? 0,
         startInStepMode: request.startInStepMode ?? false,
+        timerCount: request.timerCount ?? 8,
         mockModules: request.mockModules ?? [],
         mockInputs: request.mockInputs ?? {},
       });
@@ -262,8 +286,20 @@ export class MicroPythonWasmRunner implements ScriptRunner {
     });
   }
 
-  stop(): void {
+  stop(force = false): void {
     if (!this.activeRunId) return;
+    const runId = this.activeRunId;
+
+    if (!force && this.inEventLoop && this.worker && this.gracefulStopHandle === null) {
+      this.worker.postMessage({ type: 'STOP_GRACEFUL', runId });
+      this.gracefulStopHandle = setTimeout(() => {
+        if (this.activeRunId === runId) {
+          this.stop(true);
+        }
+      }, 650);
+      return;
+    }
+
     const durationMs = Math.max(1, Math.round(performance.now() - this.startedAt));
     const callbacks = this.activeCallbacks;
     const done = this.activeResolve;
@@ -282,7 +318,7 @@ export class MicroPythonWasmRunner implements ScriptRunner {
   }
 
   dispose(): void {
-    this.stop();
+    this.stop(true);
     this.terminateWorker();
   }
 }

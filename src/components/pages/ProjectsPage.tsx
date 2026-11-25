@@ -4,16 +4,20 @@ import {
   FilePlus2,
   FolderOpen,
   Pencil,
+  Plus,
   Star,
+  Timer,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
+import { normalizeTimerConfig } from '../../core/blocks/timerConfigBridge';
 import {
   MULTI_SCRIPT_PROJECT_TEMPLATES,
   parseImportedProject,
 } from '../../core/projects/store';
-import type { ProjectModel } from '../../types/project';
+import type { ProjectModel, ProjectTimerConfig } from '../../types/project';
 
 interface ProjectsPageProps {
   projects: ProjectModel[];
@@ -26,6 +30,7 @@ interface ProjectsPageProps {
   onDeleteProject: (projectId: string) => void;
   onSaveProjectFile: (projectId: string) => void;
   onImportProject: (project: ProjectModel) => void;
+  onUpdateProjectTimerConfig: (projectId: string, cfg: ProjectTimerConfig) => void;
   onReturnToBlocks: () => void;
   onNotify: (msg: string) => void;
 }
@@ -41,12 +46,56 @@ export function ProjectsPage({
   onDeleteProject,
   onSaveProjectFile,
   onImportProject,
+  onUpdateProjectTimerConfig,
   onReturnToBlocks,
   onNotify,
 }: ProjectsPageProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState<string>('');
+  const [aliasSlotId, setAliasSlotId] = useState<string>('0');
+  const [aliasDraft, setAliasDraft] = useState<string>('');
+
+  const activeProj = projects.find((p) => p.id === activeProjectId) ?? projects[0];
+  const activeTimerCfg = normalizeTimerConfig(activeProj?.timerConfig);
+
+  const handleSetTimerCount = (nextCount: number) => {
+    if (!activeProj) return;
+    const clamped = Math.max(1, Math.min(32, Math.trunc(nextCount || 8)));
+    onUpdateProjectTimerConfig(activeProj.id, {
+      ...activeTimerCfg,
+      count: clamped,
+    });
+    if (Number(aliasSlotId) >= clamped) {
+      setAliasSlotId('0');
+    }
+  };
+
+  const handleSaveAlias = () => {
+    if (!activeProj) return;
+    const trimmed = aliasDraft.trim();
+    const nextAliases = { ...activeTimerCfg.aliases };
+    if (trimmed) {
+      nextAliases[aliasSlotId] = trimmed.slice(0, 16);
+    } else {
+      delete nextAliases[aliasSlotId];
+    }
+    onUpdateProjectTimerConfig(activeProj.id, {
+      ...activeTimerCfg,
+      aliases: nextAliases,
+    });
+    setAliasDraft('');
+  };
+
+  const handleDeleteAlias = (slotKey: string) => {
+    if (!activeProj) return;
+    const nextAliases = { ...activeTimerCfg.aliases };
+    delete nextAliases[slotKey];
+    onUpdateProjectTimerConfig(activeProj.id, {
+      ...activeTimerCfg,
+      aliases: nextAliases,
+    });
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -246,6 +295,122 @@ export function ProjectsPage({
             );
           })}
         </div>
+
+        <h2 className="section-heading">
+          当前项目定时器通道配置（{activeProj?.name}）
+        </h2>
+        {activeProj && (
+          <div className="ui-card timer-cfg-card">
+            <div className="timer-cfg-row">
+              <div>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    fontSize: 13.5,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <Timer size={14} style={{ color: 'var(--accent)' }} />
+                  <span>可用定时器通道数（ID 0 ~ {activeTimerCfg.count - 1}）</span>
+                </div>
+                <p className="card-desc" style={{ marginTop: 3 }}>
+                  通道总数随目标板/项目能力按需配置（1~32 路）。可选通道别名仅用于积木下拉显示与注释标注，导出脚本始终使用纯整数 ID（如 <code>rt.start_timer(0, 500, 0)</code>）。
+                </p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                {[4, 8, 16, 32].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    className={
+                      activeTimerCfg.count === preset ? 'btn-primary' : 'btn-outline'
+                    }
+                    style={{ padding: '4px 9px', fontSize: 11.5 }}
+                    onClick={() => handleSetTimerCount(preset)}
+                  >
+                    {preset} 路
+                  </button>
+                ))}
+                <input
+                  type="number"
+                  aria-label="自定义定时器通道数"
+                  className="template-select"
+                  style={{ width: 66, textAlign: 'center' }}
+                  min={1}
+                  max={32}
+                  value={activeTimerCfg.count}
+                  onChange={(e) => handleSetTimerCount(Number(e.target.value))}
+                />
+              </div>
+            </div>
+
+            <div className="timer-alias-editor">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <select
+                  aria-label="选择要设置别名的定时器通道"
+                  className="template-select"
+                  value={aliasSlotId}
+                  onChange={(e) => setAliasSlotId(e.target.value)}
+                >
+                  {Array.from({ length: activeTimerCfg.count }, (_, idx) => (
+                    <option key={idx} value={String(idx)}>
+                      T{idx} (ID {idx})
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  aria-label="定时器通道别名输入框"
+                  className="dropdown-rename-input"
+                  style={{ width: 176, height: 28 }}
+                  placeholder="可选别名，如：心跳灯"
+                  maxLength={16}
+                  value={aliasDraft}
+                  onChange={(e) => setAliasDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveAlias();
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn-outline"
+                  style={{ height: 28, padding: '0 10px', fontSize: 12 }}
+                  onClick={handleSaveAlias}
+                >
+                  <Plus size={13} />
+                  <span>保存别名</span>
+                </button>
+              </div>
+
+              <div className="paused-var-chips">
+                {Object.keys(activeTimerCfg.aliases).length === 0 ? (
+                  <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                    尚未设置通道别名（可直接使用 T0 ~ T{activeTimerCfg.count - 1}）。
+                  </span>
+                ) : (
+                  Object.entries(activeTimerCfg.aliases)
+                    .sort((a, b) => Number(a[0]) - Number(b[0]))
+                    .map(([slotKey, label]) => (
+                      <span key={slotKey} className="var-chip timer-alias-chip">
+                        <span className="var-chip-name">T{slotKey}</span>
+                        <span>· {label}</span>
+                        <button
+                          type="button"
+                          className="script-tab-icon-btn"
+                          title={`移除 T${slotKey} 别名`}
+                          onClick={() => handleDeleteAlias(slotKey)}
+                        >
+                          <X size={10} />
+                        </button>
+                      </span>
+                    ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         <h2 className="section-heading">从内置多脚本模板新建项目</h2>
         <div className="card-grid">

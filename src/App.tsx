@@ -16,6 +16,10 @@ import { StatusBar } from './components/StatusBar';
 import { TopBar } from './components/TopBar';
 import { backendRegistry } from './core/backends/registry';
 import type { GeneratedCodeResult } from './core/backends/types';
+import {
+  normalizeTimerConfig,
+  setActiveTimerConfig,
+} from './core/blocks/timerConfigBridge';
 import { extensionRegistry } from './core/extensions/registry';
 import type {
   VirtualBoardInputs,
@@ -29,6 +33,7 @@ import {
   duplicateScriptInProject,
   getActiveProject,
   getActiveScript,
+  getProjectTimerConfig,
   instantiateProjectFromTemplate,
   loadWorkspaceStore,
   makeUniqueProjectName,
@@ -46,6 +51,8 @@ import type {
   LogLevel,
   PageId,
   ProjectModel,
+  ProjectTimerConfig,
+  RuntimeTelemetry,
   ScriptLanguageId,
   WorkspaceStoreState,
 } from './types/project';
@@ -155,6 +162,8 @@ export function App() {
   });
 
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus>('ready');
+  const [runtimeTelemetry, setRuntimeTelemetry] =
+    useState<RuntimeTelemetry | null>(null);
   const [lastDurationMs, setLastDurationMs] = useState<number | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([
     {
@@ -162,12 +171,18 @@ export function App() {
       timestamp: formatNowTime(),
       level: 'system',
       message:
-        'PolyBlock 多脚本工程工作台就绪：支持多项目与多脚本标签、扩展积木包、虚拟硬件模拟与双语言断点调试。',
+        'PolyBlock 多脚本工程工作台就绪：支持事件回调/多路定时器、扩展积木包、虚拟硬件模拟与双语言断点调试。',
     },
   ]);
 
   const activeProject = getActiveProject(store);
   const activeScript = getActiveScript(activeProject);
+  const activeTimerConfig = useMemo(
+    () => getProjectTimerConfig(activeProject),
+    [activeProject],
+  );
+  // Keep synchronous Blockly dropdown bridge aligned before first render/load
+  setActiveTimerConfig(activeTimerConfig);
   const language = activeProject.language;
   const breakpoints = activeScript.breakpoints;
   const activeBackend = backendRegistry.get(language);
@@ -324,6 +339,7 @@ export function App() {
     (nextStore: WorkspaceStoreState) => {
       const nextProj = getActiveProject(nextStore);
       const nextScript = getActiveScript(nextProj);
+      setActiveTimerConfig(getProjectTimerConfig(nextProj));
       activeProjectIdRef.current = nextProj.id;
       activeScriptIdRef.current = nextScript.id;
       languageRef.current = nextProj.language;
@@ -332,6 +348,7 @@ export function App() {
       setSelectedBlockId(null);
       setExecutingBlockId(null);
       setLiveVariables({});
+      setRuntimeTelemetry(null);
       setErrorLine(null);
 
       workbenchRef.current?.loadWorkspaceJson(nextScript.workspace);
@@ -343,10 +360,33 @@ export function App() {
     [regenerateFromWorkspace],
   );
 
+  const handleUpdateProjectTimerConfig = useCallback(
+    (projectId: string, rawCfg: ProjectTimerConfig) => {
+      const normalized = normalizeTimerConfig(rawCfg);
+      setStore((prev) =>
+        updateProjectById(prev, projectId, (p) => ({
+          ...p,
+          timerConfig: normalized,
+          updatedAt: new Date().toISOString(),
+        })),
+      );
+      if (projectId === activeProjectIdRef.current) {
+        setActiveTimerConfig(normalized);
+        const ws = workbenchRef.current?.getWorkspace();
+        if (ws) {
+          regenerateFromWorkspace(ws, languageRef.current);
+        }
+      }
+      notify(`已更新定时器通道配置（0~${normalized.count - 1}）`);
+    },
+    [regenerateFromWorkspace, notify],
+  );
+
   const stopIfRunning = useCallback(() => {
     if (runnerStatus === 'running' || runnerStatus === 'paused') {
-      runnerManager.stopActive();
+      runnerManager.stopActive(true);
       setExecutingBlockId(null);
+      setRuntimeTelemetry(null);
     }
   }, [runnerStatus]);
 
@@ -806,6 +846,7 @@ export function App() {
       setErrorLine(null);
       setExecutingBlockId(null);
       setLiveVariables({});
+      setRuntimeTelemetry(null);
 
       const runner = runnerManager.getForLanguage(language);
       runnerManager.setActive(runner);
@@ -824,7 +865,9 @@ export function App() {
           level: 'system',
           message: startInStepMode
             ? `启动单步调试 [${scriptFileLabel}] · ${runner.shortLabel}`
-            : `运行 [${scriptFileLabel}] · ${runner.shortLabel}（步进 ${speedDelay}ms${
+            : `运行 [${scriptFileLabel}] · ${runner.shortLabel}（${
+                latest.isEventDriven ? '事件循环 · ' : ''
+              }步进 ${speedDelay}ms${
                 breakpointsRef.current.length > 0
                   ? ` · ${breakpointsRef.current.length} 断点`
                   : ''
@@ -841,6 +884,7 @@ export function App() {
           breakpoints: breakpointsRef.current,
           stepDelayMs: speedDelay,
           startInStepMode,
+          timerCount: activeTimerConfig.count,
           mockModules: allMocks,
           mockInputs: mockInputsRef.current as unknown as Record<string, unknown>,
         },
@@ -870,12 +914,14 @@ export function App() {
             }
           },
           onDeviceEvent: handleDeviceEvent,
+          onRuntimeTelemetry: setRuntimeTelemetry,
           onStatusChange: (status) => setRunnerStatus(status),
         },
       );
 
       setLastDurationMs(result.durationMs);
       setExecutingBlockId(null);
+      setRuntimeTelemetry(null);
       if (result.finalVars) {
         setLiveVariables(result.finalVars);
       }
@@ -885,6 +931,11 @@ export function App() {
         appendLog(
           'system',
           `[${scriptFileLabel}] 执行完成，总耗时 ${result.durationMs}ms（导出文件干净无插桩）。`,
+        );
+      } else if (result.aborted) {
+        appendLog(
+          'system',
+          `[${scriptFileLabel}] 已退出事件循环并停止运行（累计耗时 ${result.durationMs}ms）。`,
         );
       } else if (result.errorLine) {
         setErrorLine(result.errorLine);
@@ -900,6 +951,7 @@ export function App() {
       settings.autoOpenConsoleOnRun,
       settings.executionSpeed,
       settings.timeoutMs,
+      activeTimerConfig.count,
       language,
       activeScript.name,
       generated,
@@ -1015,6 +1067,7 @@ export function App() {
                   isPaused={runnerStatus === 'paused'}
                   breakpoints={breakpoints}
                   extraCategories={extraCategories}
+                  timerConfig={activeTimerConfig}
                   onWorkspaceChange={handleWorkspaceChange}
                   onSelectBlock={setSelectedBlockId}
                   onToggleBreakpoint={handleToggleBreakpoint}
@@ -1030,12 +1083,15 @@ export function App() {
                   selectedBlockId={selectedBlockId}
                   executingBlockId={executingBlockId}
                   isPaused={runnerStatus === 'paused'}
+                  runnerStatus={runnerStatus}
                   breakpoints={breakpoints}
                   variables={liveVariables}
                   errorLine={errorLine}
                   showVirtualBoard={showVirtualBoard}
                   virtualBoard={virtualBoard}
                   mockInputs={mockInputs}
+                  timerConfig={activeTimerConfig}
+                  runtimeTelemetry={runtimeTelemetry}
                   onUpdateMockInputs={handleUpdateMockInputs}
                   onResetVirtualBoard={() => setVirtualBoard(DEFAULT_VIRTUAL_BOARD)}
                   onSelectBlockFromLine={handleFocusBlock}
@@ -1069,6 +1125,7 @@ export function App() {
               onDeleteProject={handleDeleteProject}
               onSaveProjectFile={handleSaveProjectFile}
               onImportProject={handleImportProject}
+              onUpdateProjectTimerConfig={handleUpdateProjectTimerConfig}
               onReturnToBlocks={() => navigateTo('blocks')}
               onNotify={notify}
             />

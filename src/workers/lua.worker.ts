@@ -3,10 +3,12 @@ import {
   WorkerDebugSession,
   type WorkerControlMessage,
 } from './debugSession';
+import { WorkerRuntimeScheduler } from './runtimeScheduler';
 
 let cachedWasmUrl: string | null = null;
 let factory: LuaFactory | null = null;
 let activeSession: WorkerDebugSession | null = null;
+let activeScheduler: WorkerRuntimeScheduler | null = null;
 let currentMockInputs: Record<string, unknown> = {};
 
 function formatLuaArg(val: unknown): string {
@@ -83,6 +85,18 @@ print = function(...)
   end
   __poly_print(table.concat(out, "\\t"))
 end
+
+package.preload["rt"] = function()
+  return {
+    set_run_period = __poly_rt_set_run_period,
+    start_run = __poly_rt_start_run,
+    stop_run = __poly_rt_stop_run,
+    start_timer = __poly_rt_start_timer,
+    stop_timer = __poly_rt_stop_timer,
+    get_timer_value = __poly_rt_get_timer_value,
+    is_timer_running = __poly_rt_is_timer_running,
+  }
+end
 `;
 
 self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
@@ -101,6 +115,15 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     if (activeSession?.runId === msg.runId) activeSession.pause();
     return;
   }
+  if (msg.type === 'STOP_GRACEFUL') {
+    if (activeScheduler?.runId === msg.runId) {
+      activeScheduler.requestGracefulStop();
+    }
+    if (activeSession?.runId === msg.runId) {
+      activeSession.resume();
+    }
+    return;
+  }
   if (msg.type === 'SET_BREAKPOINTS') {
     if (activeSession?.runId === msg.runId) {
       activeSession.setBreakpoints(msg.breakpoints);
@@ -114,7 +137,11 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     return;
   }
   if (msg.type === 'UPDATE_MOCK_INPUTS') {
+    const prev = currentMockInputs;
     currentMockInputs = { ...currentMockInputs, ...msg.mockInputs };
+    if (activeScheduler?.runId === msg.runId) {
+      activeScheduler.onMockInputsDelta(prev, currentMockInputs);
+    }
     return;
   }
 
@@ -127,16 +154,24 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     breakpoints,
     stepDelayMs,
     startInStepMode,
+    timerCount,
     mockModules,
     mockInputs,
   } = msg;
   currentMockInputs = { ...(mockInputs ?? {}) };
   const startedAt = performance.now();
+  const post = (payload: Record<string, unknown>) => self.postMessage(payload);
   const session = new WorkerDebugSession(
     { runId, breakpoints, stepDelayMs, startInStepMode },
-    (payload) => self.postMessage(payload),
+    post,
   );
+  const scheduler = new WorkerRuntimeScheduler({
+    runId,
+    timerCount: timerCount ?? 8,
+    post,
+  });
   activeSession = session;
+  activeScheduler = scheduler;
 
   try {
     if (!factory || cachedWasmUrl !== wasmUrl) {
@@ -178,6 +213,37 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
         return performance.now();
       });
 
+      // Phase 5 rt scheduler bindings (isolated per run / per lua_State)
+      engine.global.set('__poly_rt_set_run_period', (ms: unknown) =>
+        scheduler.setRunPeriod(ms),
+      );
+      engine.global.set('__poly_rt_start_run', () => scheduler.startRun());
+      engine.global.set('__poly_rt_stop_run', () => scheduler.stopRun());
+      engine.global.set(
+        '__poly_rt_start_timer',
+        (id: unknown, periodMs: unknown, repeat: unknown) =>
+          scheduler.startTimer(id, periodMs, repeat ?? 0),
+      );
+      engine.global.set('__poly_rt_stop_timer', (id: unknown) =>
+        scheduler.stopTimer(id),
+      );
+      engine.global.set('__poly_rt_get_timer_value', (id: unknown) =>
+        scheduler.getTimerValue(id),
+      );
+      engine.global.set('__poly_rt_is_timer_running', (id: unknown) =>
+        scheduler.isTimerRunning(id),
+      );
+      engine.global.set(
+        '__poly_should_loop',
+        (hasRun: unknown, hasTimer: unknown, hasBtn: unknown) =>
+          scheduler.shouldEnterEventLoop(
+            Boolean(hasRun),
+            Boolean(hasTimer),
+            Boolean(hasBtn),
+          ),
+      );
+      engine.global.set('__poly_next_event', () => scheduler.nextEvent());
+
       await engine.doString(`math.randomseed(${seed})\n${LUA_BOOTSTRAP}`);
 
       // Mount sandbox extension mock modules into Lua's package.preload
@@ -205,9 +271,11 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     } finally {
       engine.global.close();
       if (activeSession === session) activeSession = null;
+      if (activeScheduler === scheduler) activeScheduler = null;
     }
   } catch (err) {
     if (activeSession === session) activeSession = null;
+    if (activeScheduler === scheduler) activeScheduler = null;
     const message = err instanceof Error ? err.message : String(err);
     self.postMessage({
       type: 'ERROR',

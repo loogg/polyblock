@@ -1,5 +1,10 @@
 import type * as Blockly from 'blockly';
 import type { DiagnosticItem, SourceLineRange } from '../../types/project';
+import { getActiveTimerConfig } from '../blocks/timerConfigBridge';
+import {
+  ALL_VALID_TOP_HAT_TYPES,
+  TIMER_ID_BLOCK_TYPES,
+} from './eventMode';
 
 export const SENTINEL_START_PREFIX = '__PB_S:';
 export const SENTINEL_END_PREFIX = '__PB_E:';
@@ -71,7 +76,8 @@ export function extractSourceMap(rawCode: string): StrippedCodeResult {
 }
 
 /**
- * Collects lightweight static diagnostics directly from the Blockly workspace.
+ * Collects lightweight static diagnostics directly from the Blockly workspace,
+ * including Phase 5 duplicate event-hat and out-of-range timer channel checks.
  */
 export function analyzeWorkspaceDiagnostics(
   workspace: Blockly.Workspace,
@@ -83,30 +89,73 @@ export function analyzeWorkspaceDiagnostics(
     return diagnostics;
   }
 
-  const startBlocks = topBlocks.filter((b) => b.type === 'poly_on_start');
-  if (startBlocks.length > 1) {
-    for (let i = 1; i < startBlocks.length; i++) {
+  const checkSingletonHat = (type: string, label: string) => {
+    const matching = topBlocks.filter(
+      (b) => b.type === type && !b.isShadow() && b.isEnabled(),
+    );
+    if (matching.length > 1) {
+      for (let i = 1; i < matching.length; i++) {
+        diagnostics.push({
+          id: `multi-${type}-${matching[i].id}`,
+          severity: 'warning',
+          message: `检测到多个“${label}”入口块，建议合并为一个入口以保证执行顺序明确。`,
+          blockId: matching[i].id,
+        });
+      }
+    }
+    return matching;
+  };
+
+  const startBlocks = checkSingletonHat('poly_on_start', '当程序启动');
+  checkSingletonHat('poly_on_run', '当周期运行 on_run');
+  checkSingletonHat('poly_on_stop', '当程序停止 on_stop');
+
+  // Check duplicate timer ID hats
+  const seenTimerHats = new Set<number>();
+  for (const blk of topBlocks) {
+    if (blk.type !== 'poly_on_timer' || blk.isShadow() || !blk.isEnabled()) continue;
+    const tid = Math.trunc(Number(blk.getFieldValue('TIMER_ID') ?? 0));
+    if (seenTimerHats.has(tid)) {
       diagnostics.push({
-        id: `multi-start-${startBlocks[i].id}`,
+        id: `dup-timer-hat-${tid}-${blk.id}`,
         severity: 'warning',
-        message: '检测到多个“当程序启动”入口块，建议合并为一个入口以保证执行顺序明确。',
-        blockId: startBlocks[i].id,
+        message: `定时器通道 T${tid} 绑定了多个“当定时器触发”回调块，建议合并为一个。`,
+        blockId: blk.id,
       });
+    } else {
+      seenTimerHats.add(tid);
+    }
+  }
+
+  // Check duplicate button (KEY, EDGE) hats
+  const seenButtonHats = new Set<string>();
+  for (const blk of topBlocks) {
+    if (blk.type !== 'poly_on_button' || blk.isShadow() || !blk.isEnabled()) continue;
+    const key = String(blk.getFieldValue('KEY') || 'A');
+    const edge = String(blk.getFieldValue('EDGE') || 'press');
+    const sig = `${key}:${edge}`;
+    if (seenButtonHats.has(sig)) {
+      diagnostics.push({
+        id: `dup-btn-hat-${sig}-${blk.id}`,
+        severity: 'warning',
+        message: `按键 ${key}（${edge === 'press' ? '按下' : '释放'}）绑定了多个回调块，建议合并。`,
+        blockId: blk.id,
+      });
+    } else {
+      seenButtonHats.add(sig);
     }
   }
 
   for (const block of topBlocks) {
     if (
-      block.type !== 'poly_on_start' &&
-      block.type !== 'procedures_defnoreturn' &&
-      block.type !== 'procedures_defreturn' &&
+      !ALL_VALID_TOP_HAT_TYPES.has(block.type) &&
       !block.isShadow() &&
       block.isEnabled()
     ) {
       diagnostics.push({
         id: `floating-${block.id}`,
         severity: 'warning',
-        message: '存在未挂载到“当程序启动”或函数内的独立积木块（仍会按顶层脚本顺序生成）。',
+        message: '存在未挂载到事件回调或函数内的独立积木块（仍会按顶层脚本顺序生成）。',
         blockId: block.id,
       });
     }
@@ -120,6 +169,22 @@ export function analyzeWorkspaceDiagnostics(
         severity: 'warning',
         message: '“当程序启动”内部为空，请拖入打印或控制积木后再运行。',
         blockId: startBlk.id,
+      });
+    }
+  }
+
+  // Check out-of-range timer channel IDs across ALL blocks in workspace
+  const timerCfg = getActiveTimerConfig();
+  for (const blk of workspace.getAllBlocks(false)) {
+    if (blk.isShadow() || !blk.isEnabled()) continue;
+    if (!TIMER_ID_BLOCK_TYPES.has(blk.type)) continue;
+    const tid = Math.trunc(Number(blk.getFieldValue('TIMER_ID') ?? 0));
+    if (!Number.isInteger(tid) || tid < 0 || tid >= timerCfg.count) {
+      diagnostics.push({
+        id: `timer-oob-${tid}-${blk.id}`,
+        severity: 'error',
+        message: `定时器通道 T${tid} 超出当前项目配置范围（0~${timerCfg.count - 1}），请更换通道或在项目管理中调大定时器通道数。`,
+        blockId: blk.id,
       });
     }
   }

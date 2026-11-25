@@ -35,6 +35,34 @@ export interface VariableSnapshotItem {
   value: string;
 }
 
+/** Project-scoped hardware/software timer capability config (integer IDs 0..count-1). */
+export interface ProjectTimerConfig {
+  /** Number of available timer channels (1..32, default 8 -> IDs 0..7). */
+  count: number;
+  /** Optional friendly labels keyed by stringified integer ID (e.g. "0": "心跳灯"). */
+  aliases: Record<string, string>;
+}
+
+/** Live runtime telemetry emitted by the cooperative WASM event-loop scheduler. */
+export interface RuntimeTimerTelemetry {
+  id: number;
+  periodMs: number;
+  repeat: number;
+  firedCount: number;
+  elapsedMs: number;
+  running: boolean;
+}
+
+export interface RuntimeTelemetry {
+  eventLoopActive: boolean;
+  hasOnRun: boolean;
+  runActive: boolean;
+  runPeriodMs: number;
+  runCount: number;
+  hasOnButton: boolean;
+  timers: RuntimeTimerTelemetry[];
+}
+
 /** Single visual-block script inside a PolyBlock project. */
 export interface ProjectScript {
   id: string;
@@ -53,6 +81,8 @@ export interface ProjectModel {
   description?: string;
   language: ScriptLanguageId;
   enabledExtensions: string[];
+  /** Optional per-project timer channel capability & aliases (defaults to 8 channels, 0..7). */
+  timerConfig?: ProjectTimerConfig;
   entryScriptId: string;
   activeScriptId: string;
   scripts: ProjectScript[];

@@ -31,7 +31,8 @@ import {
   polyblockDarkTheme,
   polyblockLightTheme,
 } from '../core/blocks/themes';
-import type { ThemeMode } from '../types/project';
+import { setActiveTimerConfig } from '../core/blocks/timerConfigBridge';
+import type { ProjectTimerConfig, ThemeMode } from '../types/project';
 
 export interface BlocklyWorkbenchHandle {
   getWorkspace: () => Blockly.WorkspaceSvg | null;
@@ -49,6 +50,7 @@ interface BlocklyWorkbenchProps {
   isPaused: boolean;
   breakpoints: string[];
   extraCategories: BlockCategorySpec[];
+  timerConfig: ProjectTimerConfig;
   onWorkspaceChange: (workspace: Blockly.WorkspaceSvg) => void;
   onSelectBlock: (blockId: string | null) => void;
   onToggleBreakpoint: (blockId: string) => void;
@@ -107,6 +109,7 @@ export const BlocklyWorkbench = forwardRef<
     isPaused,
     breakpoints,
     extraCategories,
+    timerConfig,
     onWorkspaceChange,
     onSelectBlock,
     onToggleBreakpoint,
@@ -254,6 +257,23 @@ export const BlocklyWorkbench = forwardRef<
     if (!ws) return;
     ws.setTheme(theme === 'dark' ? polyblockDarkTheme : polyblockLightTheme);
   }, [theme]);
+
+  // Sync project-level timer channels & aliases to Blockly dynamic dropdowns
+  useEffect(() => {
+    setActiveTimerConfig(timerConfig);
+    const ws = workspaceRef.current;
+    if (!ws) return;
+    for (const blk of ws.getAllBlocks(false)) {
+      const field = blk.getField('TIMER_ID');
+      if (field && field instanceof Blockly.FieldDropdown) {
+        field.getOptions(false);
+        field.forceRerender();
+      }
+    }
+    if (activeCat === 'timers') {
+      refreshFlyout('timers', searchQuery);
+    }
+  }, [timerConfig, activeCat, searchQuery, refreshFlyout]);
 
   // Sync category, search query, or dynamically enabled extension categories to flyout
   useEffect(() => {

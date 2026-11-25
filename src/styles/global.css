@@ -536,6 +536,8 @@ select {
   color: var(--text-secondary);
   outline: none;
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .template-select:hover {
@@ -1114,6 +1116,106 @@ select {
 
 .vboard-mini-strip:hover {
   background: var(--bg-hover);
+}
+
+/* Phase 5: Live Event-Loop & Multi-Timer Monitor + Project Timer Config */
+.rt-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  display: inline-block;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+}
+
+.rt-monitor-card {
+  gap: 8px;
+}
+
+.rt-run-meta {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.rt-run-meta code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.rt-timer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rt-timer-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rt-timer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11.5px;
+}
+
+.rt-timer-label {
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rt-timer-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.rt-timer-bar-track {
+  height: 5px;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--bg-input);
+  overflow: hidden;
+}
+
+.rt-timer-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #6366f1 0%, #38bdf8 100%);
+  transition: width 0.09s linear;
+}
+
+.timer-cfg-card {
+  gap: 12px;
+}
+
+.timer-cfg-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.timer-alias-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.timer-alias-chip {
+  padding-right: 4px;
 }
 
 .ext-toggle-btn {
