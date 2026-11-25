@@ -9,6 +9,7 @@ import {
   CAP_RT_TIMERS,
   CAP_VIRTUAL_BOARD,
 } from '../capabilities/registry';
+import { extensionRegistry } from '../extensions/registry';
 import {
   ALL_VALID_TOP_HAT_TYPES,
   TIMER_ID_BLOCK_TYPES,
@@ -217,6 +218,26 @@ export function analyzeWorkspaceDiagnostics(
           '当前项目未启用「虚拟硬件外设包」，按键事件回调仅在具备按键外设的项目中生效。',
         blockId: blk.id,
       });
+    }
+
+    // Generic check for ALL built-in & custom extension pack blocks (global or project-local)
+    if (activeCaps !== null) {
+      const ownerPack = extensionRegistry.findPackForBlockType(blk.type);
+      if (ownerPack && !activeCaps.includes(ownerPack.id)) {
+        diagnostics.push({
+          id: `cap-missing-ext-${ownerPack.id}-${blk.id}`,
+          severity: 'error',
+          message: `当前项目未启用外设/扩展包「${ownerPack.name}」，请在项目配置的「能力与外设」中启用后再运行或导出。`,
+          blockId: blk.id,
+        });
+      } else if (!ownerPack && blk.type.startsWith('ext_')) {
+        diagnostics.push({
+          id: `cap-missing-ext-unknown-${blk.id}`,
+          severity: 'error',
+          message: `积木「${blk.type}」所属的自定义外设包已移除或未导入，请重新导入对应 .polyext.json。`,
+          blockId: blk.id,
+        });
+      }
     }
 
     if (!TIMER_ID_BLOCK_TYPES.has(blk.type)) continue;

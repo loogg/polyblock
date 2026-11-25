@@ -390,6 +390,22 @@ class ExtensionRegistry {
     return this.packs.get(packId);
   }
 
+  /** Finds which extension pack (project-local or global) declares a given block type. */
+  findPackForBlockType(blockType: string): PolyExtensionPack | undefined {
+    this.ensureInitialized();
+    for (const pack of this.activeLocalPacks.values()) {
+      if (pack.blocks.some((b) => b.type === blockType)) {
+        return pack;
+      }
+    }
+    for (const pack of this.packs.values()) {
+      if (pack.blocks.some((b) => b.type === blockType)) {
+        return pack;
+      }
+    }
+    return undefined;
+  }
+
   getEnabledPacks(
     enabledIds: string[],
     localPacks?: PolyExtensionPack[],

@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { backendRegistry } from '../backends/registry';
 import { getCoreCategoriesForCapabilities } from '../blocks/catalog';
 import { registerPolyBlocks } from '../blocks/definitions';
+import { setActiveProjectCapabilities } from '../blocks/timerConfigBridge';
 import {
   CAP_RT_LIFECYCLE,
   CAP_RT_TIMERS,
@@ -383,5 +384,83 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(resetRobot.robot_speed).toBe(0);
     expect(resetRobot.robot_battery).toBe(88);
     expect(resetRobot).not.toHaveProperty('temp');
+  });
+
+  it('flags static error diagnostics when workspace uses blocks from a disabled or removed extension pack', () => {
+    const localPack = extensionRegistry.validateProjectLocalPack({
+      ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+      id: 'diag-servo-pack',
+      name: '诊断测试舵机包',
+      blocks: [
+        {
+          type: 'ext_diag_servo_run',
+          kind: 'statement',
+          message0: '启动测试舵机 %1',
+          args0: [{ type: 'field_number', name: 'POS', value: 45 }],
+          lua: {
+            imports: ['local servo = require("servo")'],
+            template: 'servo.run({{POS}})',
+          },
+          python: {
+            imports: ['import servo'],
+            template: 'servo.run({{POS}})',
+          },
+        },
+      ],
+    });
+    extensionRegistry.setActiveProjectLocalPacks([localPack]);
+
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_start',
+              id: 'diag_start',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'ext_diag_servo_run',
+                    id: 'diag_blk_1',
+                    fields: { POS: 90 },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      ws,
+    );
+
+    // Enabled -> 0 errors
+    setActiveProjectCapabilities(['diag-servo-pack']);
+    expect(backendRegistry.get('lua').generate(ws).diagnostics).toHaveLength(0);
+
+    // Disabled -> error pointing to diag-servo-pack
+    setActiveProjectCapabilities([]);
+    const resDisabled = backendRegistry.get('lua').generate(ws);
+    expect(
+      resDisabled.diagnostics.some(
+        (d) =>
+          d.severity === 'error' &&
+          d.id.startsWith('cap-missing-ext-diag-servo-pack') &&
+          d.message.includes('诊断测试舵机包'),
+      ),
+    ).toBe(true);
+
+    // Pack removed completely -> error flagging removed/uninstalled ext_* block
+    extensionRegistry.setActiveProjectLocalPacks([]);
+    const resRemoved = backendRegistry.get('lua').generate(ws);
+    expect(
+      resRemoved.diagnostics.some(
+        (d) => d.severity === 'error' && d.id.startsWith('cap-missing-ext-unknown'),
+      ),
+    ).toBe(true);
+
+    ws.dispose();
+    setActiveProjectCapabilities(null);
   });
 });

@@ -189,9 +189,10 @@ export function App() {
   } | null>(null);
   const [aliasModalTimerId, setAliasModalTimerId] = useState<number | null>(null);
 
-  const [simState, setSimState] = useState<SimStateMap>(() =>
-    buildDefaultSimState(extensionRegistry.listAll()),
-  );
+  /** Per-project isolated simulator state so switching projects never bleeds simulated hardware state. */
+  const [simStatesByProject, setSimStatesByProject] = useState<
+    Record<string, SimStateMap>
+  >({});
 
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus>('ready');
   const [multiHandleRunning, setMultiHandleRunning] = useState<boolean>(false);
@@ -258,6 +259,12 @@ export function App() {
     [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
   );
 
+  const simState = useMemo<SimStateMap>(() => {
+    const defaults = buildDefaultSimState(activeSimPacks);
+    const saved = simStatesByProject[activeProject.id];
+    return saved ? { ...defaults, ...saved } : defaults;
+  }, [activeSimPacks, simStatesByProject, activeProject.id]);
+
   const [generated, setGenerated] = useState<GeneratedCodeResult>({
     language,
     code: '',
@@ -290,22 +297,6 @@ export function App() {
   breakpointsRef.current = breakpoints;
   simStateRef.current = simState;
   activeSimPacksRef.current = activeSimPacks;
-
-  // Ensure any newly enabled/imported extension pack's simWidgets seed their default keys
-  useEffect(() => {
-    const defaults = buildDefaultSimState(activeSimPacks);
-    setSimState((prev) => {
-      let changed = false;
-      const merged: SimStateMap = { ...prev };
-      for (const [k, v] of Object.entries(defaults)) {
-        if (!Object.prototype.hasOwnProperty.call(prev, k)) {
-          merged[k] = v;
-          changed = true;
-        }
-      }
-      return changed ? merged : prev;
-    });
-  }, [activeSimPacks]);
 
   const notify = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -737,10 +728,12 @@ export function App() {
   );
 
   const handleUpdateSimValues = useCallback((patch: Record<string, unknown>) => {
-    setSimState((prev) => {
-      const next = { ...prev, ...patch };
+    const pid = activeProjectIdRef.current;
+    setSimStatesByProject((prev) => {
+      const base = prev[pid] ?? buildDefaultSimState(activeSimPacksRef.current);
+      const next = { ...base, ...patch };
       simStateRef.current = next;
-      return next;
+      return { ...prev, [pid]: next };
     });
     runnerManager.updateActiveMockInputs(patch);
     multiHandleOrchestrator.updateMockInputs(patch);
@@ -756,6 +749,7 @@ export function App() {
   );
 
   const handleDeviceEvent = useCallback((kind: string, value: unknown) => {
+    const pid = activeProjectIdRef.current;
     const { next, broadcastPatch } = applySimDeviceEvent(
       simStateRef.current,
       kind,
@@ -763,7 +757,7 @@ export function App() {
       activeSimPacksRef.current,
     );
     simStateRef.current = next;
-    setSimState(next);
+    setSimStatesByProject((prev) => ({ ...prev, [pid]: next }));
     // Broadcast state updates across all concurrent handle Workers so every handle
     // shares the same simulated physical hardware / C-layer device state.
     runnerManager.updateActiveMockInputs(broadcastPatch);
@@ -1156,6 +1150,12 @@ export function App() {
       const wasActive = projectId === activeProjectIdRef.current;
       const nextStore = deleteProjectFromStore(flushed, projectId);
       setStore(nextStore);
+      setSimStatesByProject((prev) => {
+        if (!Object.prototype.hasOwnProperty.call(prev, projectId)) return prev;
+        const copy = { ...prev };
+        delete copy[projectId];
+        return copy;
+      });
       if (wasActive) mountScriptIntoCanvas(nextStore);
       notify('已删除项目');
     },
@@ -1230,7 +1230,7 @@ export function App() {
     };
     setStore(freshStore);
     mountScriptIntoCanvas(freshStore);
-    setSimState(buildDefaultSimState(extensionRegistry.listAll()));
+    setSimStatesByProject({});
     setIsDirty(false);
     navigateTo('blocks');
     notify('已恢复默认示例项目');
