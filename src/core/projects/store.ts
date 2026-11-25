@@ -7,6 +7,7 @@ import {
 } from '../blocks/timerConfigBridge';
 import {
   CAP_RT_LIFECYCLE,
+  CAP_RT_TICK,
   CAP_RT_TIMERS,
   CAP_VIRTUAL_BOARD,
   targetProfileRegistry,
@@ -377,6 +378,13 @@ function inferCapabilitiesFromWorkspaces(
     raw.includes('"poly_is_timer_running"')
   ) {
     inferred.add(CAP_RT_TIMERS);
+  }
+  if (
+    raw.includes('"poly_rt_tick"') ||
+    raw.includes('"poly_rt_ms_to_tick"') ||
+    raw.includes('"poly_rt_is_expired"')
+  ) {
+    inferred.add(CAP_RT_TICK);
   }
   if (raw.includes('"poly_on_button"') || raw.includes('"ext_board_')) {
     inferred.add(CAP_VIRTUAL_BOARD);
@@ -1282,7 +1290,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     language: 'lua',
     targetProfileId: 'virtual-board-rt',
     defaultTimerCount: 8,
-    enabledCapabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_VIRTUAL_BOARD],
+    enabledCapabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_RT_TICK, CAP_VIRTUAL_BOARD],
     difficulty: {
       level: 'L3',
       label: 'L3 进阶 · 事件定时',
@@ -1320,6 +1328,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     enabledCapabilities: [
       CAP_RT_LIFECYCLE,
       CAP_RT_TIMERS,
+      CAP_RT_TICK,
       CAP_VIRTUAL_BOARD,
       'dict-json',
       'clock-timer',

@@ -5,6 +5,7 @@ import type {
 
 export const CAP_RT_LIFECYCLE = 'rt-lifecycle';
 export const CAP_RT_TIMERS = 'rt-timers';
+export const CAP_RT_TICK = 'rt-tick';
 export const CAP_VIRTUAL_BOARD = 'virtual-board';
 
 export const STORAGE_CUSTOM_PROFILES_KEY = 'polyblock.profiles.custom.v1';
@@ -29,6 +30,15 @@ export const BUILTIN_RUNTIME_CAPABILITIES: RuntimeCapabilitySpec[] = [
     description:
       '为项目内每个隔离句柄提供独立的整数通道定时器池（0~31 路）、画布就地别名与顶层零闭包 on_timer(id) 分发。',
   },
+  {
+    id: CAP_RT_TICK,
+    name: '系统时钟与到期判断 (rt.tick)',
+    shortLabel: '系统时钟',
+    color: '#0891b2',
+    scope: 'project',
+    description:
+      '提供嵌入式 RTOS 系统滴答（rt.tick）、毫秒转 tick（rt.ms_to_tick）与 32 位回绕安全到期判断（rt.is_expired），不依赖编号定时器通道池。',
+  },
 ];
 
 export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
@@ -51,11 +61,11 @@ export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
     id: 'embedded-rt',
     name: '通用嵌入式 RT 控制板',
     description:
-      '多隔离句柄 + on_run 周期循环 + 每句柄独立多路定时器（0~31），不含特定演示外设，适合按需挂载自家硬件扩展包。',
+      '多隔离句柄 + on_run 周期循环 + 每句柄独立多路定时器（0~31）+ 系统 tick 时钟，不含特定演示外设，适合按需挂载自家硬件扩展包。',
     defaultLanguage: 'lua',
     maxHandles: 8,
     defaultTimerCount: 8,
-    capabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS],
+    capabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_RT_TICK],
     builtin: true,
   },
   {
@@ -64,11 +74,11 @@ export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
     id: 'virtual-board-rt',
     name: '虚拟硬件 RT 演示板',
     description:
-      '完整演示多句柄并发 + 周期调度 + 多路编号定时器 + 示例虚拟板外设（LED / 三色灯 / OLED / 温度 / 按键回调）。',
+      '完整演示多句柄并发 + 周期调度 + 多路编号定时器 + 系统 tick 时钟 + 示例虚拟板外设（LED / 三色灯 / OLED / 温度 / 按键回调）。',
     defaultLanguage: 'lua',
     maxHandles: 8,
     defaultTimerCount: 8,
-    capabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_VIRTUAL_BOARD],
+    capabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_RT_TICK, CAP_VIRTUAL_BOARD],
     builtin: true,
   },
   {

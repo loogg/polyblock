@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CAP_RT_LIFECYCLE,
+  CAP_RT_TICK,
   CAP_RT_TIMERS,
   CAP_VIRTUAL_BOARD,
   targetProfileRegistry,
@@ -102,7 +103,11 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
       targetProfileRegistry.get('embedded-rt'),
     );
     expect(switched.targetProfileId).toBe('embedded-rt');
-    expect(switched.enabledCapabilities).toEqual([CAP_RT_LIFECYCLE, CAP_RT_TIMERS]);
+    expect(switched.enabledCapabilities).toEqual([
+      CAP_RT_LIFECYCLE,
+      CAP_RT_TIMERS,
+      CAP_RT_TICK,
+    ]);
     expect(switched.handles).toHaveLength(1);
 
     const updatedHandle = setHandleTimerConfig(switched.handles[0], {

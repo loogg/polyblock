@@ -147,6 +147,11 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
       activeScheduler ? activeScheduler.getTimerValue(id) : 0,
     rt_is_timer_running: (id: unknown) =>
       activeScheduler ? activeScheduler.isTimerRunning(id) : false,
+    rt_tick: () => (activeScheduler ? activeScheduler.getTick() : 0),
+    rt_ms_to_tick: (ms: unknown) =>
+      activeScheduler ? activeScheduler.msToTick(ms) : 0,
+    rt_is_expired: (startTick: unknown, timeoutTicks: unknown) =>
+      activeScheduler ? activeScheduler.isTickExpired(startTick, timeoutTicks) : false,
     should_loop: (hasRun: unknown, hasTimer: unknown, hasBtn: unknown) =>
       activeScheduler
         ? activeScheduler.shouldEnterEventLoop(
@@ -227,6 +232,12 @@ class _PolyRtModule:
     return _poly.rt_get_timer_value(tid)
   def is_timer_running(self, tid):
     return _poly.rt_is_timer_running(tid)
+  def tick(self):
+    return _poly.rt_tick()
+  def ms_to_tick(self, ms):
+    return _poly.rt_ms_to_tick(ms)
+  def is_expired(self, start_tick, timeout_ticks):
+    return _poly.rt_is_expired(start_tick, timeout_ticks)
 sys.modules["rt"] = _PolyRtModule()
 `;
 

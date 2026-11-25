@@ -98,18 +98,19 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(targetProfileRegistry.removeCustomProfile(imported.id)).toBe(true);
   });
 
-  it('registers all 5 built-in packs by source, derives multi-attribute badges, and sorts toolbox categories by numeric toolboxOrder', () => {
+  it('registers all 6 built-in packs by source, derives multi-attribute badges, and sorts toolbox categories by numeric toolboxOrder', () => {
     const all = extensionRegistry.listAll();
     expect(all.map((p) => p.id)).toEqual(
       expect.arrayContaining([
         'rt-lifecycle',
         'rt-timers',
+        'rt-tick',
         'virtual-board',
         'dict-json',
         'clock-timer',
       ]),
     );
-    expect(extensionRegistry.listBySource('builtin')).toHaveLength(5);
+    expect(extensionRegistry.listBySource('builtin')).toHaveLength(6);
     expect(CORE_TOOLBOX_ORDERS.map((c) => c.order)).toEqual([
       10, 20, 30, 40, 50, 60, 70, 80, 90,
     ]);

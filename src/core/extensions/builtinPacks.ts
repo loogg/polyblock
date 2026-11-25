@@ -254,6 +254,87 @@ export const RT_TIMERS_PACK: PolyExtensionPack = {
   ],
 };
 
+export const RT_TICK_PACK: PolyExtensionPack = {
+  format: 'polyblock-extension',
+  version: 1,
+  id: 'rt-tick',
+  name: '系统时钟与到期判断 (rt.tick)',
+  packVersion: '1.0.0',
+  categoryLabel: '时钟',
+  color: '#0891b2',
+  description:
+    '提供嵌入式 RTOS 系统滴答（rt.tick）、毫秒转 tick（rt.ms_to_tick）与 32 位回绕安全到期判断（rt.is_expired），不依赖编号定时器通道池，可独立启用。',
+  builtin: true,
+  toolboxOrder: 18,
+  categoryTarget: 'own',
+  tags: ['系统时基'],
+  blocks: [
+    {
+      type: 'poly_rt_tick',
+      kind: 'value',
+      outputType: 'Number',
+      message0: '获取系统 tick',
+      tooltip:
+        '读取当前 32 位无符号系统滴答计数（对应 rt.tick()，沙箱默认 1000Hz 即 1ms/tick）。',
+      keywords: '系统 tick 时钟 滴答 毫秒 rt.tick get_tick uptime',
+      lua: {
+        imports: ['local rt = require("rt")'],
+        template: 'rt.tick()',
+      },
+      python: {
+        imports: ['import rt'],
+        template: 'rt.tick()',
+      },
+    },
+    {
+      type: 'poly_rt_ms_to_tick',
+      kind: 'value',
+      outputType: 'Number',
+      message0: '%1 ms 转为 tick',
+      args0: [{ type: 'input_value', name: 'MS', check: 'Number' }],
+      inputsInline: true,
+      shadows: { MS: { type: 'math_number', value: 500 } },
+      tooltip:
+        '将毫秒数换算为当前板卡的系统 tick 数（对应 rt.ms_to_tick(ms)，如 FreeRTOS pdMS_TO_TICKS）。',
+      keywords: 'ms 毫秒 转换 tick rt.ms_to_tick pdMS_TO_TICKS',
+      lua: {
+        imports: ['local rt = require("rt")'],
+        template: 'rt.ms_to_tick({{MS}})',
+      },
+      python: {
+        imports: ['import rt'],
+        template: 'rt.ms_to_tick({{MS}})',
+      },
+    },
+    {
+      type: 'poly_rt_is_expired',
+      kind: 'value',
+      outputType: 'Boolean',
+      message0: '从 %1 起经过 %2 tick 已到期?',
+      args0: [
+        { type: 'input_value', name: 'START', check: 'Number' },
+        { type: 'input_value', name: 'TIMEOUT', check: 'Number' },
+      ],
+      inputsInline: true,
+      shadows: {
+        START: { type: 'math_number', value: 0 },
+        TIMEOUT: { type: 'math_number', value: 500 },
+      },
+      tooltip:
+        '32 位无符号回绕安全的到期判断（(uint32_t)(now - start) >= timeout），对应 rt.is_expired(start_tick, timeout_ticks)。',
+      keywords: '到期 超时 判断 expired timeout tick rt.is_expired',
+      lua: {
+        imports: ['local rt = require("rt")'],
+        template: 'rt.is_expired({{START}}, {{TIMEOUT}})',
+      },
+      python: {
+        imports: ['import rt'],
+        template: 'rt.is_expired({{START}}, {{TIMEOUT}})',
+      },
+    },
+  ],
+};
+
 export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
   format: 'polyblock-extension',
   version: 1,
@@ -741,6 +822,7 @@ def reset():
 export const BUILTIN_EXTENSION_PACKS: PolyExtensionPack[] = [
   RT_LIFECYCLE_PACK,
   RT_TIMERS_PACK,
+  RT_TICK_PACK,
   VIRTUAL_BOARD_PACK,
   DICT_JSON_PACK,
   CLOCK_TIMER_PACK,

@@ -31,6 +31,8 @@ export interface RuntimeSchedulerConfig {
   timeSliceMs?: number;
   /** Single synchronous event callback timeout protection (ms, default 5000ms). */
   callbackTimeoutMs?: number;
+  /** Simulated RTOS tick frequency in Hz (default 1000Hz -> 1 tick = 1ms). */
+  tickHz?: number;
   post: (msg: Record<string, unknown>) => void;
 }
 
@@ -49,10 +51,12 @@ export class WorkerRuntimeScheduler {
   readonly timerCount: number;
   private readonly post: (msg: Record<string, unknown>) => void;
 
-  // --- Pause-aware logical clock ---
+  // --- Pause-aware logical clock & RTOS tick base ---
   private pausedOffsetMs = 0;
   private pauseDepth = 0;
   private pauseStartedAt: number | null = null;
+  private readonly tickHz: number;
+  private readonly bootLogicalMs: number;
 
   // --- Independent on_run periodic schedule (completely independent of T0..TN) ---
   private runPeriodMs = 100;
@@ -103,7 +107,39 @@ export class WorkerRuntimeScheduler {
       500,
       Math.min(120_000, Math.round(config.callbackTimeoutMs ?? 5000)),
     );
+    const hz = Number(config.tickHz);
+    this.tickHz = Number.isFinite(hz) ? Math.max(10, Math.min(100_000, Math.round(hz))) : 1000;
+    this.bootLogicalMs = performance.now();
     this.post = config.post;
+  }
+
+  /** Returns current 32-bit unsigned system tick count (default 1000Hz -> 1ms/tick, logical-clock aligned). */
+  getTick(): number {
+    const elapsedMs = Math.max(0, this.now() - this.bootLogicalMs);
+    return Math.floor((elapsedMs * this.tickHz) / 1000) >>> 0;
+  }
+
+  /** Converts milliseconds to unsigned system ticks (mirrors FreeRTOS pdMS_TO_TICKS). */
+  msToTick(rawMs: unknown): number {
+    const ms = Number(rawMs);
+    if (!Number.isFinite(ms) || ms <= 0) return 0;
+    return Math.ceil((ms * this.tickHz) / 1000) >>> 0;
+  }
+
+  /**
+   * 32-bit unsigned wrap-around safe timeout check (Scheme A):
+   * Mirrors C: `(uint32_t)(now_tick - start_tick) >= (uint32_t)timeout_ticks`.
+   */
+  isTickExpired(
+    rawStartTick: unknown,
+    rawTimeoutTicks: unknown,
+    overrideNowTick?: number,
+  ): boolean {
+    const nowTick = (overrideNowTick !== undefined ? overrideNowTick : this.getTick()) >>> 0;
+    const startTick = Math.trunc(Number(rawStartTick) || 0) >>> 0;
+    const timeoutTicks = Math.max(0, Math.trunc(Number(rawTimeoutTicks) || 0)) >>> 0;
+    const elapsed = (nowTick - startTick) >>> 0;
+    return elapsed >= timeoutTicks;
   }
 
   private clampTimeSlice(raw: unknown): number {

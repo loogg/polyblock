@@ -95,6 +95,9 @@ package.preload["rt"] = function()
     stop_timer = __poly_rt_stop_timer,
     get_timer_value = __poly_rt_get_timer_value,
     is_timer_running = __poly_rt_is_timer_running,
+    tick = __poly_rt_tick,
+    ms_to_tick = __poly_rt_ms_to_tick,
+    is_expired = __poly_rt_is_expired,
   }
 end
 
@@ -354,6 +357,15 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
       );
       engine.global.set('__poly_rt_is_timer_running', (id: unknown) =>
         scheduler.isTimerRunning(id),
+      );
+      engine.global.set('__poly_rt_tick', () => scheduler.getTick());
+      engine.global.set('__poly_rt_ms_to_tick', (ms: unknown) =>
+        scheduler.msToTick(ms),
+      );
+      engine.global.set(
+        '__poly_rt_is_expired',
+        (startTick: unknown, timeoutTicks: unknown) =>
+          scheduler.isTickExpired(startTick, timeoutTicks),
       );
       engine.global.set(
         '__poly_should_loop',

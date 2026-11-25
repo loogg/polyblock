@@ -392,4 +392,91 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(ev).toBe('run');
     expect(elapsed).toBeLessThan(250);
   });
+
+  it('generates rt.tick / rt.ms_to_tick / rt.is_expired (Scheme A) independently and handles 32-bit uint32 wrap-around', () => {
+    const ws = loadWs({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'tk_s',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'variables_set',
+                  id: 'tk_set0',
+                  fields: { VAR: { id: 'v_t0' } },
+                  inputs: { VALUE: { block: { type: 'poly_rt_tick', id: 'tk_get' } } },
+                  next: {
+                    block: {
+                      type: 'poly_print',
+                      id: 'tk_pr',
+                      inputs: {
+                        VALUE: {
+                          block: {
+                            type: 'poly_rt_is_expired',
+                            id: 'tk_exp',
+                            inputs: {
+                              START: { block: { type: 'variables_get', id: 'tk_v', fields: { VAR: { id: 'v_t0' } } } },
+                              TIMEOUT: {
+                                block: {
+                                  type: 'poly_rt_ms_to_tick',
+                                  id: 'tk_conv',
+                                  inputs: { MS: { shadow: { type: 'math_number', id: 'tk_500', fields: { NUM: 500 } } } },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [{ name: 't0', id: 'v_t0' }],
+    });
+
+    const luaRes = backendRegistry.get('lua').generate(ws);
+    expect(luaRes.isEventDriven).toBe(false); // independent pack does NOT force event-loop mode!
+    expect(luaRes.code).toContain('local rt = require("rt")');
+    expect(luaRes.code).toContain('t0 = rt.tick()');
+    expect(luaRes.code).toContain('rt.is_expired(t0, rt.ms_to_tick(500))');
+
+    const pyRes = backendRegistry.get('python').generate(ws);
+    expect(pyRes.isEventDriven).toBe(false);
+    expect(pyRes.code).toContain('import rt');
+    expect(pyRes.code).toContain('t0 = rt.tick()');
+    expect(pyRes.code).toContain('rt.is_expired(t0, rt.ms_to_tick(500))');
+    ws.dispose();
+
+    // Exact 32-bit unsigned wrap-around verification across 0xFFFFFFFF -> 0x00000000
+    const sched = new WorkerRuntimeScheduler({
+      runId: 'tick-wrap',
+      timerCount: 4,
+      tickHz: 1000,
+      post: () => {},
+    });
+    expect(sched.msToTick(0)).toBe(0);
+    expect(sched.msToTick(250)).toBe(250);
+
+    const sched100 = new WorkerRuntimeScheduler({
+      runId: 'tick-100hz',
+      timerCount: 4,
+      tickHz: 100,
+      post: () => {},
+    });
+    expect(sched100.msToTick(250)).toBe(25);
+    expect(sched100.msToTick(15)).toBe(2); // ceil(1.5) = 2 ticks
+
+    const startNearMax = 0xfffffff0;
+    expect(sched.isTickExpired(startNearMax, 32, 0xfffffffc)).toBe(false); // elapsed = 12
+    expect(sched.isTickExpired(startNearMax, 32, 0x00000008)).toBe(false); // wrapped, elapsed = 24
+    expect(sched.isTickExpired(startNearMax, 32, 0x00000010)).toBe(true); // wrapped, elapsed = 32
+    expect(sched.isTickExpired(startNearMax, 32, 0x00000025)).toBe(true); // wrapped, elapsed = 53
+  });
 });

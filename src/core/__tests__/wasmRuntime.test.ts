@@ -95,6 +95,13 @@ async function runLuaDebugInWasmoon(
     lua.global.set('__poly_rt_is_timer_running', (id: unknown) =>
       scheduler.isTimerRunning(id),
     );
+    lua.global.set('__poly_rt_tick', () => scheduler.getTick());
+    lua.global.set('__poly_rt_ms_to_tick', (ms: unknown) =>
+      scheduler.msToTick(ms),
+    );
+    lua.global.set('__poly_rt_is_expired', (s: unknown, t: unknown) =>
+      scheduler.isTickExpired(s, t),
+    );
     lua.global.set('__poly_should_loop', (r: unknown, t: unknown, b: unknown) =>
       scheduler.shouldEnterEventLoop(Boolean(r), Boolean(t), Boolean(b)),
     );
@@ -145,6 +152,9 @@ async function runLuaDebugInWasmoon(
           stop_timer = __poly_rt_stop_timer,
           get_timer_value = __poly_rt_get_timer_value,
           is_timer_running = __poly_rt_is_timer_running,
+          tick = __poly_rt_tick,
+          ms_to_tick = __poly_rt_ms_to_tick,
+          is_expired = __poly_rt_is_expired,
         }
       end
       __poly_event_mode = false
@@ -241,6 +251,9 @@ async function runPyDebugInMicroPython(
     rt_stop_timer: (id: unknown) => scheduler.stopTimer(id),
     rt_get_timer_value: (id: unknown) => scheduler.getTimerValue(id),
     rt_is_timer_running: (id: unknown) => scheduler.isTimerRunning(id),
+    rt_tick: () => scheduler.getTick(),
+    rt_ms_to_tick: (ms: unknown) => scheduler.msToTick(ms),
+    rt_is_expired: (s: unknown, t: unknown) => scheduler.isTickExpired(s, t),
     should_loop: (r: unknown, t: unknown, b: unknown) =>
       scheduler.shouldEnterEventLoop(Boolean(r), Boolean(t), Boolean(b)),
     init_scheduler: (s: unknown, r: unknown, t: unknown, b: unknown) =>
@@ -270,6 +283,9 @@ class _Rt:
   def stop_timer(self, tid): return _poly.rt_stop_timer(tid)
   def get_timer_value(self, tid): return _poly.rt_get_timer_value(tid)
   def is_timer_running(self, tid): return _poly.rt_is_timer_running(tid)
+  def tick(self): return _poly.rt_tick()
+  def ms_to_tick(self, ms): return _poly.rt_ms_to_tick(ms)
+  def is_expired(self, s, t): return _poly.rt_is_expired(s, t)
 sys.modules["rt"] = _Rt()
 `);
   opts.onReady?.(scheduler);
@@ -912,5 +928,103 @@ sys.modules["board"] = _m
     expect(logs.some((l) => l.includes('按键 A 按下'))).toBe(true);
     expect(logs.some((l) => l.includes('T1 告警触发次数 = 1'))).toBe(true);
     expect(logs.some((l) => l.includes('on_stop 已安全关闭 LED 与三色灯'))).toBe(true);
+  });
+
+  it('executes rt.tick(), rt.ms_to_tick(), and rt.is_expired(start, timeout) in BOTH Wasmoon Lua 5.4 and MicroPython WASM', async () => {
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_start',
+              id: 'rt_tk_start',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'variables_set',
+                    id: 'rt_tk_t0',
+                    fields: { VAR: { id: 'v_t0' } },
+                    inputs: { VALUE: { block: { type: 'poly_rt_tick', id: 'rt_tk_now' } } },
+                    next: {
+                      block: {
+                        type: 'poly_print_kv',
+                        id: 'rt_tk_p1',
+                        fields: { LABEL: 'BEFORE' },
+                        inputs: {
+                          VALUE: {
+                            block: {
+                              type: 'poly_rt_is_expired',
+                              id: 'rt_tk_exp1',
+                              inputs: {
+                                START: { block: { type: 'variables_get', id: 'rt_tk_g1', fields: { VAR: { id: 'v_t0' } } } },
+                                TIMEOUT: {
+                                  block: {
+                                    type: 'poly_rt_ms_to_tick',
+                                    id: 'rt_tk_ms1',
+                                    inputs: { MS: { shadow: { type: 'math_number', id: 'rt_tk_40a', fields: { NUM: 40 } } } },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                        next: {
+                          block: {
+                            type: 'poly_wait_ms',
+                            id: 'rt_tk_sleep',
+                            inputs: { MS: { shadow: { type: 'math_number', id: 'rt_tk_55', fields: { NUM: 55 } } } },
+                            next: {
+                              block: {
+                                type: 'poly_print_kv',
+                                id: 'rt_tk_p2',
+                                fields: { LABEL: 'AFTER' },
+                                inputs: {
+                                  VALUE: {
+                                    block: {
+                                      type: 'poly_rt_is_expired',
+                                      id: 'rt_tk_exp2',
+                                      inputs: {
+                                        START: { block: { type: 'variables_get', id: 'rt_tk_g2', fields: { VAR: { id: 'v_t0' } } } },
+                                        TIMEOUT: {
+                                          block: {
+                                            type: 'poly_rt_ms_to_tick',
+                                            id: 'rt_tk_ms2',
+                                            inputs: { MS: { shadow: { type: 'math_number', id: 'rt_tk_40b', fields: { NUM: 40 } } } },
+                                          },
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+        variables: [{ name: 't0', id: 'v_t0' }],
+      },
+      ws,
+    );
+
+    const luaDebug = backendRegistry.get('lua').generate(ws).debugCode;
+    const pyDebug = backendRegistry.get('python').generate(ws).debugCode;
+    ws.dispose();
+
+    const { logs: luaLogs } = await runLuaDebugInWasmoon(luaDebug);
+    expect(luaLogs).toContain('BEFORE = false');
+    expect(luaLogs).toContain('AFTER = true');
+
+    const { logs: pyLogs } = await runPyDebugInMicroPython(pyDebug);
+    expect(pyLogs).toContain('BEFORE = False');
+    expect(pyLogs).toContain('AFTER = True');
   });
 });
