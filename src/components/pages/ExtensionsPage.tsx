@@ -1,8 +1,13 @@
 import { ArrowLeft, Cpu, Download, Trash2, Upload } from 'lucide-react';
 import { useRef } from 'react';
 import { backendRegistry } from '../../core/backends/registry';
+import {
+  CORE_TOOLBOX_ORDERS,
+  DEFAULT_EXTENSION_TOOLBOX_ORDER,
+} from '../../core/blocks/catalog';
 import { SAMPLE_CUSTOM_BOARD_TEMPLATE } from '../../core/capabilities/registry';
 import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../../core/extensions/builtinPacks';
+import { derivePackBadges } from '../../core/extensions/registry';
 import type { PolyExtensionPack } from '../../core/extensions/types';
 import type { TargetProfile } from '../../types/project';
 
@@ -54,10 +59,8 @@ export function ExtensionsPage({
   const extFileInputRef = useRef<HTMLInputElement | null>(null);
   const boardFileInputRef = useRef<HTMLInputElement | null>(null);
   const enabledSet = new Set(enabledCapabilityIds);
-  const runtimePacks = allPacks.filter((p) => p.packKind === 'runtime');
-  const peripheralPacks = allPacks.filter(
-    (p) => (p.packKind ?? 'peripheral') !== 'runtime',
-  );
+  const builtinPacks = allPacks.filter((p) => Boolean(p.builtin));
+  const customPacks = allPacks.filter((p) => !p.builtin);
   const backends = backendRegistry.list();
 
   const handleImportExtFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -178,12 +181,30 @@ export function ExtensionsPage({
           </div>
         </div>
 
+        <div className="toolbox-order-legend" aria-label="工具箱分类序号参考">
+          <span className="toolbox-order-legend-title">工具箱默认分类序：</span>
+          {CORE_TOOLBOX_ORDERS.map((c) => (
+            <span key={c.id} className="toolbox-order-chip">
+              {c.label} <code>#{c.order}</code>
+            </span>
+          ))}
+          <span className="toolbox-order-chip ext">
+            扩展包默认 <code>#{DEFAULT_EXTENSION_TOOLBOX_ORDER}+</code>
+          </span>
+        </div>
+
         <h2 className="section-heading">
-          内置运行时扩展包（与外设包统一声明式协议 · 不污染纯脚本项目）
+          内置扩展包（随 IDE 提供 · 当前项目启用{' '}
+          {builtinPacks.filter((p) => enabledSet.has(p.id)).length} / {builtinPacks.length}）
         </h2>
         <div className="card-grid">
-          {runtimePacks.map((pack) => {
+          {builtinPacks.map((pack) => {
             const isEnabled = enabledSet.has(pack.id);
+            const badges = derivePackBadges(pack);
+            const orderLabel =
+              pack.categoryTarget === 'event'
+                ? '并入「事件」'
+                : `分类序 #${pack.toolboxOrder ?? DEFAULT_EXTENSION_TOOLBOX_ORDER}`;
             return (
               <div
                 key={pack.id}
@@ -210,13 +231,25 @@ export function ExtensionsPage({
                         {pack.name}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                        v{pack.packVersion} · {pack.blocks.length} 个积木
-                        {pack.handleChannelPool ? ' · 句柄通道池' : ''}
+                        v{pack.packVersion} · {pack.blocks.length} 个积木 · {orderLabel}
                       </div>
                     </div>
                   </div>
-                  <span className="status-pill idle">运行时扩展包</span>
+                  <span className="status-pill idle">内置</span>
                 </div>
+
+                {badges.length > 0 && (
+                  <div className="pack-attr-row">
+                    {badges.map((badge) => (
+                      <span
+                        key={badge.id}
+                        className={`pack-attr-badge tone-${badge.tone}`}
+                      >
+                        {badge.label}
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 <p className="card-desc">{pack.description}</p>
 
@@ -235,7 +268,7 @@ export function ExtensionsPage({
 
                 <div className="card-footer">
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    支持 Lua 5.4 / Python 3 顶层零闭包 ABI
+                    ID: {pack.id} · Lua 5.4 / Python 3
                   </span>
                   <button
                     type="button"
@@ -253,117 +286,131 @@ export function ExtensionsPage({
         </div>
 
         <h2 className="section-heading">
-          全局硬件外设与扩展积木包（多项目复用 · 当前项目启用{' '}
-          {peripheralPacks.filter((p) => enabledSet.has(p.id)).length} /{' '}
-          {peripheralPacks.length}）
+          自定义全局扩展包（跨项目复用 · 当前项目启用{' '}
+          {customPacks.filter((p) => enabledSet.has(p.id)).length} / {customPacks.length}）
         </h2>
-        <div className="card-grid">
-          {peripheralPacks.map((pack) => {
-            const isEnabled = enabledSet.has(pack.id);
-            const hasHat = pack.blocks.some((b) => b.kind === 'hat');
-            return (
-              <div
-                key={pack.id}
-                className="ui-card"
-                style={
-                  isEnabled
-                    ? {
-                        borderColor: pack.color,
-                        boxShadow: `0 0 0 1px ${pack.color}33`,
-                      }
-                    : undefined
-                }
-              >
-                <div className="card-top">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div
-                      className="card-icon"
-                      style={{ background: pack.color, fontSize: 12 }}
-                    >
-                      {pack.categoryLabel}
-                    </div>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 13.5 }}>
-                        {pack.name}
+        {customPacks.length === 0 ? (
+          <div className="ui-card" style={{ borderStyle: 'dashed', opacity: 0.9 }}>
+            <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              暂未导入自定义全局扩展包。点击右上角 <strong>「导入到全局库 (.polyext.json)」</strong>{' '}
+              可导入团队复用的硬件驱动、底层 C 接口或功能算法包（单个包可同时包含外设模拟控件、事件回调帽块、通道资源池与功能积木）；若仅归属单个项目，请在「项目配置 → 能力与外设」导入为项目内嵌包。
+            </div>
+          </div>
+        ) : (
+          <div className="card-grid">
+            {customPacks.map((pack) => {
+              const isEnabled = enabledSet.has(pack.id);
+              const badges = derivePackBadges(pack);
+              const orderLabel =
+                pack.categoryTarget === 'event'
+                  ? '并入「事件」'
+                  : `分类序 #${pack.toolboxOrder ?? DEFAULT_EXTENSION_TOOLBOX_ORDER}`;
+              return (
+                <div
+                  key={pack.id}
+                  className="ui-card"
+                  style={
+                    isEnabled
+                      ? {
+                          borderColor: pack.color,
+                          boxShadow: `0 0 0 1px ${pack.color}33`,
+                        }
+                      : undefined
+                  }
+                >
+                  <div className="card-top">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div
+                        className="card-icon"
+                        style={{ background: pack.color, fontSize: 12 }}
+                      >
+                        {pack.categoryLabel}
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                        v{pack.packVersion} · {pack.blocks.length} 个积木
-                        {hasHat ? ' · 含事件回调' : ''}
-                        {pack.sandboxMock ? ' · 含沙箱模拟' : ''}
-                        {(pack.simWidgets?.length ?? 0) > 0
-                          ? ` · ${pack.simWidgets!.length} 模拟控件`
-                          : ''}
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 13.5 }}>
+                          {pack.name}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                          v{pack.packVersion} · {pack.blocks.length} 个积木 · {orderLabel}
+                        </div>
                       </div>
                     </div>
+                    <span className="status-pill accent">自定义</span>
                   </div>
-                  <span className={`status-pill ${pack.builtin ? 'idle' : 'accent'}`}>
-                    {pack.builtin ? '内置包' : '自定义'}
-                  </span>
-                </div>
 
-                <p className="card-desc">{pack.description}</p>
-
-                <div className="paused-var-chips">
-                  {pack.blocks.slice(0, 4).map((b) => (
-                    <span key={b.type} className="var-chip" style={{ fontSize: 10.5 }}>
-                      {b.message0.replace(/%\d/g, '▢')}
-                    </span>
-                  ))}
-                  {pack.blocks.length > 4 && (
-                    <span className="var-chip" style={{ fontSize: 10.5 }}>
-                      +{pack.blocks.length - 4} 项
-                    </span>
+                  {badges.length > 0 && (
+                    <div className="pack-attr-row">
+                      {badges.map((badge) => (
+                        <span
+                          key={badge.id}
+                          className={`pack-attr-badge tone-${badge.tone}`}
+                        >
+                          {badge.label}
+                        </span>
+                      ))}
+                    </div>
                   )}
-                </div>
 
-                <div className="card-footer">
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    支持 Lua 5.4 / Python 3
-                  </span>
+                  <p className="card-desc">{pack.description}</p>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {!pack.builtin && (
-                      <>
-                        <button
-                          type="button"
-                          className="btn-ghost"
-                          style={{ padding: '4px 6px' }}
-                          title="导出此全局外设包 (.polyext.json) 分享给他人"
-                          onClick={() => {
-                            downloadJsonFile(`${pack.id}.polyext.json`, pack);
-                            onNotify(`已导出全局扩展包 ${pack.id}.polyext.json`);
-                          }}
-                        >
-                          <Download size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-ghost"
-                          style={{ padding: '4px 6px', color: 'var(--danger)' }}
-                          title="删除自定义扩展包"
-                          onClick={() => onRemoveCustomPack(pack.id)}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </>
+                  <div className="paused-var-chips">
+                    {pack.blocks.slice(0, 4).map((b) => (
+                      <span key={b.type} className="var-chip" style={{ fontSize: 10.5 }}>
+                        {b.message0.replace(/%\d/g, '▢')}
+                      </span>
+                    ))}
+                    {pack.blocks.length > 4 && (
+                      <span className="var-chip" style={{ fontSize: 10.5 }}>
+                        +{pack.blocks.length - 4} 项
+                      </span>
                     )}
-                    <button
-                      type="button"
-                      className={`ext-toggle-btn ${
-                        isEnabled ? 'enabled' : 'disabled'
-                      }`}
-                      style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-                      title={isEnabled ? '点击从当前项目停用' : '启用到当前项目'}
-                      onClick={() => onToggleCapability(pack.id)}
-                    >
-                      {isEnabled ? '已启用' : '+ 启用'}
-                    </button>
+                  </div>
+
+                  <div className="card-footer">
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      ID: {pack.id} · Lua 5.4 / Python 3
+                    </span>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        style={{ padding: '4px 6px' }}
+                        title="导出此全局扩展包 (.polyext.json) 分享给他人"
+                        onClick={() => {
+                          downloadJsonFile(`${pack.id}.polyext.json`, pack);
+                          onNotify(`已导出全局扩展包 ${pack.id}.polyext.json`);
+                        }}
+                      >
+                        <Download size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        style={{ padding: '4px 6px', color: 'var(--danger)' }}
+                        title="删除自定义扩展包"
+                        onClick={() => onRemoveCustomPack(pack.id)}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className={`ext-toggle-btn ${
+                          isEnabled ? 'enabled' : 'disabled'
+                        }`}
+                        style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                        title={isEnabled ? '点击从当前项目停用' : '启用到当前项目'}
+                        onClick={() => onToggleCapability(pack.id)}
+                      >
+                        {isEnabled ? '已启用' : '+ 启用'}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
 
         <h2 className="section-heading">
           目标板型规格预设（.polyboard.json · 共 {allTargetProfiles.length} 种）

@@ -15,17 +15,27 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
 import {
+  CORE_TOOLBOX_ORDERS,
+  DEFAULT_EXTENSION_TOOLBOX_ORDER,
+} from '../core/blocks/catalog';
+import {
   CAP_RT_TIMERS,
   hasCapability,
   SAMPLE_CUSTOM_BOARD_TEMPLATE,
   targetProfileRegistry,
 } from '../core/capabilities/registry';
 import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../core/extensions/builtinPacks';
-import { extensionRegistry } from '../core/extensions/registry';
-import type { PolyExtensionPack } from '../core/extensions/types';
+import {
+  derivePackBadges,
+  extensionRegistry,
+} from '../core/extensions/registry';
+import type {
+  HandleChannelPoolSpec,
+  PolyExtensionPack,
+} from '../core/extensions/types';
 import {
   countProjectScripts,
-  getHandleTimerConfig,
+  getHandleChannelPoolConfig,
 } from '../core/projects/store';
 import type {
   ProjectModel,
@@ -67,6 +77,12 @@ interface ProjectSettingsModalProps {
       autoStart?: boolean;
       description?: string;
       timerConfig?: ProjectTimerConfig;
+      channelPoolUpdate?: {
+        configKey: string;
+        config: ProjectTimerConfig;
+        min?: number;
+        max?: number;
+      };
     },
   ) => void;
   onToggleCapabilityForProject: (projectId: string, capId: string) => void;
@@ -107,15 +123,14 @@ export function ProjectSettingsModal({
   const [nameDraft, setNameDraft] = useState(project.name);
   const [descDraft, setDescDraft] = useState(project.description ?? '');
   const [handleNameDraft, setHandleNameDraft] = useState('');
-  const [aliasSlotId, setAliasSlotId] = useState('0');
-  const [aliasDraft, setAliasDraft] = useState('');
+  const [aliasSlotsByPool, setAliasSlotsByPool] = useState<Record<string, string>>({});
+  const [aliasDraftsByPool, setAliasDraftsByPool] = useState<Record<string, string>>({});
   const profileFileRef = useRef<HTMLInputElement | null>(null);
   const localExtFileRef = useRef<HTMLInputElement | null>(null);
 
   const selectedHandle: RuntimeHandle =
     project.handles.find((h) => h.id === selectedHandleId) ?? project.handles[0];
   const hasTimers = hasCapability(project.enabledCapabilities, CAP_RT_TIMERS);
-  const timerCfg = getHandleTimerConfig(selectedHandle, project.defaultTimerCount);
   const activeProfile = targetProfileRegistry.get(project.targetProfileId);
 
   useEffect(() => {
@@ -126,11 +141,8 @@ export function ProjectSettingsModal({
   useEffect(() => {
     if (selectedHandle) {
       setHandleNameDraft(selectedHandle.name);
-      if (Number(aliasSlotId) >= timerCfg.count) {
-        setAliasSlotId('0');
-      }
     }
-  }, [selectedHandle?.id, selectedHandle?.name, timerCfg.count, aliasSlotId]);
+  }, [selectedHandle?.id, selectedHandle?.name]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -144,16 +156,13 @@ export function ProjectSettingsModal({
   const enabledSet = new Set(project.enabledCapabilities);
   const localPacks = project.localExtensions ?? [];
   const localPackIds = new Set(localPacks.map((p) => p.id));
-  const runtimePacks = allExtensionPacks.filter((p) => p.packKind === 'runtime');
-  const peripheralPacks = allExtensionPacks.filter(
-    (p) => (p.packKind ?? 'peripheral') !== 'runtime',
-  );
+  const builtinPacks = allExtensionPacks.filter((p) => Boolean(p.builtin));
+  const customGlobalPacks = allExtensionPacks.filter((p) => !p.builtin);
   const globalPackIds = new Set(allExtensionPacks.map((p) => p.id));
   const channelPoolPacks = extensionRegistry.getChannelPoolPacks(
     project.enabledCapabilities,
     project.localExtensions,
   );
-  const activeChannelPool = channelPoolPacks[0]?.handleChannelPool ?? null;
 
   const downloadPackJson = (fileName: string, data: unknown, toastText: string) => {
     const blob = new Blob([JSON.stringify(data, null, 2)], {
@@ -188,35 +197,70 @@ export function ProjectSettingsModal({
     e.target.value = '';
   };
 
-  const handleSetCount = (nextCount: number) => {
+  const readPoolCfg = (pool: HandleChannelPoolSpec): ProjectTimerConfig => {
+    const fallback =
+      pool.configKey === CAP_RT_TIMERS ? project.defaultTimerCount : pool.defaultCount;
+    return getHandleChannelPoolConfig(
+      selectedHandle,
+      pool.configKey,
+      fallback,
+      pool.min,
+      pool.max,
+    );
+  };
+
+  const handleSetPoolCount = (pool: HandleChannelPoolSpec, nextCount: number) => {
     if (!selectedHandle) return;
-    const clamped = Math.max(1, Math.min(32, Math.trunc(nextCount || 8)));
+    const cur = readPoolCfg(pool);
+    const clamped = Math.max(
+      pool.min,
+      Math.min(pool.max, Math.trunc(nextCount || pool.defaultCount)),
+    );
     onUpdateHandleConfig(project.id, selectedHandle.id, {
-      timerConfig: { ...timerCfg, count: clamped },
+      channelPoolUpdate: {
+        configKey: pool.configKey,
+        config: { ...cur, count: clamped },
+        min: pool.min,
+        max: pool.max,
+      },
     });
   };
 
-  const handleSaveAlias = () => {
+  const handleSavePoolAlias = (pool: HandleChannelPoolSpec) => {
     if (!selectedHandle) return;
-    const trimmed = aliasDraft.trim();
-    const nextAliases = { ...timerCfg.aliases };
+    const cur = readPoolCfg(pool);
+    const rawSlot = aliasSlotsByPool[pool.configKey] ?? '0';
+    const slotKey = Number(rawSlot) < cur.count ? rawSlot : '0';
+    const trimmed = (aliasDraftsByPool[pool.configKey] ?? '').trim();
+    const nextAliases = { ...cur.aliases };
     if (trimmed) {
-      nextAliases[aliasSlotId] = trimmed.slice(0, 16);
+      nextAliases[slotKey] = trimmed.slice(0, 16);
     } else {
-      delete nextAliases[aliasSlotId];
+      delete nextAliases[slotKey];
     }
     onUpdateHandleConfig(project.id, selectedHandle.id, {
-      timerConfig: { ...timerCfg, aliases: nextAliases },
+      channelPoolUpdate: {
+        configKey: pool.configKey,
+        config: { ...cur, aliases: nextAliases },
+        min: pool.min,
+        max: pool.max,
+      },
     });
-    setAliasDraft('');
+    setAliasDraftsByPool((prev) => ({ ...prev, [pool.configKey]: '' }));
   };
 
-  const handleRemoveAlias = (slotKey: string) => {
+  const handleRemovePoolAlias = (pool: HandleChannelPoolSpec, slotKey: string) => {
     if (!selectedHandle) return;
-    const nextAliases = { ...timerCfg.aliases };
+    const cur = readPoolCfg(pool);
+    const nextAliases = { ...cur.aliases };
     delete nextAliases[slotKey];
     onUpdateHandleConfig(project.id, selectedHandle.id, {
-      timerConfig: { ...timerCfg, aliases: nextAliases },
+      channelPoolUpdate: {
+        configKey: pool.configKey,
+        config: { ...cur, aliases: nextAliases },
+        min: pool.min,
+        max: pool.max,
+      },
     });
   };
 
@@ -479,61 +523,19 @@ export function ProjectSettingsModal({
 
             {tab === 'capabilities' && (
               <div className="settings-section-stack">
-                <div className="settings-field-group">
-                  <label className="settings-label">
-                    内置运行时扩展包（与外设包统一声明式协议 · 按需启用）
-                  </label>
-                  <p className="settings-hint">
-                    核心语言积木零硬编码硬件概念；<code>rt-lifecycle</code> 与 <code>rt-timers</code> 均已统一为声明式扩展包，按目标板能力自由开关。
-                  </p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {runtimePacks.map((pack) => {
-                      const enabled = enabledSet.has(pack.id);
-                      return (
-                        <div key={pack.id} className="settings-ext-row">
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <span
-                              className="card-icon"
-                              style={{
-                                background: pack.color,
-                                width: 32,
-                                height: 28,
-                                fontSize: 10.5,
-                                borderRadius: 7,
-                                flexShrink: 0,
-                              }}
-                            >
-                              {pack.categoryLabel}
-                            </span>
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: 12.5 }}>
-                                {pack.name}
-                              </div>
-                              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                {pack.blocks.length} 个积木 ·{' '}
-                                {pack.handleChannelPool
-                                  ? `每句柄通道池 (${pack.handleChannelPool.prefix}0~${pack.handleChannelPool.max - 1})`
-                                  : '顶层生命周期回调'}
-                              </div>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            className={`ext-toggle-btn ${enabled ? 'enabled' : 'disabled'}`}
-                            style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
-                            onClick={() =>
-                              onToggleCapabilityForProject(project.id, pack.id)
-                            }
-                          >
-                            {enabled ? '已启用' : '启用'}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
+                <div className="toolbox-order-legend compact" aria-label="工具箱分类序号参考">
+                  <span className="toolbox-order-legend-title">分类序参考：</span>
+                  {CORE_TOOLBOX_ORDERS.map((c) => (
+                    <span key={c.id} className="toolbox-order-chip">
+                      {c.label} <code>#{c.order}</code>
+                    </span>
+                  ))}
+                  <span className="toolbox-order-chip ext">
+                    扩展默认 <code>#{DEFAULT_EXTENSION_TOOLBOX_ORDER}+</code>
+                  </span>
                 </div>
 
-                <div className="settings-field-group" style={{ marginTop: 4 }}>
+                <div className="settings-field-group">
                   <div
                     style={{
                       display: 'flex',
@@ -544,7 +546,7 @@ export function ProjectSettingsModal({
                     }}
                   >
                     <label className="settings-label">
-                      本项目内嵌外设包（{localPacks.length} · 随工程文件导出，不污染全局库）
+                      本项目内嵌扩展包（{localPacks.length} · 随工程文件导出，不污染全局库）
                     </label>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button
@@ -560,12 +562,12 @@ export function ProjectSettingsModal({
                         type="button"
                         className="btn-ghost"
                         style={{ fontSize: 11.5, padding: '4px 7px', flexShrink: 0 }}
-                        title="下载自定义外设包示例模板"
+                        title="下载自定义扩展包示例模板"
                         onClick={() =>
                           downloadPackJson(
                             'my-robot-api.polyext.json',
                             SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
-                            '已下载自定义外设包模板 my-robot-api.polyext.json',
+                            '已下载自定义扩展包模板 my-robot-api.polyext.json',
                           )
                         }
                       >
@@ -582,7 +584,7 @@ export function ProjectSettingsModal({
                     </div>
                   </div>
                   <p className="settings-hint">
-                    适合当前项目专用的板载/业务 C 接口描述。仅保存在本项目 <code>.polyblock.json</code> 内，发给他人开箱即用；同名 ID 时优先覆盖全局包。
+                    适合当前项目专用的板载/业务 C 接口描述。仅保存在本项目 <code>.polyblock.json</code> 内，发给他人开箱即用；同名 ID 时无条件覆盖全局包。
                   </p>
                   {localPacks.length === 0 ? (
                     <div
@@ -594,16 +596,21 @@ export function ProjectSettingsModal({
                         color: 'var(--text-muted)',
                       }}
                     >
-                      当前项目暂无内嵌外设包。点击右上角「导入到本项目」即可按项目隔离挂载，不会出现在左侧全局「扩展」页。
+                      当前项目暂无内嵌扩展包。点击右上角「导入到本项目」即可按项目隔离挂载，不会出现在左侧全局「扩展」页。
                     </div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {localPacks.map((pack) => {
                         const enabled = enabledSet.has(pack.id);
                         const overridesGlobal = globalPackIds.has(pack.id);
+                        const badges = derivePackBadges(pack);
+                        const orderLabel =
+                          pack.categoryTarget === 'event'
+                            ? '并入「事件」'
+                            : `分类序 #${pack.toolboxOrder ?? DEFAULT_EXTENSION_TOOLBOX_ORDER}`;
                         return (
                           <div key={pack.id} className="settings-ext-row">
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                               <span
                                 className="card-icon"
                                 style={{
@@ -617,7 +624,7 @@ export function ProjectSettingsModal({
                               >
                                 {pack.categoryLabel}
                               </span>
-                              <div>
+                              <div style={{ minWidth: 0 }}>
                                 <div
                                   style={{
                                     display: 'flex',
@@ -643,12 +650,20 @@ export function ProjectSettingsModal({
                                   )}
                                 </div>
                                 <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                  v{pack.packVersion} · {pack.blocks.length} 个积木
-                                  {(pack.simWidgets?.length ?? 0) > 0
-                                    ? ` · ${pack.simWidgets!.length} 模拟控件`
-                                    : ''}{' '}
-                                  · ID: {pack.id}
+                                  v{pack.packVersion} · {pack.blocks.length} 个积木 · {orderLabel} · ID: {pack.id}
                                 </div>
+                                {badges.length > 0 && (
+                                  <div className="pack-attr-row" style={{ marginTop: 4 }}>
+                                    {badges.map((badge) => (
+                                      <span
+                                        key={badge.id}
+                                        className={`pack-attr-badge tone-${badge.tone}`}
+                                      >
+                                        {badge.label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
@@ -707,43 +722,20 @@ export function ProjectSettingsModal({
                 </div>
 
                 <div className="settings-field-group" style={{ marginTop: 4 }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 8,
-                    }}
-                  >
-                    <label className="settings-label">
-                      全局扩展库（内置 + 全局导入 · 多项目共享）
-                    </label>
-                    <button
-                      type="button"
-                      className="btn-outline"
-                      style={{ fontSize: 11.5, padding: '4px 9px', flexShrink: 0 }}
-                      onClick={() => {
-                        onClose();
-                        onOpenExtensionsPage();
-                      }}
-                    >
-                      管理全局扩展库 →
-                    </button>
-                  </div>
-                  <p className="settings-hint">
-                    通用 SDK / 协议包统一在全局扩展页维护，此处按项目勾选启用；导出项目时若使用了全局自定义包，会自动附带快照保证他人打开开箱即用。
-                  </p>
+                  <label className="settings-label">
+                    内置扩展包（{builtinPacks.length} · 统一声明式协议，按需勾选）
+                  </label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {peripheralPacks.map((pack) => {
+                    {builtinPacks.map((pack) => {
                       const enabled = enabledSet.has(pack.id);
-                      const overridden = localPackIds.has(pack.id);
+                      const badges = derivePackBadges(pack);
+                      const orderLabel =
+                        pack.categoryTarget === 'event'
+                          ? '并入「事件」'
+                          : `分类序 #${pack.toolboxOrder ?? DEFAULT_EXTENSION_TOOLBOX_ORDER}`;
                       return (
-                        <div
-                          key={pack.id}
-                          className="settings-ext-row"
-                          style={overridden ? { opacity: 0.65 } : undefined}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div key={pack.id} className="settings-ext-row">
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                             <span
                               className="card-icon"
                               style={{
@@ -757,39 +749,152 @@ export function ProjectSettingsModal({
                             >
                               {pack.categoryLabel}
                             </span>
-                            <div>
+                            <div style={{ minWidth: 0 }}>
                               <div style={{ fontWeight: 600, fontSize: 12.5 }}>
                                 {pack.name}
                               </div>
                               <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                {pack.blocks.length} 个积木 ·{' '}
-                                {pack.builtin
-                                  ? '内置包'
-                                  : '全局自定义包（导出项目自动附带快照）'}
-                                {overridden ? ' · 已被本项目内嵌包覆盖' : ''}
+                                {pack.blocks.length} 个积木 · {orderLabel} · ID: {pack.id}
                               </div>
+                              {badges.length > 0 && (
+                                <div className="pack-attr-row" style={{ marginTop: 4 }}>
+                                  {badges.map((badge) => (
+                                    <span
+                                      key={badge.id}
+                                      className={`pack-attr-badge tone-${badge.tone}`}
+                                    >
+                                      {badge.label}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           </div>
                           <button
                             type="button"
                             className={`ext-toggle-btn ${enabled ? 'enabled' : 'disabled'}`}
                             style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
-                            disabled={overridden}
-                            title={
-                              overridden
-                                ? '已被上方同名项目内嵌包覆盖，请操作上方条目'
-                                : undefined
-                            }
                             onClick={() =>
                               onToggleCapabilityForProject(project.id, pack.id)
                             }
                           >
-                            {overridden ? '已覆盖' : enabled ? '已启用' : '启用'}
+                            {enabled ? '已启用' : '启用'}
                           </button>
                         </div>
                       );
                     })}
                   </div>
+                </div>
+
+                <div className="settings-field-group" style={{ marginTop: 4 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                    }}
+                  >
+                    <label className="settings-label">
+                      自定义全局扩展包（{customGlobalPacks.length} · 跨项目共享，导出项目自动附带快照）
+                    </label>
+                    <button
+                      type="button"
+                      className="btn-outline"
+                      style={{ fontSize: 11.5, padding: '4px 9px', flexShrink: 0 }}
+                      onClick={() => {
+                        onClose();
+                        onOpenExtensionsPage();
+                      }}
+                    >
+                      管理全局扩展库 →
+                    </button>
+                  </div>
+                  {customGlobalPacks.length === 0 ? (
+                    <div
+                      className="settings-ext-row"
+                      style={{
+                        background: 'var(--bg-subtle)',
+                        borderStyle: 'dashed',
+                        fontSize: 11.5,
+                        color: 'var(--text-muted)',
+                      }}
+                    >
+                      全局库暂无自定义扩展包。可在左侧「扩展」页导入团队复用的 .polyext.json。
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {customGlobalPacks.map((pack) => {
+                        const enabled = enabledSet.has(pack.id);
+                        const overridden = localPackIds.has(pack.id);
+                        const badges = derivePackBadges(pack);
+                        const orderLabel =
+                          pack.categoryTarget === 'event'
+                            ? '并入「事件」'
+                            : `分类序 #${pack.toolboxOrder ?? DEFAULT_EXTENSION_TOOLBOX_ORDER}`;
+                        return (
+                          <div
+                            key={pack.id}
+                            className="settings-ext-row"
+                            style={overridden ? { opacity: 0.65 } : undefined}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                              <span
+                                className="card-icon"
+                                style={{
+                                  background: pack.color,
+                                  width: 32,
+                                  height: 28,
+                                  fontSize: 10.5,
+                                  borderRadius: 7,
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {pack.categoryLabel}
+                              </span>
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontWeight: 600, fontSize: 12.5 }}>
+                                  {pack.name}
+                                </div>
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                  v{pack.packVersion} · {pack.blocks.length} 个积木 · {orderLabel}
+                                  {overridden ? ' · 已被本项目内嵌包覆盖' : ''}
+                                </div>
+                                {badges.length > 0 && (
+                                  <div className="pack-attr-row" style={{ marginTop: 4 }}>
+                                    {badges.map((badge) => (
+                                      <span
+                                        key={badge.id}
+                                        className={`pack-attr-badge tone-${badge.tone}`}
+                                      >
+                                        {badge.label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className={`ext-toggle-btn ${enabled ? 'enabled' : 'disabled'}`}
+                              style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
+                              disabled={overridden}
+                              title={
+                                overridden
+                                  ? '已被上方同名项目内嵌包覆盖，请操作上方条目'
+                                  : undefined
+                              }
+                              onClick={() =>
+                                onToggleCapabilityForProject(project.id, pack.id)
+                              }
+                            >
+                              {overridden ? '已覆盖' : enabled ? '已启用' : '启用'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -916,123 +1021,171 @@ export function ProjectSettingsModal({
                     </div>
                   </div>
 
-                  {activeChannelPool ? (
-                    <>
-                      <div className="settings-field-group" style={{ marginTop: 6 }}>
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 8,
-                            flexWrap: 'wrap',
-                          }}
-                        >
-                          <span
-                            className="settings-label"
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
-                          >
-                            <Timer size={13} style={{ color: 'var(--accent)' }} />
-                            <span>
-                              本句柄独立{activeChannelPool.label}数（ID 0 ~ {timerCfg.count - 1}）
-                            </span>
-                          </span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                            {(activeChannelPool.presets ?? [4, 8, 16, 32]).map((preset) => (
-                              <button
-                                key={preset}
-                                type="button"
-                                className={
-                                  timerCfg.count === preset ? 'btn-primary' : 'btn-outline'
-                                }
-                                style={{ padding: '3px 8px', fontSize: 11.5 }}
-                                onClick={() => handleSetCount(preset)}
-                              >
-                                {preset} 路
-                              </button>
-                            ))}
-                            <input
-                              type="number"
-                              aria-label="句柄自定义定时器通道数"
-                              className="template-select"
-                              style={{ width: 58, height: 26, textAlign: 'center' }}
-                              min={activeChannelPool.min}
-                              max={activeChannelPool.max}
-                              value={timerCfg.count}
-                              onChange={(e) => handleSetCount(Number(e.target.value))}
-                            />
-                          </div>
-                        </div>
-                        <p className="settings-hint">
-                          {activeChannelPool.hint ??
-                            '每个隔离句柄（独立 lua_State*）独享自己的通道池与别名，彼此绝不窜扰；在画布上右键任意通道积木也可就地修改别名。'}
-                        </p>
-                      </div>
-
-                      <div className="timer-alias-editor">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                          <select
-                            aria-label="选择定时器通道"
-                            className="template-select"
-                            value={aliasSlotId}
-                            onChange={(e) => setAliasSlotId(e.target.value)}
-                          >
-                            {Array.from({ length: timerCfg.count }, (_, idx) => (
-                              <option key={idx} value={String(idx)}>
-                                T{idx} (ID {idx})
-                              </option>
-                            ))}
-                          </select>
-                          <input
-                            type="text"
-                            aria-label="通道别名输入框"
-                            className="dropdown-rename-input"
-                            style={{ width: 168, height: 28 }}
-                            placeholder="如：心跳灯 / 电机巡检"
-                            maxLength={16}
-                            value={aliasDraft}
-                            onChange={(e) => setAliasDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveAlias();
+                  {channelPoolPacks.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 6 }}>
+                      {channelPoolPacks.map((poolPack) => {
+                        const pool = poolPack.handleChannelPool!;
+                        const poolCfg = readPoolCfg(pool);
+                        const rawSlot = aliasSlotsByPool[pool.configKey] ?? '0';
+                        const curSlotId =
+                          Number(rawSlot) < poolCfg.count ? rawSlot : '0';
+                        const curDraft = aliasDraftsByPool[pool.configKey] ?? '';
+                        return (
+                          <div
+                            key={pool.configKey}
+                            style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 8,
+                              paddingTop: 8,
+                              borderTop: '1px solid var(--border)',
                             }}
-                          />
-                          <button
-                            type="button"
-                            className="btn-outline"
-                            style={{ height: 28, padding: '0 10px', fontSize: 11.5 }}
-                            onClick={handleSaveAlias}
                           >
-                            <Plus size={12} />
-                            <span>保存别名</span>
-                          </button>
-                        </div>
-
-                        <div className="paused-var-chips">
-                          {Object.keys(timerCfg.aliases).length === 0 ? (
-                            <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                              当前句柄暂无通道别名（也可在画布右键定时器积木就地标注）。
-                            </span>
-                          ) : (
-                            Object.entries(timerCfg.aliases)
-                              .sort((a, b) => Number(a[0]) - Number(b[0]))
-                              .map(([slotKey, label]) => (
-                                <span key={slotKey} className="var-chip timer-alias-chip">
-                                  <span className="var-chip-name">T{slotKey}</span>
-                                  <span>· {label}</span>
-                                  <button
-                                    type="button"
-                                    className="script-tab-icon-btn"
-                                    title={`移除 T${slotKey} 别名`}
-                                    onClick={() => handleRemoveAlias(slotKey)}
-                                  >
-                                    <X size={10} />
-                                  </button>
+                            <div className="settings-field-group">
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  gap: 8,
+                                  flexWrap: 'wrap',
+                                }}
+                              >
+                                <span
+                                  className="settings-label"
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                                >
+                                  <Timer size={13} style={{ color: poolPack.color }} />
+                                  <span>
+                                    {poolPack.name} · {pool.label}（{pool.prefix}0 ~{' '}
+                                    {pool.prefix}
+                                    {poolCfg.count - 1}）
+                                  </span>
                                 </span>
-                              ))
-                          )}
-                        </div>
-                      </div>
-                    </>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                  {(pool.presets ?? [4, 8, 16]).map((preset) => (
+                                    <button
+                                      key={preset}
+                                      type="button"
+                                      className={
+                                        poolCfg.count === preset ? 'btn-primary' : 'btn-outline'
+                                      }
+                                      style={{ padding: '3px 8px', fontSize: 11.5 }}
+                                      onClick={() => handleSetPoolCount(pool, preset)}
+                                    >
+                                      {preset} 路
+                                    </button>
+                                  ))}
+                                  <input
+                                    type="number"
+                                    aria-label={`句柄自定义${pool.label}数`}
+                                    className="template-select"
+                                    style={{ width: 58, height: 26, textAlign: 'center' }}
+                                    min={pool.min}
+                                    max={pool.max}
+                                    value={poolCfg.count}
+                                    onChange={(e) =>
+                                      handleSetPoolCount(pool, Number(e.target.value))
+                                    }
+                                  />
+                                </div>
+                              </div>
+                              <p className="settings-hint">
+                                {pool.hint ??
+                                  `槽位键 capabilityConfigs["${pool.configKey}"] 独立存储，与其他通道池及句柄完全隔离；画布上右键对应积木也可就地修改别名。`}
+                              </p>
+                            </div>
+
+                            <div className="timer-alias-editor">
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  flexWrap: 'wrap',
+                                }}
+                              >
+                                <select
+                                  aria-label={`选择${pool.label}`}
+                                  className="template-select"
+                                  value={curSlotId}
+                                  onChange={(e) =>
+                                    setAliasSlotsByPool((prev) => ({
+                                      ...prev,
+                                      [pool.configKey]: e.target.value,
+                                    }))
+                                  }
+                                >
+                                  {Array.from({ length: poolCfg.count }, (_, idx) => (
+                                    <option key={idx} value={String(idx)}>
+                                      {pool.prefix}
+                                      {idx} (ID {idx})
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="text"
+                                  aria-label={`${pool.label}别名输入框`}
+                                  className="dropdown-rename-input"
+                                  style={{ width: 168, height: 28 }}
+                                  placeholder={`如：${pool.prefix}0 用途标注`}
+                                  maxLength={16}
+                                  value={curDraft}
+                                  onChange={(e) =>
+                                    setAliasDraftsByPool((prev) => ({
+                                      ...prev,
+                                      [pool.configKey]: e.target.value,
+                                    }))
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSavePoolAlias(pool);
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn-outline"
+                                  style={{ height: 28, padding: '0 10px', fontSize: 11.5 }}
+                                  onClick={() => handleSavePoolAlias(pool)}
+                                >
+                                  <Plus size={12} />
+                                  <span>保存别名</span>
+                                </button>
+                              </div>
+
+                              <div className="paused-var-chips">
+                                {Object.keys(poolCfg.aliases).length === 0 ? (
+                                  <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                                    当前句柄「{pool.label}」暂无别名（也可在画布右键积木就地标注）。
+                                  </span>
+                                ) : (
+                                  Object.entries(poolCfg.aliases)
+                                    .sort((a, b) => Number(a[0]) - Number(b[0]))
+                                    .map(([slotKey, label]) => (
+                                      <span key={slotKey} className="var-chip timer-alias-chip">
+                                        <span className="var-chip-name">
+                                          {pool.prefix}
+                                          {slotKey}
+                                        </span>
+                                        <span>· {label}</span>
+                                        <button
+                                          type="button"
+                                          className="script-tab-icon-btn"
+                                          title={`移除 ${pool.prefix}${slotKey} 别名`}
+                                          onClick={() =>
+                                            handleRemovePoolAlias(pool, slotKey)
+                                          }
+                                        >
+                                          <X size={10} />
+                                        </button>
+                                      </span>
+                                    ))
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   ) : (
                     <div
                       className="settings-ext-row"
@@ -1043,7 +1196,7 @@ export function ProjectSettingsModal({
                       }}
                     >
                       <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                        当前项目未启用 <strong>多路编号定时器 (rt.timer)</strong> 能力，因此本句柄不分配定时器通道。若目标板卡支持定时回调，可按需启用。
+                        当前项目未启用任何带<strong>每句柄通道池</strong>的扩展包（如多路编号定时器或自定义 PWM 通道包）。若目标板卡支持此类资源，可按需启用。
                       </div>
                       <button
                         type="button"

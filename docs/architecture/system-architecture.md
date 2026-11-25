@@ -267,5 +267,7 @@ flowchart TD
    - `.polyext.json` 积木新增 `kind: "hat"`（支持 `mode: "singleton"` 与 `mode: "dispatch"`），自动驱动干净顶层零闭包 Lua/Python 函数聚合生成、作用域树（`scopeAnalysis.ts`）节点归类、重名分支静态诊断与事件循环保活判定。
    - `simWidgets` 交互控件新增 `emitEvent`（如 `{ "eventName": "on_button", "args": ["A", "$value"] }`），点击/拨动后通过统一 `EMIT_EVENT` 通道入队 `WorkerRuntimeScheduler.customEventQueue` 并实时派发至目标句柄回调；`sandboxMock` 也可直接调用 `__poly_emit_event` / `_poly.emit_event` 触发事件并在多句柄间转发。
    - 原先硬编码在核心中的 `poly_on_button` 已 100% 迁移进 `VIRTUAL_BOARD_PACK` JSON 描述，第三方外设包现拥有与官方虚拟硬件包完全平等的事件中断定义能力。
-3. **运行时能力统一为内置声明式扩展包（`packKind: "runtime"`）**：
-   - `RT_LIFECYCLE_PACK`（`rt-lifecycle`，`on_run` / `on_stop`）与 `RT_TIMERS_PACK`（`rt-timers`，`handleChannelPool` + `field_channel_id` 动态通道下拉）已整体迁入 `BUILTIN_EXTENSION_PACKS`，核心积木定义（`definitions.ts`）、分类注册（`catalog.ts`）、双语言生成器（`luaBackend.ts` / `pythonBackend.ts`）与静态诊断（`sourceMap.ts`）全面瘦身至纯 Layer 0 语言内核，同时保持既有积木 ID 与历史项目 100% 向后兼容。
+3. **来源分层 + 多属性卡片标签 + 连续序号 `toolboxOrder` + 独立通道池（对齐实板路线）**：
+   - **按来源严格分组（零互斥冲突）**：全局「扩展」页与「项目配置」统一按来源归属分为**内置扩展包**、**自定义全局扩展包**与**本项目内嵌包**，不再强拆互斥的“运行时/外设”大块；单包卡片由 `derivePackBadges` 自动推导多属性标签（`外设模拟` / `沙箱模拟` / `事件回调` / `通道池` / `功能库`），并支持可选 `tags?: string[]`，自然容纳“既有外设又有算法与回调”的真实板端 SDK 包。
+   - **连续数字排序（`toolboxOrder`）与序号全览**：基础语言分类占用 `10..90`（`CORE_TOOLBOX_ORDERS`：`事件 #10`、`打印 #20`、`控制 #30`、`变量 #40`、`运算 #50`、`逻辑 #60`、`文本 #70`、`列表 #80`、`函数 #90`），扩展包默认 `#100+`（如 `rt-timers` 为 `#15` 插在事件与打印之间，自定义包设为 `#35` 可精确插在控制与变量之间）；所有序号直接在扩展页参考条与各包卡片上透明展示。
+   - **每句柄多通道池按 `pool.configKey` 彻底隔离**：`RT_LIFECYCLE_PACK`（`rt-lifecycle`）与 `RT_TIMERS_PACK`（`rt-timers`）以及任意第三方带 `handleChannelPool` 的扩展包（如 PWM / CAN 通道池），在 `RuntimeHandle.capabilityConfigs[pool.configKey]`、`timerConfigBridge`、`ChannelIdFieldDropdown`、画布右键别名、代码尾注与越界静态诊断上完全按 `configKey` 隔离，多池并存互不窜扰。

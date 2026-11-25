@@ -20,9 +20,11 @@ import {
 } from 'react';
 import {
   buildFlyoutToolbox,
-  getCoreCategoriesForCapabilities,
+  DEFAULT_EXTENSION_TOOLBOX_ORDER,
+  getOrderedToolboxCategories,
   type BlockCategorySpec,
 } from '../core/blocks/catalog';
+import { ChannelIdFieldDropdown } from '../core/blocks/channelField';
 import { registerPolyBlocks } from '../core/blocks/definitions';
 import {
   MICRO_ZELOS_RENDERER_NAME,
@@ -33,13 +35,28 @@ import {
   polyblockLightTheme,
 } from '../core/blocks/themes';
 import {
-  formatTimerLabel,
-  registerTimerAliasPromptHandler,
+  formatChannelLabel,
+  getActiveChannelPoolConfig,
+  registerChannelAliasPromptHandler,
+  setActiveChannelPoolConfigs,
   setActiveProjectCapabilities,
-  setActiveTimerConfig,
+  type ChannelAliasPromptRequest,
 } from '../core/blocks/timerConfigBridge';
-import { TIMER_ID_BLOCK_TYPES } from '../core/backends/eventMode';
 import type { ProjectTimerConfig, ThemeMode } from '../types/project';
+
+function findChannelFieldOnBlock(
+  blk: Blockly.Block | undefined | null,
+): ChannelIdFieldDropdown | null {
+  if (!blk) return null;
+  for (const input of blk.inputList) {
+    for (const field of input.fieldRow) {
+      if (field instanceof ChannelIdFieldDropdown) {
+        return field;
+      }
+    }
+  }
+  return null;
+}
 
 export interface BlocklyWorkbenchHandle {
   getWorkspace: () => Blockly.WorkspaceSvg | null;
@@ -58,11 +75,11 @@ interface BlocklyWorkbenchProps {
   breakpoints: string[];
   enabledCapabilities: string[];
   extraCategories: BlockCategorySpec[];
-  timerConfig: ProjectTimerConfig;
+  channelPoolConfigs: Record<string, ProjectTimerConfig>;
   onWorkspaceChange: (workspace: Blockly.WorkspaceSvg) => void;
   onSelectBlock: (blockId: string | null) => void;
   onToggleBreakpoint: (blockId: string) => void;
-  onEditTimerAlias: (timerId: number) => void;
+  onEditChannelAlias: (req: ChannelAliasPromptRequest) => void;
   onOpenHandleTimerSettings: () => void;
   onOpenExtensionsPage: () => void;
 }
@@ -70,7 +87,7 @@ interface BlocklyWorkbenchProps {
 // Singleton hook bridge so Blockly's global ContextMenuRegistry invokes current React callbacks
 let breakpointMenuRegistered = false;
 let currentToggleBpHandler: ((blockId: string) => void) | null = null;
-let currentEditAliasHandler: ((timerId: number) => void) | null = null;
+let currentEditAliasHandler: ((req: ChannelAliasPromptRequest) => void) | null = null;
 let currentBreakpointsSet = new Set<string>();
 
 function registerBreakpointContextMenu(): void {
@@ -105,26 +122,33 @@ function registerBreakpointContextMenu(): void {
     scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
     weight: -6,
     displayText: (scope) => {
-      const blk = scope.block;
-      const tid = Math.trunc(Number(blk?.getFieldValue('TIMER_ID') ?? 0));
-      const label = formatTimerLabel(tid);
+      const field = findChannelFieldOnBlock(scope.block);
+      if (!field) return '设置通道别名...';
+      const cid = Math.trunc(Number(field.getValue() ?? 0));
+      const cfg = getActiveChannelPoolConfig(field.configKey, field.defaultCount);
+      const label = formatChannelLabel(cid, cfg, field.prefix);
       return label.includes('·')
         ? `修改 ${label} 别名...`
-        : `设置定时器 T${tid} 别名...`;
+        : `设置${field.poolLabel} ${field.prefix}${cid} 别名...`;
     },
     preconditionFn: (scope) => {
       const blk = scope.block;
-      if (!blk || blk.isInFlyout || !TIMER_ID_BLOCK_TYPES.has(blk.type)) {
+      if (!blk || blk.isInFlyout || !findChannelFieldOnBlock(blk)) {
         return 'hidden';
       }
       return 'enabled';
     },
     callback: (scope) => {
-      const blk = scope.block;
-      if (!blk) return;
-      const tid = Math.trunc(Number(blk.getFieldValue('TIMER_ID') ?? 0));
-      if (Number.isInteger(tid) && tid >= 0) {
-        currentEditAliasHandler?.(tid);
+      const field = findChannelFieldOnBlock(scope.block);
+      if (!field) return;
+      const cid = Math.trunc(Number(field.getValue() ?? 0));
+      if (Number.isInteger(cid) && cid >= 0) {
+        currentEditAliasHandler?.({
+          configKey: field.configKey,
+          channelId: cid,
+          prefix: field.prefix,
+          label: field.poolLabel,
+        });
       }
     },
   };
@@ -155,11 +179,11 @@ export const BlocklyWorkbench = forwardRef<
     breakpoints,
     enabledCapabilities,
     extraCategories,
-    timerConfig,
+    channelPoolConfigs,
     onWorkspaceChange,
     onSelectBlock,
     onToggleBreakpoint,
-    onEditTimerAlias,
+    onEditChannelAlias,
     onOpenHandleTimerSettings,
     onOpenExtensionsPage,
   },
@@ -178,9 +202,9 @@ export const BlocklyWorkbench = forwardRef<
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [zoomPct, setZoomPct] = useState<number>(100);
 
-  const coreCategories = useMemo(
-    () => getCoreCategoriesForCapabilities(enabledCapabilities),
-    [enabledCapabilities],
+  const orderedCategories = useMemo(
+    () => getOrderedToolboxCategories(enabledCapabilities, extraCategories),
+    [enabledCapabilities, extraCategories],
   );
 
   onChangeRef.current = onWorkspaceChange;
@@ -189,8 +213,8 @@ export const BlocklyWorkbench = forwardRef<
   enabledCapsRef.current = enabledCapabilities;
   extraCatsRef.current = extraCategories;
   currentToggleBpHandler = onToggleBreakpoint;
-  currentEditAliasHandler = onEditTimerAlias;
-  registerTimerAliasPromptHandler(onEditTimerAlias);
+  currentEditAliasHandler = onEditChannelAlias;
+  registerChannelAliasPromptHandler(onEditChannelAlias);
   currentBreakpointsSet = new Set(breakpoints);
 
   const refreshFlyout = useCallback((catId: string, query: string) => {
@@ -333,30 +357,28 @@ export const BlocklyWorkbench = forwardRef<
     ws.setTheme(theme === 'dark' ? polyblockDarkTheme : polyblockLightTheme);
   }, [theme]);
 
-  // Sync project-level timer channels & aliases to Blockly dynamic dropdowns
+  // Sync per-handle channel pool counts & aliases across ALL ChannelIdFieldDropdown blocks
   useEffect(() => {
-    setActiveTimerConfig(timerConfig);
+    setActiveChannelPoolConfigs(channelPoolConfigs);
     const ws = workspaceRef.current;
     if (!ws) return;
     for (const blk of ws.getAllBlocks(false)) {
-      const field = blk.getField('TIMER_ID');
-      if (field && field instanceof Blockly.FieldDropdown) {
-        field.getOptions(false);
-        field.forceRerender();
+      for (const input of blk.inputList) {
+        for (const field of input.fieldRow) {
+          if (field instanceof ChannelIdFieldDropdown) {
+            field.getOptions(false);
+            field.forceRerender();
+          }
+        }
       }
     }
-    if (activeCat === 'timers') {
-      refreshFlyout('timers', searchQuery);
-    }
-  }, [timerConfig, activeCat, searchQuery, refreshFlyout]);
+    refreshFlyout(activeCat, searchQuery);
+  }, [channelPoolConfigs, activeCat, searchQuery, refreshFlyout]);
 
   // Sync category, search query, enabled capabilities, or extension categories to flyout
   useEffect(() => {
     setActiveProjectCapabilities(enabledCapabilities);
-    const allIds = new Set([
-      ...coreCategories.map((c) => c.id),
-      ...extraCategories.map((c) => c.id),
-    ]);
+    const allIds = new Set(orderedCategories.map((c) => c.id));
     if (!allIds.has(activeCat)) {
       setActiveCat('print');
       return;
@@ -366,8 +388,7 @@ export const BlocklyWorkbench = forwardRef<
     activeCat,
     searchQuery,
     enabledCapabilities,
-    coreCategories,
-    extraCategories,
+    orderedCategories,
     refreshFlyout,
   ]);
 
@@ -491,47 +512,34 @@ export const BlocklyWorkbench = forwardRef<
     workspaceRef.current?.undo(redo);
   };
 
+  const firstExtIdx = orderedCategories.findIndex(
+    (c) => c.order >= DEFAULT_EXTENSION_TOOLBOX_ORDER,
+  );
+
   return (
     <div className="blockly-area">
       <nav className="cat-strip" aria-label="积木分类">
-        {coreCategories.map((cat) => (
-          <button
-            key={cat.id}
-            type="button"
-            className={`cat-btn ${
-              !searchQuery && activeCat === cat.id ? 'active' : ''
-            }`}
-            style={{ '--cat-color': cat.color } as React.CSSProperties}
-            onClick={() => {
-              setSearchQuery('');
-              setActiveCat(cat.id);
-            }}
-            title={cat.label}
-          >
-            <span className="cat-dot" />
-            <span>{cat.label}</span>
-          </button>
-        ))}
-
-        {extraCategories.length > 0 && <div className="cat-divider" />}
-
-        {extraCategories.map((cat) => (
-          <button
-            key={cat.id}
-            type="button"
-            className={`cat-btn ${
-              !searchQuery && activeCat === cat.id ? 'active' : ''
-            }`}
-            style={{ '--cat-color': cat.color } as React.CSSProperties}
-            onClick={() => {
-              setSearchQuery('');
-              setActiveCat(cat.id);
-            }}
-            title={`扩展分类：${cat.label}`}
-          >
-            <span className="cat-dot" />
-            <span>{cat.label}</span>
-          </button>
+        {orderedCategories.map((cat, idx) => (
+          <div key={cat.id} style={{ display: 'contents' }}>
+            {firstExtIdx > 0 && idx === firstExtIdx && (
+              <div className="cat-divider" />
+            )}
+            <button
+              type="button"
+              className={`cat-btn ${
+                !searchQuery && activeCat === cat.id ? 'active' : ''
+              }`}
+              style={{ '--cat-color': cat.color } as React.CSSProperties}
+              onClick={() => {
+                setSearchQuery('');
+                setActiveCat(cat.id);
+              }}
+              title={`${cat.isExtension ? '扩展分类：' : ''}${cat.label}（分类序 #${cat.order}）`}
+            >
+              <span className="cat-dot" />
+              <span>{cat.label}</span>
+            </button>
+          </div>
         ))}
 
         <button

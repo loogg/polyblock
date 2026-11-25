@@ -1,9 +1,18 @@
 import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { backendRegistry } from '../backends/registry';
-import { getCoreCategoriesForCapabilities } from '../blocks/catalog';
+import {
+  CORE_TOOLBOX_ORDERS,
+  getCoreCategoriesForCapabilities,
+  getOrderedToolboxCategories,
+} from '../blocks/catalog';
 import { registerPolyBlocks } from '../blocks/definitions';
-import { setActiveProjectCapabilities } from '../blocks/timerConfigBridge';
+import {
+  buildChannelDropdownOptions,
+  setActiveChannelPoolConfig,
+  setActiveChannelPoolConfigs,
+  setActiveProjectCapabilities,
+} from '../blocks/timerConfigBridge';
 import {
   CAP_RT_LIFECYCLE,
   CAP_RT_TIMERS,
@@ -16,7 +25,11 @@ import {
   SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
   VIRTUAL_BOARD_PACK,
 } from '../extensions/builtinPacks';
-import { extensionRegistry, validateExtensionPack } from '../extensions/registry';
+import {
+  derivePackBadges,
+  extensionRegistry,
+  validateExtensionPack,
+} from '../extensions/registry';
 import {
   applySimDeviceEvent,
   buildDefaultSimState,
@@ -78,7 +91,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(targetProfileRegistry.removeCustomProfile(imported.id)).toBe(true);
   });
 
-  it('registers all 5 unified built-in packs (runtime + peripheral) and converts enabled packs to toolbox categories', () => {
+  it('registers all 5 built-in packs by source, derives multi-attribute badges, and sorts toolbox categories by numeric toolboxOrder', () => {
     const all = extensionRegistry.listAll();
     expect(all.map((p) => p.id)).toEqual(
       expect.arrayContaining([
@@ -89,19 +102,65 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
         'clock-timer',
       ]),
     );
-    expect(extensionRegistry.listByKind('runtime').map((p) => p.id)).toEqual([
-      'rt-lifecycle',
-      'rt-timers',
+    expect(extensionRegistry.listBySource('builtin')).toHaveLength(5);
+    expect(CORE_TOOLBOX_ORDERS.map((c) => c.order)).toEqual([
+      10, 20, 30, 40, 50, 60, 70, 80, 90,
     ]);
-    expect(extensionRegistry.listByKind('peripheral').map((p) => p.id)).toEqual(
-      expect.arrayContaining(['virtual-board', 'dict-json', 'clock-timer']),
+
+    // Multi-attribute badge derivation on mixed-capability packs
+    const vbBadges = derivePackBadges(VIRTUAL_BOARD_PACK).map((b) => b.label);
+    expect(vbBadges).toContain('外设模拟 · 6控件');
+    expect(vbBadges).toContain('事件回调');
+
+    // Numeric toolboxOrder slots rt-timers (#15) between 事件 (#10) and 打印 (#20),
+    // and custom pack (#35) right between 控制 (#30) and 变量 (#40)!
+    const midPack = extensionRegistry.validateProjectLocalPack({
+      ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+      id: 'mid-order-pack',
+      name: '中间序号测试包',
+      categoryLabel: '中序',
+      toolboxOrder: 35,
+      tags: ['算法', '外设'],
+      blocks: [
+        {
+          type: 'ext_mid_noop',
+          kind: 'statement',
+          message0: '空操作',
+          lua: { template: '-- noop' },
+          python: { template: 'pass' },
+        },
+      ],
+    });
+    expect(derivePackBadges(midPack).map((b) => b.label)).toEqual(
+      expect.arrayContaining(['外设模拟 · 5控件', '算法', '外设']),
     );
+    extensionRegistry.setActiveProjectLocalPacks([midPack]);
+    const ordered = getOrderedToolboxCategories([
+      CAP_RT_TIMERS,
+      'mid-order-pack',
+      CAP_VIRTUAL_BOARD,
+    ]);
+    const orderedIds = ordered.map((c) => c.id);
+    expect(orderedIds.indexOf('event')).toBeLessThan(orderedIds.indexOf('timers'));
+    expect(orderedIds.indexOf('timers')).toBeLessThan(orderedIds.indexOf('print'));
+    expect(orderedIds.indexOf('control')).toBeLessThan(
+      orderedIds.indexOf('ext_mid-order-pack'),
+    );
+    expect(orderedIds.indexOf('ext_mid-order-pack')).toBeLessThan(
+      orderedIds.indexOf('variables'),
+    );
+    expect(orderedIds.indexOf('functions')).toBeLessThan(
+      orderedIds.indexOf('ext_virtual-board'),
+    );
+    extensionRegistry.setActiveProjectLocalPacks([]);
 
     const cats = extensionRegistry.toCategorySpecs(['virtual-board', 'dict-json']);
     expect(cats).toHaveLength(2);
     expect(cats[0].label).toBe('硬件');
+    expect(cats[0].order).toBe(100);
     expect(cats[0].blocks.length).toBeGreaterThanOrEqual(7);
     expect(cats[1].label).toBe('字典');
+    expect(cats[1].order).toBe(110);
 
     const mocks = extensionRegistry.getSandboxMocks(['virtual-board', 'dict-json']);
     expect(mocks).toHaveLength(1);
@@ -636,5 +695,115 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
 
     ws.dispose();
     setActiveProjectCapabilities(null);
+  });
+
+  it('strictly isolates multiple handleChannelPool packs by configKey across dropdowns, codegen comments, and OOB diagnostics', () => {
+    const pwmPack = extensionRegistry.validateProjectLocalPack({
+      format: 'polyblock-extension',
+      version: 1,
+      id: 'pwm-driver',
+      name: 'PWM 驱动通道包',
+      packVersion: '1.0.0',
+      categoryLabel: 'PWM',
+      color: '#14b8a6',
+      toolboxOrder: 105,
+      description: '每句柄独立 4 路 PWM 通道池。',
+      handleChannelPool: {
+        configKey: 'pwm-driver',
+        label: 'PWM 通道',
+        prefix: 'PWM',
+        min: 1,
+        max: 8,
+        defaultCount: 4,
+        presets: [2, 4, 8],
+        fieldName: 'PWM_ID',
+      },
+      blocks: [
+        {
+          type: 'ext_pwm_duty',
+          kind: 'statement',
+          message0: '设置 PWM %1 占空比 %2 %%',
+          args0: [
+            { type: 'field_channel_id', name: 'PWM_ID' },
+            { type: 'field_number', name: 'DUTY', value: 50 },
+          ],
+          lua: {
+            imports: ['local pwm = require("pwm")'],
+            template: 'pwm.duty({{PWM_ID:int}}, {{DUTY}}){{PWM_ID:channel_comment_lua}}',
+          },
+          python: {
+            imports: ['import pwm'],
+            template: 'pwm.duty({{PWM_ID:int}}, {{DUTY}}){{PWM_ID:channel_comment_py}}',
+          },
+        },
+      ],
+    });
+    extensionRegistry.setActiveProjectLocalPacks([pwmPack]);
+
+    // Configure TWO completely separate channel pools on the same active handle
+    setActiveChannelPoolConfigs({
+      'rt-timers': { count: 8, aliases: { '0': '心跳灯' } },
+      'pwm-driver': { count: 4, aliases: { '0': '左轮油门' } },
+    });
+
+    const timerOpts = buildChannelDropdownOptions('rt-timers', 'T', '0', 8, 32, false);
+    const pwmOpts = buildChannelDropdownOptions('pwm-driver', 'PWM', '0', 4, 8, false);
+    expect(timerOpts).toHaveLength(8);
+    expect(timerOpts[0]).toEqual(['T0 · 心跳灯', '0']);
+    expect(pwmOpts).toHaveLength(4);
+    expect(pwmOpts[0]).toEqual(['PWM0 · 左轮油门', '0']);
+
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_start',
+              id: 'pwm_s',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'ext_pwm_duty',
+                    id: 'pwm_ok',
+                    fields: { PWM_ID: '0', DUTY: 60 },
+                    next: {
+                      block: {
+                        type: 'ext_pwm_duty',
+                        id: 'pwm_oob',
+                        fields: { PWM_ID: '5', DUTY: 20 },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      ws,
+    );
+
+    setActiveProjectCapabilities([CAP_RT_TIMERS, 'pwm-driver']);
+    const luaRes = backendRegistry.get('lua').generate(ws);
+    // Uses pwm-driver's own alias (`PWM0: 左轮油门`), NOT rt-timers's `T0: 心跳灯`!
+    expect(luaRes.code).toContain('pwm.duty(0, 60) -- PWM0: 左轮油门');
+    expect(luaRes.code).not.toContain('心跳灯');
+    // PWM5 exceeds pwm-driver count=4 even though rt-timers has count=8!
+    expect(
+      luaRes.diagnostics.some(
+        (d) => d.severity === 'error' && d.id.startsWith('pool-pwm-driver-oob-5-'),
+      ),
+    ).toBe(true);
+
+    // Updating pwm-driver count to 6 clears OOB without affecting rt-timers
+    setActiveChannelPoolConfig('pwm-driver', { count: 6, aliases: { '0': '左轮油门' } }, 4, 1, 8);
+    expect(backendRegistry.get('lua').generate(ws).diagnostics).toHaveLength(0);
+
+    ws.dispose();
+    setActiveProjectCapabilities(null);
+    setActiveChannelPoolConfigs({ 'rt-timers': { count: 8, aliases: {} } });
+    extensionRegistry.setActiveProjectLocalPacks([]);
   });
 });

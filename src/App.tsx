@@ -24,8 +24,10 @@ import { backendRegistry } from './core/backends/registry';
 import type { GeneratedCodeResult } from './core/backends/types';
 import {
   normalizeTimerConfig,
+  setActiveChannelPoolConfig,
+  setActiveChannelPoolConfigs,
   setActiveProjectCapabilities,
-  setActiveTimerConfig,
+  type ChannelAliasPromptRequest,
 } from './core/blocks/timerConfigBridge';
 import {
   CAP_RT_TIMERS,
@@ -57,6 +59,8 @@ import {
   getActiveHandle,
   getActiveProject,
   getActiveScript,
+  getAllHandleChannelPoolConfigs,
+  getHandleChannelPoolConfig,
   getHandleTimerConfig,
   instantiateProjectFromTemplate,
   loadWorkspaceStore,
@@ -64,6 +68,7 @@ import {
   renameHandleInProject,
   renameScriptInHandle,
   saveWorkspaceStore,
+  setHandleChannelPoolConfig,
   setHandleTimerConfig,
   STORAGE_STORE_V2_KEY,
   STORAGE_STORE_V3_KEY,
@@ -186,7 +191,8 @@ export function App() {
     initialTab: ProjectSettingsTab;
     initialHandleId?: string;
   } | null>(null);
-  const [aliasModalTimerId, setAliasModalTimerId] = useState<number | null>(null);
+  const [aliasModalReq, setAliasModalReq] =
+    useState<ChannelAliasPromptRequest | null>(null);
 
   /** Per-project isolated simulator state so switching projects never bleeds simulated hardware state. */
   const [simStatesByProject, setSimStatesByProject] = useState<
@@ -212,15 +218,31 @@ export function App() {
   const activeProject = getActiveProject(store);
   const activeHandle = getActiveHandle(activeProject);
   const activeScript = getActiveScript(activeHandle);
-  const activeTimerConfig = useMemo(
-    () => getHandleTimerConfig(activeHandle, activeProject.defaultTimerCount),
-    [activeHandle, activeProject.defaultTimerCount],
+  const activeChannelPoolPacks = useMemo(
+    () =>
+      extensionRegistry.getChannelPoolPacks(
+        activeProject.enabledCapabilities,
+        activeProject.localExtensions,
+      ),
+    [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
   );
+  const activeChannelPoolConfigs = useMemo(
+    () =>
+      getAllHandleChannelPoolConfigs(
+        activeHandle,
+        activeChannelPoolPacks,
+        activeProject.defaultTimerCount,
+      ),
+    [activeHandle, activeChannelPoolPacks, activeProject.defaultTimerCount],
+  );
+  const activeTimerConfig =
+    activeChannelPoolConfigs[CAP_RT_TIMERS] ??
+    getHandleTimerConfig(activeHandle, activeProject.defaultTimerCount);
   const hasTimersCapability = hasCapability(
     activeProject.enabledCapabilities,
     CAP_RT_TIMERS,
   );
-  setActiveTimerConfig(activeTimerConfig);
+  setActiveChannelPoolConfigs(activeChannelPoolConfigs);
   setActiveProjectCapabilities(activeProject.enabledCapabilities);
   extensionRegistry.setActiveProjectLocalPacks(activeProject.localExtensions ?? []);
 
@@ -243,7 +265,6 @@ export function App() {
       extensionRegistry.toCategorySpecs(
         activeProject.enabledCapabilities,
         activeProject.localExtensions,
-        'peripheral',
       ),
     [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
   );
@@ -417,11 +438,19 @@ export function App() {
       const nextProj = getActiveProject(nextStore);
       const nextHandle = getActiveHandle(nextProj);
       const nextScript = getActiveScript(nextHandle);
-      setActiveTimerConfig(
-        getHandleTimerConfig(nextHandle, nextProj.defaultTimerCount),
+      extensionRegistry.setActiveProjectLocalPacks(nextProj.localExtensions ?? []);
+      const nextPoolPacks = extensionRegistry.getChannelPoolPacks(
+        nextProj.enabledCapabilities,
+        nextProj.localExtensions,
+      );
+      setActiveChannelPoolConfigs(
+        getAllHandleChannelPoolConfigs(
+          nextHandle,
+          nextPoolPacks,
+          nextProj.defaultTimerCount,
+        ),
       );
       setActiveProjectCapabilities(nextProj.enabledCapabilities);
-      extensionRegistry.setActiveProjectLocalPacks(nextProj.localExtensions ?? []);
 
       activeProjectIdRef.current = nextProj.id;
       activeHandleIdRef.current = nextHandle.id;
@@ -884,15 +913,44 @@ export function App() {
         autoStart?: boolean;
         description?: string;
         timerConfig?: ProjectTimerConfig;
+        channelPoolUpdate?: {
+          configKey: string;
+          config: ProjectTimerConfig;
+          min?: number;
+          max?: number;
+        };
       },
     ) => {
       const normalizedTimer = patch.timerConfig
         ? normalizeTimerConfig(patch.timerConfig)
         : undefined;
+      const poolUpd = patch.channelPoolUpdate
+        ? {
+            configKey: patch.channelPoolUpdate.configKey,
+            min: patch.channelPoolUpdate.min,
+            max: patch.channelPoolUpdate.max,
+            config: normalizeTimerConfig(
+              patch.channelPoolUpdate.config,
+              patch.channelPoolUpdate.config.count,
+              patch.channelPoolUpdate.min,
+              patch.channelPoolUpdate.max,
+            ),
+          }
+        : undefined;
+
       setStore((prev) =>
         updateProjectById(prev, projectId, (p) =>
           updateHandleById(p, handleId, (h) => {
-            const base = normalizedTimer ? setHandleTimerConfig(h, normalizedTimer) : h;
+            let base = normalizedTimer ? setHandleTimerConfig(h, normalizedTimer) : h;
+            if (poolUpd) {
+              base = setHandleChannelPoolConfig(
+                base,
+                poolUpd.configKey,
+                poolUpd.config,
+                poolUpd.min,
+                poolUpd.max,
+              );
+            }
             return {
               ...base,
               ...(patch.autoStart !== undefined ? { autoStart: patch.autoStart } : {}),
@@ -905,11 +963,22 @@ export function App() {
         ),
       );
       if (
-        normalizedTimer &&
+        (normalizedTimer || poolUpd) &&
         projectId === activeProjectIdRef.current &&
         handleId === activeHandleIdRef.current
       ) {
-        setActiveTimerConfig(normalizedTimer);
+        if (normalizedTimer) {
+          setActiveChannelPoolConfig(CAP_RT_TIMERS, normalizedTimer);
+        }
+        if (poolUpd) {
+          setActiveChannelPoolConfig(
+            poolUpd.configKey,
+            poolUpd.config,
+            poolUpd.config.count,
+            poolUpd.min,
+            poolUpd.max,
+          );
+        }
         const ws = workbenchRef.current?.getWorkspace();
         if (ws) regenerateFromWorkspace(ws, languageRef.current);
       }
@@ -917,24 +986,43 @@ export function App() {
     [regenerateFromWorkspace],
   );
 
-  const handleSaveInlineTimerAlias = useCallback(
-    (timerId: number, alias: string) => {
+  const handleSaveInlineChannelAlias = useCallback(
+    (req: ChannelAliasPromptRequest, alias: string) => {
       const proj = getActiveProject(storeRef.current);
       const hdl = getActiveHandle(proj);
-      const curCfg = getHandleTimerConfig(hdl, proj.defaultTimerCount);
+      const poolPack = extensionRegistry
+        .getChannelPoolPacks(proj.enabledCapabilities, proj.localExtensions)
+        .find((p) => p.handleChannelPool?.configKey === req.configKey);
+      const poolSpec = poolPack?.handleChannelPool;
+      const fallback =
+        req.configKey === CAP_RT_TIMERS
+          ? proj.defaultTimerCount
+          : (poolSpec?.defaultCount ?? 8);
+      const curCfg = getHandleChannelPoolConfig(
+        hdl,
+        req.configKey,
+        fallback,
+        poolSpec?.min,
+        poolSpec?.max,
+      );
       const nextAliases = { ...curCfg.aliases };
       if (alias.trim()) {
-        nextAliases[String(timerId)] = alias.trim().slice(0, 16);
+        nextAliases[String(req.channelId)] = alias.trim().slice(0, 16);
       } else {
-        delete nextAliases[String(timerId)];
+        delete nextAliases[String(req.channelId)];
       }
       handleUpdateHandleConfig(proj.id, hdl.id, {
-        timerConfig: { ...curCfg, aliases: nextAliases },
+        channelPoolUpdate: {
+          configKey: req.configKey,
+          config: { ...curCfg, aliases: nextAliases },
+          min: poolSpec?.min,
+          max: poolSpec?.max,
+        },
       });
       notify(
         alias.trim()
-          ? `已将 [${hdl.name}] 的 T${timerId} 标注为「${alias.trim()}」`
-          : `已清除 [${hdl.name}] 的 T${timerId} 别名`,
+          ? `已将 [${hdl.name}] 的 ${req.prefix}${req.channelId} 标注为「${alias.trim()}」`
+          : `已清除 [${hdl.name}] 的 ${req.prefix}${req.channelId} 别名`,
       );
     },
     [handleUpdateHandleConfig, notify],
@@ -1685,11 +1773,11 @@ export function App() {
                   breakpoints={breakpoints}
                   enabledCapabilities={activeProject.enabledCapabilities}
                   extraCategories={extraCategories}
-                  timerConfig={activeTimerConfig}
+                  channelPoolConfigs={activeChannelPoolConfigs}
                   onWorkspaceChange={handleWorkspaceChange}
                   onSelectBlock={setSelectedBlockId}
                   onToggleBreakpoint={handleToggleBreakpoint}
-                  onEditTimerAlias={(tid) => setAliasModalTimerId(tid)}
+                  onEditChannelAlias={(req) => setAliasModalReq(req)}
                   onOpenHandleTimerSettings={() =>
                     setSettingsModal({
                       projectId: activeProject.id,
@@ -1855,14 +1943,20 @@ export function App() {
         />
       )}
 
-      {aliasModalTimerId !== null && (
+      {aliasModalReq !== null && (
         <TimerAliasModal
           handleName={activeHandle.name}
           handleColor={activeHandle.color}
-          timerId={aliasModalTimerId}
-          currentAlias={activeTimerConfig.aliases[String(aliasModalTimerId)] ?? ''}
-          onSave={(alias) => handleSaveInlineTimerAlias(aliasModalTimerId, alias)}
-          onClose={() => setAliasModalTimerId(null)}
+          timerId={aliasModalReq.channelId}
+          prefix={aliasModalReq.prefix}
+          poolLabel={aliasModalReq.label}
+          currentAlias={
+            activeChannelPoolConfigs[aliasModalReq.configKey]?.aliases[
+              String(aliasModalReq.channelId)
+            ] ?? ''
+          }
+          onSave={(alias) => handleSaveInlineChannelAlias(aliasModalReq, alias)}
+          onClose={() => setAliasModalReq(null)}
         />
       )}
 

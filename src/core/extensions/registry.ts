@@ -5,8 +5,9 @@ import { codegenContext } from '../backends/codegenContext';
 import type { BlockCategorySpec, ToolboxBlockSpec } from '../blocks/catalog';
 import { createChannelIdField } from '../blocks/channelField';
 import {
-  formatTimerLabel,
-  getActiveTimerConfig,
+  DEFAULT_TIMER_POOL_KEY,
+  formatChannelLabel,
+  getActiveChannelPoolConfig,
 } from '../blocks/timerConfigBridge';
 import { BUILTIN_EXTENSION_PACKS } from './builtinPacks';
 import type {
@@ -14,6 +15,7 @@ import type {
   ExtensionHatSpec,
   ExtensionSandboxMock,
   HandleChannelPoolSpec,
+  PackAttributeBadge,
   PolyExtensionPack,
   SimWidgetEventTrigger,
   SimWidgetKind,
@@ -21,6 +23,75 @@ import type {
 } from './types';
 
 export const STORAGE_CUSTOM_EXTENSIONS_KEY = 'polyblock.extensions.custom.v1';
+export const DEFAULT_PACK_TOOLBOX_ORDER = 100;
+
+/**
+ * Derives objective multi-attribute badges from a pack's actual declarative contents
+ * (plus optional user-authored `tags`), allowing a single pack to combine peripheral
+ * widgets, event callbacks, channel pools, and pure API functions seamlessly.
+ */
+export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] {
+  const badges: PackAttributeBadge[] = [];
+  const widgetCount = pack.simWidgets?.length ?? 0;
+  const hasHat = pack.blocks.some((b) => b.kind === 'hat');
+  const hasPool = Boolean(pack.handleChannelPool);
+  const hasApiBlocks = pack.blocks.some(
+    (b) => b.kind === 'statement' || b.kind === 'value',
+  );
+
+  if (widgetCount > 0) {
+    badges.push({
+      id: 'sim',
+      label: `外设模拟 · ${widgetCount}控件`,
+      tone: 'sim',
+    });
+  } else if (pack.sandboxMock) {
+    badges.push({
+      id: 'sim',
+      label: '沙箱模拟',
+      tone: 'sim',
+    });
+  }
+
+  if (hasHat) {
+    badges.push({
+      id: 'hat',
+      label: '事件回调',
+      tone: 'event',
+    });
+  }
+
+  if (hasPool && pack.handleChannelPool) {
+    const p = pack.handleChannelPool;
+    badges.push({
+      id: 'pool',
+      label: `通道池 ${p.prefix}0~${p.max - 1}`,
+      tone: 'pool',
+    });
+  }
+
+  if (hasApiBlocks && widgetCount === 0 && !hasPool && !pack.hasRtMonitorUi) {
+    badges.push({
+      id: 'lib',
+      label: '功能库',
+      tone: 'lib',
+    });
+  }
+
+  const seenLabels = new Set(badges.map((b) => b.label));
+  for (const tag of pack.tags ?? []) {
+    const trimmed = tag.trim();
+    if (!trimmed || seenLabels.has(trimmed)) continue;
+    seenLabels.add(trimmed);
+    badges.push({
+      id: `tag-${trimmed}`,
+      label: trimmed,
+      tone: 'tag',
+    });
+  }
+
+  return badges;
+}
 
 const SENTINEL_START = '__PB_S:';
 const SENTINEL_END = '__PB_E:';
@@ -59,8 +130,12 @@ function renderTemplate(
   def: ExtensionBlockDef,
   block: Blockly.Block,
   lang: 'lua' | 'python',
+  pack?: PolyExtensionPack,
 ): string {
   const argKinds = buildArgKindMap(def);
+  const poolKey = pack?.handleChannelPool?.configKey ?? DEFAULT_TIMER_POOL_KEY;
+  const poolPrefix = pack?.handleChannelPool?.prefix ?? 'T';
+  const poolDefault = pack?.handleChannelPool?.defaultCount ?? 8;
 
   return template.replace(
     PLACEHOLDER_RE,
@@ -123,17 +198,25 @@ function renderTemplate(
       }
       if (mod === 'channel_comment_lua') {
         const tid = Math.trunc(Number(rawValue || 0));
-        const alias = getActiveTimerConfig().aliases[String(tid)];
-        return alias ? ` -- T${tid}: ${alias}` : '';
+        const alias = getActiveChannelPoolConfig(poolKey, poolDefault).aliases[
+          String(tid)
+        ];
+        return alias ? ` -- ${poolPrefix}${tid}: ${alias}` : '';
       }
       if (mod === 'channel_comment_py') {
         const tid = Math.trunc(Number(rawValue || 0));
-        const alias = getActiveTimerConfig().aliases[String(tid)];
-        return alias ? `  # T${tid}: ${alias}` : '';
+        const alias = getActiveChannelPoolConfig(poolKey, poolDefault).aliases[
+          String(tid)
+        ];
+        return alias ? `  # ${poolPrefix}${tid}: ${alias}` : '';
       }
       if (mod === 'channel_label') {
         const tid = Math.trunc(Number(rawValue || 0));
-        return formatTimerLabel(tid);
+        return formatChannelLabel(
+          tid,
+          getActiveChannelPoolConfig(poolKey, poolDefault),
+          poolPrefix,
+        );
       }
       return rawValue;
     },
@@ -211,7 +294,17 @@ function registerSingleBlockInBlockly(
         const argName = String(arg.name ?? `ARG${argIdx}`);
 
         if (argType === 'field_channel_id') {
-          ensureDummy().appendField(createChannelIdField(), argName);
+          const pool = pack.handleChannelPool;
+          ensureDummy().appendField(
+            createChannelIdField({
+              configKey: pool?.configKey ?? DEFAULT_TIMER_POOL_KEY,
+              prefix: pool?.prefix ?? 'T',
+              label: pool?.label ?? '定时器通道',
+              defaultCount: pool?.defaultCount ?? 8,
+              maxCount: pool?.max ?? 32,
+            }),
+            argName,
+          );
         } else if (argType === 'input_value') {
           curDummy = null;
           const inp = this.appendValueInput(argName);
@@ -296,7 +389,7 @@ function registerHatGenerators(
 
     if (hatSpec.mode === 'singleton') {
       const prelude = hatSpec.preludeLua
-        ? `${renderTemplate(hatSpec.preludeLua, b, block, 'lua')}\n`
+        ? `${renderTemplate(hatSpec.preludeLua, b, block, 'lua', pack)}\n`
         : '';
       const body = generator.statementToCode(block, 'BODY');
       if (codegenContext.debugPass) {
@@ -326,10 +419,10 @@ function registerHatGenerators(
     matchingHats.forEach((hatBlk, idx) => {
       const kw = idx === 0 ? 'if' : 'elseif';
       const cond = hatSpec.conditionLua
-        ? renderTemplate(hatSpec.conditionLua, b, hatBlk, 'lua')
+        ? renderTemplate(hatSpec.conditionLua, b, hatBlk, 'lua', pack)
         : 'true';
       const comment = hatSpec.branchCommentLua
-        ? renderTemplate(hatSpec.branchCommentLua, b, hatBlk, 'lua')
+        ? renderTemplate(hatSpec.branchCommentLua, b, hatBlk, 'lua', pack)
         : '';
       const rawBody = generator.statementToCode(hatBlk, 'BODY');
       const indentedBody = indentLines(rawBody, '  ');
@@ -356,7 +449,7 @@ function registerHatGenerators(
 
     if (hatSpec.mode === 'singleton') {
       const prelude = hatSpec.preludePython
-        ? `${renderTemplate(hatSpec.preludePython, b, block, 'python')}\n`
+        ? `${renderTemplate(hatSpec.preludePython, b, block, 'python', pack)}\n`
         : '';
       const body = generator.statementToCode(block, 'BODY');
       const safeBody = body.trim() ? body : '  pass\n';
@@ -385,10 +478,10 @@ function registerHatGenerators(
     matchingHats.forEach((hatBlk, idx) => {
       const kw = idx === 0 ? 'if' : 'elif';
       const cond = hatSpec.conditionPython
-        ? renderTemplate(hatSpec.conditionPython, b, hatBlk, 'python')
+        ? renderTemplate(hatSpec.conditionPython, b, hatBlk, 'python', pack)
         : 'True';
       const comment = hatSpec.branchCommentPython
-        ? renderTemplate(hatSpec.branchCommentPython, b, hatBlk, 'python')
+        ? renderTemplate(hatSpec.branchCommentPython, b, hatBlk, 'python', pack)
         : '';
       const rawBody = generator.statementToCode(hatBlk, 'BODY');
       const indentedBody = rawBody.trim() ? indentLines(rawBody, '  ') : '    pass\n';
@@ -421,7 +514,7 @@ function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
       const luaSpec = b.lua;
       luaGenerator.forBlock[b.type] = (block, generator) => {
         hoistImports(generator, pack.id, luaSpec.imports);
-        const rendered = renderTemplate(luaSpec.template, b, block, 'lua');
+        const rendered = renderTemplate(luaSpec.template, b, block, 'lua', pack);
         if (b.kind === 'value') {
           return [rendered, LuaOrder.ATOMIC];
         }
@@ -433,7 +526,7 @@ function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
       const pySpec = b.python;
       pythonGenerator.forBlock[b.type] = (block, generator) => {
         hoistImports(generator, pack.id, pySpec.imports);
-        const rendered = renderTemplate(pySpec.template, b, block, 'python');
+        const rendered = renderTemplate(pySpec.template, b, block, 'python', pack);
         if (b.kind === 'value') {
           return [rendered, PyOrder.ATOMIC];
         }
@@ -611,6 +704,18 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
 
   const simWidgets = validateSimWidgets(obj.simWidgets);
   const handleChannelPool = validateHandleChannelPool(obj.handleChannelPool, obj.id);
+  const rawOrder = Number(obj.toolboxOrder);
+  const toolboxOrder = Number.isFinite(rawOrder)
+    ? Math.max(0, Math.min(9999, Math.round(rawOrder)))
+    : obj.packKind === 'runtime'
+      ? 15
+      : DEFAULT_PACK_TOOLBOX_ORDER;
+  const tags = Array.isArray(obj.tags)
+    ? obj.tags
+        .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+        .map((t) => t.trim().slice(0, 12))
+        .slice(0, 6)
+    : undefined;
 
   return {
     format: 'polyblock-extension',
@@ -628,7 +733,11 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
     description:
       typeof obj.description === 'string' ? obj.description : '用户自定义扩展积木包',
     builtin: Boolean(obj.builtin),
-    packKind: obj.packKind === 'runtime' ? 'runtime' : 'peripheral',
+    toolboxOrder,
+    ...(tags && tags.length > 0 ? { tags } : {}),
+    ...(obj.packKind === 'runtime' || obj.packKind === 'peripheral'
+      ? { packKind: obj.packKind }
+      : {}),
     categoryTarget: obj.categoryTarget === 'event' ? 'event' : 'own',
     ...(obj.flyoutButton && typeof obj.flyoutButton === 'object'
       ? { flyoutButton: obj.flyoutButton as PolyExtensionPack['flyoutButton'] }
@@ -778,8 +887,10 @@ class ExtensionRegistry {
     return Array.from(this.packs.values());
   }
 
-  listByKind(kind: 'runtime' | 'peripheral'): PolyExtensionPack[] {
-    return this.listAll().filter((p) => (p.packKind ?? 'peripheral') === kind);
+  listBySource(source: 'builtin' | 'custom'): PolyExtensionPack[] {
+    return this.listAll().filter((p) =>
+      source === 'builtin' ? Boolean(p.builtin) : !p.builtin,
+    );
   }
 
   get(packId: string): PolyExtensionPack | undefined {
@@ -849,7 +960,7 @@ class ExtensionRegistry {
   isEventDrivenBlock(blockType: string): boolean {
     const found = this.getBlockDef(blockType);
     if (!found) return false;
-    return found.block.kind === 'hat' || found.pack.packKind === 'runtime';
+    return found.block.kind === 'hat' || Boolean(found.pack.hasRtMonitorUi);
   }
 
   renderHatScopeInfo(block: Blockly.Block): {
@@ -859,12 +970,12 @@ class ExtensionRegistry {
   } | null {
     const found = this.getHatBlockDef(block.type);
     if (!found) return null;
-    const { block: def, hat } = found;
+    const { pack, block: def, hat } = found;
     const label = hat.scopeLabelTemplate
-      ? renderTemplate(hat.scopeLabelTemplate, def, block, 'lua')
+      ? renderTemplate(hat.scopeLabelTemplate, def, block, 'lua', pack)
       : hat.eventName;
     const shortLabel = hat.scopeShortTemplate
-      ? renderTemplate(hat.scopeShortTemplate, def, block, 'lua')
+      ? renderTemplate(hat.scopeShortTemplate, def, block, 'lua', pack)
       : hat.eventName;
     return {
       label,
@@ -878,7 +989,13 @@ class ExtensionRegistry {
     if (!found || found.hat.mode !== 'dispatch' || !found.hat.duplicateKeyTemplate) {
       return null;
     }
-    return renderTemplate(found.hat.duplicateKeyTemplate, found.block, block, 'lua');
+    return renderTemplate(
+      found.hat.duplicateKeyTemplate,
+      found.block,
+      block,
+      'lua',
+      found.pack,
+    );
   }
 
   getEnabledPacks(
@@ -943,24 +1060,19 @@ class ExtensionRegistry {
     );
   }
 
-  /** Converts enabled standalone-category packs (`categoryTarget !== 'event'`) into Blockly toolbox categories. */
+  /** Converts enabled standalone-category packs (`categoryTarget !== 'event'`) into ordered Blockly toolbox categories. */
   toCategorySpecs(
     enabledIds: string[],
     localPacks?: PolyExtensionPack[],
-    filterKind?: 'runtime' | 'peripheral',
   ): BlockCategorySpec[] {
     return this.getEnabledPacks(enabledIds, localPacks)
-      .filter((pack) => {
-        if (pack.categoryTarget === 'event') return false;
-        if (filterKind && (pack.packKind ?? 'peripheral') !== filterKind) {
-          return false;
-        }
-        return true;
-      })
+      .filter((pack) => pack.categoryTarget !== 'event')
       .map((pack) => ({
         id: pack.id === 'rt-timers' ? 'timers' : `ext_${pack.id}`,
         label: pack.categoryLabel,
         color: pack.color,
+        order: pack.toolboxOrder ?? DEFAULT_PACK_TOOLBOX_ORDER,
+        isExtension: true,
         blocks: buildToolboxBlocksForPack(pack),
         ...(pack.flyoutButton ? { flyoutButton: pack.flyoutButton } : {}),
       }));

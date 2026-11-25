@@ -14,10 +14,29 @@ export interface BlockCategorySpec {
   id: string;
   label: string;
   color: string;
+  /** Numeric sort order in the left Blockly toolbox (core: 10..90, extensions default: 100+). */
+  order: number;
+  /** True for categories originating from declarative extension packs. */
+  isExtension?: boolean;
   custom?: 'VARIABLE' | 'PROCEDURE';
   flyoutButton?: { text: string; callbackKey: string };
   blocks: ToolboxBlockSpec[];
 }
+
+/** Single source of truth for Layer 0 core category order numbers (displayed in Extensions page legend). */
+export const CORE_TOOLBOX_ORDERS = [
+  { id: 'event', label: '事件', order: 10 },
+  { id: 'print', label: '打印', order: 20 },
+  { id: 'control', label: '控制', order: 30 },
+  { id: 'variables', label: '变量', order: 40 },
+  { id: 'math', label: '运算', order: 50 },
+  { id: 'logic', label: '逻辑', order: 60 },
+  { id: 'text', label: '文本', order: 70 },
+  { id: 'lists', label: '列表', order: 80 },
+  { id: 'functions', label: '函数', order: 90 },
+] as const;
+
+export const DEFAULT_EXTENSION_TOOLBOX_ORDER = 100;
 
 const numShadow = (num: number) => ({
   shadow: { type: 'math_number', fields: { NUM: num } },
@@ -46,12 +65,14 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
     id: 'event',
     label: '事件',
     color: '#e0911f',
+    order: 10,
     blocks: CORE_EVENT_BLOCKS,
   },
   {
     id: 'print',
     label: '打印',
     color: '#0d9488',
+    order: 20,
     blocks: [
       {
         kind: 'block',
@@ -84,6 +105,7 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
     id: 'control',
     label: '控制',
     color: '#d97706',
+    order: 30,
     blocks: [
       {
         kind: 'block',
@@ -128,6 +150,7 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
     id: 'variables',
     label: '变量',
     color: '#db2777',
+    order: 40,
     custom: 'VARIABLE',
     blocks: [
       {
@@ -149,6 +172,7 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
     id: 'math',
     label: '运算',
     color: '#16a34a',
+    order: 50,
     blocks: [
       {
         kind: 'block',
@@ -192,6 +216,7 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
     id: 'logic',
     label: '逻辑',
     color: '#2563eb',
+    order: 60,
     blocks: [
       {
         kind: 'block',
@@ -225,6 +250,7 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
     id: 'text',
     label: '文本',
     color: '#0891b2',
+    order: 70,
     blocks: [
       {
         kind: 'block',
@@ -260,6 +286,7 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
     id: 'lists',
     label: '列表',
     color: '#7c3aed',
+    order: 80,
     blocks: [
       {
         kind: 'block',
@@ -299,6 +326,7 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
     id: 'functions',
     label: '函数',
     color: '#4f46e5',
+    order: 90,
     custom: 'PROCEDURE',
     blocks: [],
   },
@@ -310,43 +338,61 @@ function stripKeywords(spec: ToolboxBlockSpec): Record<string, unknown> {
 }
 
 /**
- * Computes the project's active core + runtime-pack categories dynamically from ExtensionRegistry:
- * - Pure-script projects see ONLY Layer 0 language categories (zero hardware / zero timer / zero on_run).
- * - Any enabled pack with `categoryTarget === 'event'` (e.g. `rt-lifecycle`) merges cleanly into `事件`.
- * - Any enabled `packKind === 'runtime'` standalone category (e.g. `rt-timers` -> `定时`) slots right below `事件`.
+ * Merges Layer 0 core categories (10..90) with all enabled extension categories
+ * (`categoryTarget !== 'event'`), stably sorted by numeric `order` ascending.
+ * Any pack with `categoryTarget === 'event'` merges cleanly into `事件 (#10)`.
+ */
+export function getOrderedToolboxCategories(
+  enabledCapabilities: string[] = [],
+  extraExtensionCategories?: BlockCategorySpec[],
+): BlockCategorySpec[] {
+  const eventPackBlocks = extensionRegistry.getEventCategoryBlocks(enabledCapabilities);
+  const extCats =
+    extraExtensionCategories ??
+    extensionRegistry.toCategorySpecs(enabledCapabilities);
+
+  const combined: Array<{ cat: BlockCategorySpec; seq: number }> = [];
+  let seq = 0;
+
+  for (const cat of BLOCK_CATEGORIES) {
+    if (cat.id === 'event') {
+      combined.push({
+        cat: {
+          ...cat,
+          blocks:
+            eventPackBlocks.length > 0
+              ? [CORE_EVENT_BLOCKS[0], ...eventPackBlocks, CORE_EVENT_BLOCKS[1]]
+              : CORE_EVENT_BLOCKS,
+        },
+        seq: seq++,
+      });
+    } else {
+      combined.push({ cat, seq: seq++ });
+    }
+  }
+
+  for (const extCat of extCats) {
+    combined.push({ cat: extCat, seq: seq++ });
+  }
+
+  combined.sort((a, b) => a.cat.order - b.cat.order || a.seq - b.seq);
+  return combined.map((entry) => entry.cat);
+}
+
+/**
+ * Backward-compatible helper returning ordered categories for the given enabled capabilities
+ * (including any enabled packs whose `toolboxOrder` places them among or after core categories).
  */
 export function getCoreCategoriesForCapabilities(
   enabledCapabilities: string[] = [],
 ): BlockCategorySpec[] {
-  const eventPackBlocks = extensionRegistry.getEventCategoryBlocks(enabledCapabilities);
-  const runtimeCategories = extensionRegistry.toCategorySpecs(
-    enabledCapabilities,
-    undefined,
-    'runtime',
-  );
-
-  const out: BlockCategorySpec[] = [];
-  for (const cat of BLOCK_CATEGORIES) {
-    if (cat.id === 'event') {
-      out.push({
-        ...cat,
-        blocks:
-          eventPackBlocks.length > 0
-            ? [CORE_EVENT_BLOCKS[0], ...eventPackBlocks, CORE_EVENT_BLOCKS[1]]
-            : CORE_EVENT_BLOCKS,
-      });
-      out.push(...runtimeCategories);
-    } else {
-      out.push(cat);
-    }
-  }
-  return out;
+  return getOrderedToolboxCategories(enabledCapabilities);
 }
 
 /**
  * Builds a Blockly flyoutToolbox JSON definition for either:
  * - A search query across all currently enabled categories, or
- * - A single selected category (including dynamic VARIABLE / PROCEDURE / timers blocks).
+ * - A single selected category (including dynamic VARIABLE / PROCEDURE / channel-pool blocks).
  */
 export function buildFlyoutToolbox(
   workspace: Blockly.WorkspaceSvg | null,
@@ -355,8 +401,10 @@ export function buildFlyoutToolbox(
   extraCategories: BlockCategorySpec[] = [],
   enabledCapabilities: string[] = [],
 ): Blockly.utils.toolbox.ToolboxInfo {
-  const coreCats = getCoreCategoriesForCapabilities(enabledCapabilities);
-  const allCategories = [...coreCats, ...extraCategories];
+  const allCategories = getOrderedToolboxCategories(
+    enabledCapabilities,
+    extraCategories.length > 0 ? extraCategories : undefined,
+  );
   const q = searchQuery.trim().toLowerCase();
 
   const topSpacer: Blockly.utils.toolbox.FlyoutItemInfo = {

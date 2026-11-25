@@ -5,6 +5,8 @@ interface TimerAliasModalProps {
   handleName: string;
   handleColor: string;
   timerId: number;
+  prefix?: string;
+  poolLabel?: string;
   currentAlias: string;
   onSave: (alias: string) => void;
   onClose: () => void;
@@ -14,6 +16,8 @@ export function TimerAliasModal({
   handleName,
   handleColor,
   timerId,
+  prefix = 'T',
+  poolLabel = '定时器通道',
   currentAlias,
   onSave,
   onClose,
@@ -42,7 +46,7 @@ export function TimerAliasModal({
       className="modal-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label={`设置定时器 T${timerId} 别名`}
+      aria-label={`设置${poolLabel} ${prefix}${timerId} 别名`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -51,7 +55,10 @@ export function TimerAliasModal({
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             <Timer size={15} style={{ color: 'var(--accent)' }} />
-            <span className="modal-title">设置定时器 T{timerId} 别名</span>
+            <span className="modal-title">
+              设置{poolLabel} {prefix}
+              {timerId} 别名
+            </span>
           </div>
           <button
             type="button"
@@ -90,7 +97,7 @@ export function TimerAliasModal({
           />
 
           <p className="settings-hint" style={{ margin: 0 }}>
-            仅作用于当前句柄的画布下拉显示与代码尾注，导出脚本始终使用纯整数 ID（如 <code>rt.start_timer({timerId}, ...)</code>）。
+            仅作用于当前句柄的「{poolLabel}」画布下拉显示与代码尾注，导出脚本始终使用纯整数 ID（<code>{timerId}</code>），与其他通道池及句柄完全隔离。
           </p>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>

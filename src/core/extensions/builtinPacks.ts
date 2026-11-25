@@ -11,8 +11,8 @@ export const RT_LIFECYCLE_PACK: PolyExtensionPack = {
   description:
     '为项目启用常驻周期回调 on_run（默认 100ms，可动态调频/启停）与安全停机 on_stop 积木，对应板端 rt 周期调度。',
   builtin: true,
-  packKind: 'runtime',
   categoryTarget: 'event',
+  tags: ['周期调度'],
   hasRtMonitorUi: true,
   blocks: [
     {
@@ -128,8 +128,9 @@ export const RT_TIMERS_PACK: PolyExtensionPack = {
   description:
     '为项目内每个隔离句柄提供独立的整数通道定时器池（0~31 路）、画布就地别名与顶层零闭包 on_timer(id) 分发。',
   builtin: true,
-  packKind: 'runtime',
+  toolboxOrder: 15,
   categoryTarget: 'own',
+  tags: ['定时器'],
   hasRtMonitorUi: true,
   flyoutButton: {
     text: '⚙ 配置本句柄定时器通道',
@@ -277,7 +278,8 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
   description:
     '提供板载 LED、RGB 彩灯、OLED 文本屏、温度传感器与按键 A/B 回调积木；导出标准 board 模块代码供真机运行，浏览器沙箱内置实时交互模拟。',
   builtin: true,
-  packKind: 'peripheral',
+  toolboxOrder: 100,
+  tags: ['示例板卡'],
   hasVirtualBoardUi: true,
   blocks: [
     {
@@ -571,7 +573,8 @@ export const DICT_JSON_PACK: PolyExtensionPack = {
   description:
     '提供跨 Lua table 与 Python dict 的键值对操作积木及字符串替换工具，生成原生标准语法，零额外依赖。',
   builtin: true,
-  packKind: 'peripheral',
+  toolboxOrder: 110,
+  tags: ['数据结构'],
   blocks: [
     {
       type: 'ext_dict_new',
@@ -672,7 +675,8 @@ export const CLOCK_TIMER_PACK: PolyExtensionPack = {
   description:
     '提供高精度毫秒秒表积木，便于测量循环耗时、定时轮询与节拍控制。',
   builtin: true,
-  packKind: 'peripheral',
+  toolboxOrder: 120,
+  tags: ['计时工具'],
   blocks: [
     {
       type: 'ext_clock_millis',
@@ -748,6 +752,8 @@ export const SAMPLE_CUSTOM_EXTENSION_TEMPLATE: PolyExtensionPack = {
   packVersion: '1.0.0',
   categoryLabel: '机器人',
   color: '#ec4899',
+  toolboxOrder: 100,
+  tags: ['机器人', '运动控制'],
   description:
     '演示如何通过纯 JSON 声明一套完整外设包：普通积木 + 顶层事件回调帽块 (hat) + 双语模拟桩 + 可视化模拟控件。',
   blocks: [

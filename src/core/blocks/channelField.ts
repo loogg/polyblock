@@ -1,35 +1,75 @@
 import * as Blockly from 'blockly';
 import {
-  buildTimerDropdownOptions,
+  buildChannelDropdownOptions,
+  DEFAULT_TIMER_COUNT,
+  DEFAULT_TIMER_POOL_KEY,
   EDIT_TIMER_ALIAS_SENTINEL,
-  triggerTimerAliasPrompt,
+  MAX_TIMER_COUNT,
+  triggerChannelAliasPrompt,
 } from './timerConfigBridge';
+
+export interface ChannelFieldOptions {
+  configKey?: string;
+  prefix?: string;
+  label?: string;
+  defaultCount?: number;
+  maxCount?: number;
+}
 
 /**
  * Dynamic Blockly FieldDropdown for per-handle integer channel pools (0..N-1).
- * Preserves out-of-range channel IDs cleanly on load so static diagnostics can flag them,
- * and supports the inline "edit alias" shortcut right inside the dropdown.
+ * Strictly isolated by `configKey` so multiple channel-pool packs (e.g. timers, PWM, CAN)
+ * never collide in counts, prefixes, or handle-local aliases.
  */
 export class ChannelIdFieldDropdown extends Blockly.FieldDropdown {
+  readonly configKey: string;
+  readonly prefix: string;
+  readonly poolLabel: string;
+  readonly defaultCount: number;
+  readonly maxCount: number;
   private pendingValue: string | null = null;
 
-  constructor() {
+  constructor(opts: ChannelFieldOptions = {}) {
+    const configKey = opts.configKey || DEFAULT_TIMER_POOL_KEY;
+    const prefix = opts.prefix || 'T';
+    const poolLabel = opts.label || '定时器通道';
+    const defaultCount = opts.defaultCount ?? DEFAULT_TIMER_COUNT;
+    const maxCount = opts.maxCount ?? MAX_TIMER_COUNT;
+
     super(function (this: Blockly.FieldDropdown) {
       const self = this as ChannelIdFieldDropdown;
-      return buildTimerDropdownOptions(self.pendingValue ?? self.getValue());
+      return buildChannelDropdownOptions(
+        self.configKey,
+        self.prefix,
+        self.pendingValue ?? self.getValue(),
+        self.defaultCount,
+        self.maxCount,
+      );
     });
+
+    this.configKey = configKey;
+    this.prefix = prefix;
+    this.poolLabel = poolLabel;
+    this.defaultCount = defaultCount;
+    this.maxCount = maxCount;
   }
 
   protected override doClassValidation_(newValue?: string): string | null {
     if (newValue === EDIT_TIMER_ALIAS_SENTINEL) {
       const curRaw = this.getValue();
       const curId = curRaw && /^\d+$/.test(curRaw) ? Number(curRaw) : 0;
-      setTimeout(() => triggerTimerAliasPrompt(curId), 0);
+      const req = {
+        configKey: this.configKey,
+        channelId: curId,
+        prefix: this.prefix,
+        label: this.poolLabel,
+      };
+      setTimeout(() => triggerChannelAliasPrompt(req), 0);
       return null;
     }
     if (typeof newValue === 'string' && /^\d+$/.test(newValue)) {
       const n = Number(newValue);
-      if (Number.isInteger(n) && n >= 0 && n < 32) {
+      if (Number.isInteger(n) && n >= 0 && n < this.maxCount) {
         this.pendingValue = newValue;
         this.getOptions(false);
       }
@@ -40,6 +80,8 @@ export class ChannelIdFieldDropdown extends Blockly.FieldDropdown {
   }
 }
 
-export function createChannelIdField(): Blockly.FieldDropdown {
-  return new ChannelIdFieldDropdown();
+export function createChannelIdField(
+  opts: ChannelFieldOptions = {},
+): Blockly.FieldDropdown {
+  return new ChannelIdFieldDropdown(opts);
 }

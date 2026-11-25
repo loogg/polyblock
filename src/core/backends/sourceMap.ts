@@ -1,8 +1,8 @@
 import type * as Blockly from 'blockly';
 import type { DiagnosticItem, SourceLineRange } from '../../types/project';
 import {
+  getActiveChannelPoolConfig,
   getActiveProjectCapabilities,
-  getActiveTimerConfig,
 } from '../blocks/timerConfigBridge';
 import { extensionRegistry } from '../extensions/registry';
 import { isValidTopHatType } from './eventMode';
@@ -185,7 +185,6 @@ export function analyzeWorkspaceDiagnostics(
 
   // 4. Unified pack/capability gating + channel pool OOB diagnostics across ALL blocks
   const activeCaps = getActiveProjectCapabilities();
-  const timerCfg = getActiveTimerConfig();
 
   for (const blk of workspace.getAllBlocks(false)) {
     if (blk.isShadow() || !blk.isEnabled()) continue;
@@ -219,17 +218,20 @@ export function analyzeWorkspaceDiagnostics(
       }
     }
 
-    // Channel pool range check (applies to rt-timers and any future pack with handleChannelPool)
+    // Channel pool range check (strictly isolated per pool.configKey!)
     if (ownerPack?.handleChannelPool) {
       const pool = ownerPack.handleChannelPool;
       const fieldName = pool.fieldName || 'TIMER_ID';
       if (blk.getField(fieldName)) {
+        const poolCfg = getActiveChannelPoolConfig(pool.configKey, pool.defaultCount);
         const cid = Math.trunc(Number(blk.getFieldValue(fieldName) ?? 0));
-        if (!Number.isInteger(cid) || cid < 0 || cid >= timerCfg.count) {
+        if (!Number.isInteger(cid) || cid < 0 || cid >= poolCfg.count) {
+          const diagPrefix =
+            pool.configKey === 'rt-timers' ? 'timer' : `pool-${pool.configKey}`;
           diagnostics.push({
-            id: `timer-oob-${cid}-${blk.id}`,
+            id: `${diagPrefix}-oob-${cid}-${blk.id}`,
             severity: 'error',
-            message: `${pool.label} ${pool.prefix}${cid} 超出当前句柄配置范围（0~${timerCfg.count - 1}），请更换通道或在句柄配置中调大通道数。`,
+            message: `${pool.label} ${pool.prefix}${cid} 超出当前句柄配置范围（0~${poolCfg.count - 1}），请更换通道或在句柄配置中调大通道数。`,
             blockId: blk.id,
           });
         }

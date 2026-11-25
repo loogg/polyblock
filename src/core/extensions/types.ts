@@ -146,10 +146,17 @@ export interface HandleChannelPoolSpec {
 /** Unified shared simulator state map across all active handles and extension widget cards. */
 export type SimStateMap = Record<string, unknown>;
 
+/** Objective multi-attribute badge rendered on extension pack cards in UI. */
+export interface PackAttributeBadge {
+  id: string;
+  label: string;
+  tone: 'sim' | 'event' | 'pool' | 'lib' | 'tag';
+}
+
 /**
  * Unified Declarative PolyBlock Extension Pack schema (.polyext.json).
- * Covers runtime capabilities (rt-lifecycle, rt-timers), hardware peripherals (virtual-board),
- * and user C-layer / business APIs in one single declarative manifest format.
+ * Covers scheduling/timers, hardware peripherals, and user C-layer / business APIs
+ * in one single declarative manifest format.
  */
 export interface PolyExtensionPack {
   format: 'polyblock-extension';
@@ -161,17 +168,25 @@ export interface PolyExtensionPack {
   color: string;
   description: string;
   builtin?: boolean;
-  /** Visual grouping hint in settings/extensions UI ('runtime' vs 'peripheral', default 'peripheral'). */
+  /**
+   * Continuous numeric sort order in the left Blockly toolbox.
+   * Core categories occupy 10..90 (事件=10, 打印=20, ..., 函数=90);
+   * extension packs default to 100 (appearing in the extension section below 函数).
+   */
+  toolboxOrder?: number;
+  /** Optional custom attribute tags displayed as pills on pack cards (e.g. ["电机", "CAN"]). */
+  tags?: string[];
+  /** @deprecated Legacy grouping hint kept only for backward-compat JSON import (maps 'runtime' -> toolboxOrder 15 if unset). */
   packKind?: 'runtime' | 'peripheral';
   /** Where blocks appear in the left toolbox: 'own' creates a category tab (default), 'event' merges into 事件. */
   categoryTarget?: 'own' | 'event';
   /** Optional toolbox header button inside this pack's category flyout. */
   flyoutButton?: { text: string; callbackKey: string };
-  /** Whether this pack enables the per-handle RT scheduler monitor card in Simulator tab. */
+  /** Whether this pack enables the per-handle RT scheduler monitor card in Simulator tab & event-driven ABI. */
   hasRtMonitorUi?: boolean;
   /** @deprecated Prefer declarative `simWidgets`. */
   hasVirtualBoardUi?: boolean;
-  /** Optional per-handle channel pool config (e.g. 0..N-1 timer channels & aliases). */
+  /** Optional per-handle channel pool config (e.g. 0..N-1 timer, PWM, or CAN channels & aliases). */
   handleChannelPool?: HandleChannelPoolSpec;
   blocks: ExtensionBlockDef[];
   sandboxMock?: ExtensionSandboxMock;

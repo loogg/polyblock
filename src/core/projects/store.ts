@@ -15,7 +15,10 @@ import {
   extensionRegistry,
   validateExtensionPack,
 } from '../extensions/registry';
-import type { PolyExtensionPack } from '../extensions/types';
+import type {
+  HandleChannelPoolSpec,
+  PolyExtensionPack,
+} from '../extensions/types';
 import type {
   LegacyProjectFileV1,
   LegacyProjectModelV2,
@@ -165,30 +168,76 @@ export function makeUniqueProjectName(
   return `${base} (${idx})`;
 }
 
+export function getHandleChannelPoolConfig(
+  handle: RuntimeHandle,
+  configKey: string,
+  fallbackCount = DEFAULT_TIMER_COUNT,
+  minCount = MIN_TIMER_COUNT,
+  maxCount = MAX_TIMER_COUNT,
+): ProjectTimerConfig {
+  const fromCap = handle.capabilityConfigs?.[configKey] as
+    | Partial<ProjectTimerConfig>
+    | undefined;
+  const legacy =
+    configKey === CAP_RT_TIMERS
+      ? (handle as unknown as { timerConfig?: Partial<ProjectTimerConfig> }).timerConfig
+      : undefined;
+  return normalizeTimerConfig(fromCap ?? legacy, fallbackCount, minCount, maxCount);
+}
+
+export function setHandleChannelPoolConfig(
+  handle: RuntimeHandle,
+  configKey: string,
+  nextCfg: ProjectTimerConfig,
+  minCount = MIN_TIMER_COUNT,
+  maxCount = MAX_TIMER_COUNT,
+): RuntimeHandle {
+  return {
+    ...handle,
+    capabilityConfigs: {
+      ...(handle.capabilityConfigs ?? {}),
+      [configKey]: normalizeTimerConfig(nextCfg, nextCfg.count, minCount, maxCount),
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function getAllHandleChannelPoolConfigs(
+  handle: RuntimeHandle,
+  channelPoolPacks: PolyExtensionPack[],
+  defaultTimerCount = DEFAULT_TIMER_COUNT,
+): Record<string, ProjectTimerConfig> {
+  const out: Record<string, ProjectTimerConfig> = {
+    [CAP_RT_TIMERS]: getHandleTimerConfig(handle, defaultTimerCount),
+  };
+  for (const pack of channelPoolPacks) {
+    const pool: HandleChannelPoolSpec | undefined = pack.handleChannelPool;
+    if (!pool) continue;
+    const fallback =
+      pool.configKey === CAP_RT_TIMERS ? defaultTimerCount : pool.defaultCount;
+    out[pool.configKey] = getHandleChannelPoolConfig(
+      handle,
+      pool.configKey,
+      fallback,
+      pool.min,
+      pool.max,
+    );
+  }
+  return out;
+}
+
 export function getHandleTimerConfig(
   handle: RuntimeHandle,
   fallbackCount = DEFAULT_TIMER_COUNT,
 ): ProjectTimerConfig {
-  const fromCap = handle.capabilityConfigs?.[CAP_RT_TIMERS] as
-    | Partial<ProjectTimerConfig>
-    | undefined;
-  const legacy = (handle as unknown as { timerConfig?: Partial<ProjectTimerConfig> })
-    .timerConfig;
-  return normalizeTimerConfig(fromCap ?? legacy, fallbackCount);
+  return getHandleChannelPoolConfig(handle, CAP_RT_TIMERS, fallbackCount);
 }
 
 export function setHandleTimerConfig(
   handle: RuntimeHandle,
   nextCfg: ProjectTimerConfig,
 ): RuntimeHandle {
-  return {
-    ...handle,
-    capabilityConfigs: {
-      ...(handle.capabilityConfigs ?? {}),
-      [CAP_RT_TIMERS]: normalizeTimerConfig(nextCfg),
-    },
-    updatedAt: new Date().toISOString(),
-  };
+  return setHandleChannelPoolConfig(handle, CAP_RT_TIMERS, nextCfg);
 }
 
 function normalizeLocalExtensions(raw: unknown): PolyExtensionPack[] {
