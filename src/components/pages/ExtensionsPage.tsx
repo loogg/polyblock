@@ -1,9 +1,12 @@
 import {
+  AlertTriangle,
   ArrowLeft,
   BookOpen,
   CheckSquare,
   Cpu,
   Download,
+  FileCode2,
+  Paperclip,
   Square,
   Trash2,
   Upload,
@@ -19,6 +22,7 @@ import {
   SAMPLE_CUSTOM_BOARD_TEMPLATE,
 } from '../../core/capabilities/registry';
 import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../../core/extensions/builtinPacks';
+import { inspectPackImportSourceMatch } from '../../core/extensions/moduleResolver';
 import {
   derivePackBadges,
   formatPackPlacementSummary,
@@ -27,12 +31,17 @@ import {
   getPackEnableState,
   resolvePackSections,
 } from '../../core/extensions/registry';
+import {
+  scanScriptLibraryFile,
+  type UploadedScriptLibFile,
+} from '../../core/extensions/scriptLibScanner';
 import type { PolyExtensionPack } from '../../core/extensions/types';
-import type { TargetProfile } from '../../types/project';
+import type { ScriptLanguageId, TargetProfile } from '../../types/project';
 import { ExtensionSpecModal } from '../ExtensionSpecModal';
 
 interface ExtensionsPageProps {
   activeProjectName: string;
+  activeProjectLanguage: ScriptLanguageId;
   activeProfileId: string;
   allPacks: PolyExtensionPack[];
   allTargetProfiles: TargetProfile[];
@@ -40,6 +49,11 @@ interface ExtensionsPageProps {
   onToggleCapability: (capId: string) => void;
   onApplyTargetProfile: (profileId: string) => void;
   onImportExtensionJson: (raw: unknown) => void;
+  onOpenScriptLibImportModal: () => void;
+  onAttachLibsToGlobalPack: (
+    packId: string,
+    files: UploadedScriptLibFile[],
+  ) => void;
   onRemoveCustomPack: (packId: string) => void;
   onImportBoardProfileJson: (raw: unknown) => void;
   onRemoveCustomProfile: (profileId: string) => void;
@@ -63,6 +77,7 @@ function downloadJsonFile(fileName: string, data: unknown): void {
 
 export function ExtensionsPage({
   activeProjectName,
+  activeProjectLanguage,
   activeProfileId,
   allPacks,
   allTargetProfiles,
@@ -70,6 +85,8 @@ export function ExtensionsPage({
   onToggleCapability,
   onApplyTargetProfile,
   onImportExtensionJson,
+  onOpenScriptLibImportModal,
+  onAttachLibsToGlobalPack,
   onRemoveCustomPack,
   onImportBoardProfileJson,
   onRemoveCustomProfile,
@@ -79,6 +96,8 @@ export function ExtensionsPage({
   const [showSpecModal, setShowSpecModal] = useState(false);
   const extFileInputRef = useRef<HTMLInputElement | null>(null);
   const boardFileInputRef = useRef<HTMLInputElement | null>(null);
+  const attachLibsInputRef = useRef<HTMLInputElement | null>(null);
+  const [attachTargetPackId, setAttachTargetPackId] = useState<string | null>(null);
   const builtinPacks = allPacks.filter((p) => Boolean(p.builtin));
   const customPacks = allPacks.filter((p) => !p.builtin);
   const backends = backendRegistry.list();
@@ -119,6 +138,19 @@ export function ExtensionsPage({
     e.target.value = '';
   };
 
+  const handleAttachLibsInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (picked.length === 0 || !attachTargetPackId) return;
+    const scanned: UploadedScriptLibFile[] = [];
+    for (const file of picked) {
+      const text = await file.text();
+      scanned.push(scanScriptLibraryFile(file.name, text, activeProjectLanguage));
+    }
+    onAttachLibsToGlobalPack(attachTargetPackId, scanned);
+    setAttachTargetPackId(null);
+  };
+
   const renderPackCard = (pack: PolyExtensionPack, isCustom: boolean) => {
     const enableState = getPackEnableState(pack, enabledCapabilityIds);
     const isAnyEnabled = enableState.status !== 'none';
@@ -126,6 +158,7 @@ export function ExtensionsPage({
     const sections = resolvePackSections(pack);
     const allBlocks = getAllPackBlocks(pack);
     const placementLabel = formatPackPlacementSummary(pack);
+    const importMatch = isCustom ? inspectPackImportSourceMatch(pack) : null;
     const toggleBtnClass =
       enableState.status === 'full'
         ? 'enabled'
@@ -172,7 +205,7 @@ export function ExtensionsPage({
           </span>
         </div>
 
-        {badges.length > 0 && (
+        {(badges.length > 0 || (pack.libs && pack.libs.length > 0) || (importMatch && importMatch.unmatchedImports.length > 0)) && (
           <div className="pack-attr-row">
             {badges.map((badge) => (
               <span
@@ -182,6 +215,25 @@ export function ExtensionsPage({
                 {badge.label}
               </span>
             ))}
+            {(pack.libs ?? []).map((lib) => (
+              <span
+                key={lib.moduleName}
+                className="lib-file-chip"
+                title={`真实库模块 moduleName="${lib.moduleName}"（沙箱运行 + 真机导出随行）`}
+              >
+                {lib.moduleName}
+                {lib.role === 'helper' ? '·辅' : ''}
+              </span>
+            ))}
+            {importMatch && importMatch.unmatchedImports.length > 0 && (
+              <span
+                className="lib-warn-chip"
+                title={`imports 引用了 ${importMatch.unmatchedImports.join(', ')}，包内未附带对应 libs[]/sandboxMock（若由真机 C 固件提供则导出正常）`}
+              >
+                <AlertTriangle size={10} />
+                <span>无本地源码: {importMatch.unmatchedImports.join(', ')}</span>
+              </span>
+            )}
           </div>
         )}
 
@@ -253,6 +305,19 @@ export function ExtensionsPage({
                   type="button"
                   className="btn-ghost"
                   style={{ padding: '4px 6px' }}
+                  title="附加或替换此包的真实库源码 (.lua / .py -> libs[])"
+                  aria-label={`为 ${pack.name} 附加库源码`}
+                  onClick={() => {
+                    setAttachTargetPackId(pack.id);
+                    attachLibsInputRef.current?.click();
+                  }}
+                >
+                  <Paperclip size={13} />
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  style={{ padding: '4px 6px' }}
                   title="导出此全局扩展包 (.polyext.json) 分享给他人"
                   onClick={() => {
                     downloadJsonFile(`${pack.id}.polyext.json`, pack);
@@ -307,10 +372,18 @@ export function ExtensionsPage({
             <button
               type="button"
               className="btn-primary"
+              onClick={onOpenScriptLibImportModal}
+            >
+              <FileCode2 size={14} />
+              <span>导入脚本库 (.lua/.py)</span>
+            </button>
+            <button
+              type="button"
+              className="btn-outline"
               onClick={() => extFileInputRef.current?.click()}
             >
               <Upload size={14} />
-              <span>导入到全局库 (.polyext.json)</span>
+              <span>导入 .polyext.json</span>
             </button>
             <button
               type="button"
@@ -379,6 +452,14 @@ export function ExtensionsPage({
               accept=".json,.polyboard.json"
               style={{ display: 'none' }}
               onChange={handleImportBoardFile}
+            />
+            <input
+              ref={attachLibsInputRef}
+              type="file"
+              accept=".lua,.py"
+              multiple
+              style={{ display: 'none' }}
+              onChange={handleAttachLibsInput}
             />
           </div>
         </div>

@@ -250,7 +250,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
         ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
         id: 'virtual-board',
       }),
-    ).toThrow(/冲突/);
+    ).toThrow(/不允许覆盖预装包/);
 
     const imported = extensionRegistry.importCustomPack(
       SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
@@ -918,7 +918,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
 
-  it('supports fine-grained Scheme 1 section pruning, generic core-category merging (control), block-driven simWidgetKeys filtering, bundleModule vs sandboxMock separation, and generic content-based import deduplication', () => {
+  it('supports fine-grained Scheme 1 section pruning, generic core-category merging (control), block-driven simWidgetKeys filtering, libs[] vs sandboxMock separation, and generic content-based import deduplication', () => {
     let caps = [CAP_RT];
     expect(getPackEnableState(RT_PACK, caps)).toMatchObject({
       status: 'full',
@@ -1057,7 +1057,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       ],
     });
 
-    // Real pure-script library pack (`bundleModule`, e.g. crc16.lua) + no sandboxMock
+    // Real pure-script library pack (`libs[]`, e.g. crc16.lua) + no sandboxMock
     const crcPack = extensionRegistry.validateProjectLocalPack({
       format: 'polyblock-extension',
       version: 1,
@@ -1086,13 +1086,16 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
           ],
         },
       ],
-      bundleModule: {
-        moduleName: 'crc16',
-        luaSource: 'local M = {}; function M.calc() return 0x1234 end; return M',
-      },
+      libs: [
+        {
+          moduleName: 'crc16',
+          role: 'entry',
+          luaSource: 'local M = {}; function M.calc() return 0x1234 end; return M',
+        },
+      ],
     });
 
-    // Export-only pack with simWidgets but NO sandboxMock/bundleModule -> must NOT show fake sim card!
+    // Export-only pack with simWidgets but NO sandboxMock/libs -> must NOT show fake sim card!
     const noDriverPack = extensionRegistry.validateProjectLocalPack({
       format: 'polyblock-extension',
       version: 1,
@@ -1101,7 +1104,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       packVersion: '1.0.0',
       iconLabel: '硬件',
       color: '#64748b',
-      description: '验证没有 sandboxMock/bundleModule 时不渲染模拟面板',
+      description: '验证没有 sandboxMock/libs 时不渲染模拟面板',
       sections: [
         {
           id: 'main',
@@ -1147,12 +1150,12 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       extensionRegistry.getActiveSimPacks(['custom-mcu-sdk.ctrl_ext'], [sdkPackA]),
     ).toHaveLength(0);
 
-    // Pack with simWidgets but NO sandboxMock/bundleModule shows 0 sim cards!
+    // Pack with simWidgets but NO sandboxMock/libs shows 0 sim cards!
     expect(
       extensionRegistry.getActiveSimPacks(['no-driver-pack'], [noDriverPack]),
     ).toHaveLength(0);
 
-    // Sandbox runs BOTH sandboxMock & bundleModule; target export bundles ONLY bundleModule!
+    // Sandbox runs BOTH sandboxMock & libs[]; target export bundles ONLY libs[]!
     const sandboxMods = extensionRegistry.getSandboxMocks(
       ['custom-mcu-sdk', 'crc16-lib'],
       [sdkPackA, crcPack],

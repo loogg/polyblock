@@ -262,7 +262,7 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
   const badges: PackAttributeBadge[] = [];
   const sections = resolvePackSections(pack);
   const allBlocks = getAllPackBlocks(pack);
-  const hasSimDriver = Boolean(pack.sandboxMock || pack.bundleModule);
+  const hasSimDriver = Boolean(pack.sandboxMock || (pack.libs?.length ?? 0) > 0);
   const widgetCount = hasSimDriver ? (pack.simWidgets?.length ?? 0) : 0;
   const hasHat = allBlocks.some((b) => b.kind === 'hat');
   const pools = sections
@@ -294,10 +294,13 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
     });
   }
 
-  if (pack.bundleModule) {
+  if (pack.libs && pack.libs.length > 0) {
     badges.push({
-      id: 'bundle-lib',
-      label: '内置脚本库',
+      id: 'pack-libs',
+      label:
+        pack.libs.length === 1
+          ? '内置脚本库'
+          : `内置脚本库 · ${pack.libs.length}文件`,
       tone: 'lib',
     });
   }
@@ -323,7 +326,7 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
     widgetCount === 0 &&
     pools.length === 0 &&
     !hasHat &&
-    !pack.bundleModule
+    !(pack.libs && pack.libs.length > 0)
   ) {
     badges.push({
       id: 'lib',
@@ -1138,7 +1141,27 @@ function validateModuleSource(
     ...(typeof obj.pythonSource === 'string'
       ? { pythonSource: obj.pythonSource }
       : {}),
+    ...(obj.role === 'entry' || obj.role === 'helper' ? { role: obj.role } : {}),
   };
+}
+
+function validateLibs(raw: unknown): ExtensionModuleSource[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new Error('libs 必须是数组');
+  }
+  const out: ExtensionModuleSource[] = [];
+  const seen = new Set<string>();
+  for (const [idx, item] of raw.entries()) {
+    const mod = validateModuleSource(item, `libs[${idx}]`);
+    if (!mod) continue;
+    if (seen.has(mod.moduleName)) {
+      throw new Error(`扩展包 libs[] 中存在重复的 moduleName "${mod.moduleName}"`);
+    }
+    seen.add(mod.moduleName);
+    out.push(mod);
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 function validateBlockDef(
@@ -1266,7 +1289,15 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
   const imports = validateImports(obj.imports);
   const simWidgets = validateSimWidgets(obj.simWidgets);
   const sandboxMock = validateModuleSource(obj.sandboxMock, 'sandboxMock');
-  const bundleModule = validateModuleSource(obj.bundleModule, 'bundleModule');
+  const libs = validateLibs(obj.libs);
+  if (
+    sandboxMock &&
+    libs?.some((lib) => lib.moduleName === sandboxMock.moduleName)
+  ) {
+    throw new Error(
+      `单包内禁止将同一 moduleName="${sandboxMock.moduleName}" 同时写入 libs[] 与 sandboxMock（同一模块名在单包内只能二选一：真实库放 libs[]，仅沙箱假桩放 sandboxMock）`,
+    );
+  }
   const tags = Array.isArray(obj.tags)
     ? obj.tags
         .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
@@ -1296,7 +1327,7 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
     sections,
     ...(simWidgets ? { simWidgets } : {}),
     ...(sandboxMock ? { sandboxMock } : {}),
-    ...(bundleModule ? { bundleModule } : {}),
+    ...(libs ? { libs } : {}),
   };
 }
 
@@ -1393,22 +1424,31 @@ class ExtensionRegistry {
     }
   }
 
+  /**
+   * Validates a project-local embedded pack.
+   * Fully pluggable: project-local packs MAY intentionally use the SAME pack ID as any
+   * global/preinstalled pack (including `rt` or `virtual-board`) to override it strictly
+   * inside this project without modifying the global library.
+   */
   validateProjectLocalPack(raw: unknown): PolyExtensionPack {
     this.ensureInitialized();
     const valid = validateExtensionPack(raw);
-    const existingGlobal = this.packs.get(valid.id);
-    if (existingGlobal?.builtin) {
-      throw new Error(`扩展包 ID "${valid.id}" 与系统内置包冲突，请更换自定义 ID`);
-    }
     return { ...valid, builtin: false };
   }
 
+  /**
+   * Imports a custom pack into the GLOBAL library.
+   * Global preinstalled packs stay protected from being overwritten/deleted in the global library
+   * (override them at project scope via `localExtensions` instead).
+   */
   importCustomPack(raw: unknown): PolyExtensionPack {
     this.ensureInitialized();
     const valid = validateExtensionPack(raw);
     const existing = this.packs.get(valid.id);
     if (existing?.builtin) {
-      throw new Error(`扩展包 ID "${valid.id}" 与内置包冲突，请更换自定义 ID`);
+      throw new Error(
+        `全局库不允许覆盖预装包 "${valid.id}"；如需定制覆写，请在「项目配置 → 能力与外设」导入为项目内嵌包`,
+      );
     }
     const customPack: PolyExtensionPack = { ...valid, builtin: false };
     this.register(customPack, true);
@@ -1644,8 +1684,9 @@ class ExtensionRegistry {
   }
 
   /**
-   * Returns all modules to mount into the browser WASM sandbox (`sandboxMock` + `bundleModule`).
-   * Note: For real-device export, use `getBundleModules()` so `sandboxMock` stubs are strictly stripped!
+   * Returns all modules to mount into the browser WASM sandbox (`sandboxMock` + `libs[]`).
+   * Note: For deterministic priority ordering & same-tier conflict detection across handle/project/global,
+   * use `resolveProjectModules()` in `moduleResolver.ts`.
    */
   getSandboxMocks(
     enabledIds: string[],
@@ -1656,26 +1697,30 @@ class ExtensionRegistry {
       if (p.sandboxMock) {
         out.push({ ...p.sandboxMock, packId: p.id });
       }
-      if (p.bundleModule) {
-        out.push({ ...p.bundleModule, packId: p.id });
+      for (const lib of p.libs ?? []) {
+        out.push({ ...lib, packId: p.id });
       }
     }
     return out;
   }
 
-  /** Returns ONLY real pure-script library modules (`bundleModule`) that should be shipped with target exports. */
+  /** Returns ONLY real pure-script library files (`libs[]`) that should be shipped with target exports. */
   getBundleModules(
     enabledIds: string[],
     localPacks?: PolyExtensionPack[],
   ): ExtensionModuleSource[] {
-    return this.getEnabledPacks(enabledIds, localPacks)
-      .filter((p) => Boolean(p.bundleModule))
-      .map((p) => ({ ...p.bundleModule!, packId: p.id }));
+    const out: ExtensionModuleSource[] = [];
+    for (const p of this.getEnabledPacks(enabledIds, localPacks)) {
+      for (const lib of p.libs ?? []) {
+        out.push({ ...lib, packId: p.id });
+      }
+    }
+    return out;
   }
 
   /**
    * Automatically resolves active Simulator panel cards from enabled blocks:
-   * - Requires a runnable driver (`sandboxMock` or `bundleModule`) AND non-empty `simWidgets`;
+   * - Requires a runnable driver (`sandboxMock` or `libs[]`) AND non-empty `simWidgets`;
    * - When any block in the pack declares `simWidgetKeys`, strictly filters `simWidgets` to ONLY
    *   keys referenced by currently enabled blocks (omitting the card if 0 widgets remain).
    */
@@ -1702,7 +1747,7 @@ class ExtensionRegistry {
     const out: PolyExtensionPack[] = [];
     for (const { pack, blocks } of enabledByPack.values()) {
       if (!pack.simWidgets || pack.simWidgets.length === 0) continue;
-      if (!pack.sandboxMock && !pack.bundleModule) continue;
+      if (!pack.sandboxMock && !(pack.libs && pack.libs.length > 0)) continue;
 
       const packUsesBlockWidgetKeys = getAllPackBlocks(pack).some(
         (b) => (b.simWidgetKeys?.length ?? 0) > 0,

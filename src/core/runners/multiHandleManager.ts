@@ -14,6 +14,7 @@ import {
   setActiveHandleScripts,
 } from '../blocks/timerConfigBridge';
 import { CAP_RT_TIMERS } from '../capabilities/registry';
+import { resolveProjectModules } from '../extensions/moduleResolver';
 import { extensionRegistry } from '../extensions/registry';
 import type { ExtensionModuleSource } from '../extensions/types';
 import {
@@ -92,7 +93,8 @@ export interface MultiHandleRunOptions {
   timeoutMs: number;
   timeSliceMs?: number;
   stepDelayMs: number;
-  extensionMocks: ExtensionModuleSource[];
+  /** Optional legacy override; when omitted, modules are resolved per handle via `resolveProjectModules`. */
+  extensionMocks?: ExtensionModuleSource[];
   mockInputs: Record<string, unknown>;
 }
 
@@ -137,7 +139,6 @@ export class MultiHandleRunnerOrchestrator {
       timeoutMs,
       timeSliceMs,
       stepDelayMs,
-      extensionMocks,
       mockInputs,
     } = options;
     const targetHandles = project.handles.filter((h) => h.autoStart);
@@ -188,6 +189,31 @@ export class MultiHandleRunnerOrchestrator {
         poolCfgs,
       );
 
+      const resolution = resolveProjectModules({
+        enabledCapabilities: project.enabledCapabilities,
+        localExtensions: project.localExtensions,
+        handleScripts: handleAuxMocks.map((m, idx) => ({
+          scriptId: `${handle.id}-aux-${idx}`,
+          scriptName: m.moduleName,
+          luaSource: m.luaSource,
+          pythonSource: m.pythonSource,
+        })),
+      });
+
+      if (resolution.conflicts.length > 0) {
+        for (const conflict of resolution.conflicts) {
+          callbacks.onHandleLog(handle, 'error', conflict.message);
+        }
+        return {
+          handle,
+          result: {
+            ok: false,
+            durationMs: 0,
+            errorMessage: resolution.conflicts.map((c) => c.message).join('\n'),
+          },
+        };
+      }
+
       const runner: ScriptRunner =
         project.language === 'lua'
           ? new WasmoonLuaRunner()
@@ -205,7 +231,7 @@ export class MultiHandleRunnerOrchestrator {
           stepDelayMs,
           startInStepMode: false,
           timerCount: timerCfg.count,
-          mockModules: [...extensionMocks, ...handleAuxMocks],
+          mockModules: resolution.sandboxMountOrder,
           mockInputs,
         },
         {

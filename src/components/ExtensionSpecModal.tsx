@@ -131,23 +131,35 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                     <td><code>sandboxMock</code></td>
                     <td>可选</td>
                     <td>
-                      <strong>仅浏览器沙箱假桩</strong>（模拟真机 C 固件 API，如 <code>board</code>），<strong>导出真机时坚决剥离</strong>。<code>luaSource</code> / <code>pythonSource</code> 按需二选一或全填。
+                      <strong>仅浏览器沙箱假桩</strong>（模拟真机 C 固件 API，如 <code>board</code> / <code>i2c</code>），<strong>真机 .zip 打包导出时严格剥离</strong>。单包内 <code>moduleName</code> 不可与 <code>libs[]</code> 同名。
                     </td>
                   </tr>
                   <tr>
-                    <td><code>bundleModule</code></td>
+                    <td><code>libs</code></td>
                     <td>可选</td>
                     <td>
-                      <strong>纯脚本真实算法库</strong>（如 <code>crc16.lua</code>）：既在浏览器沙箱直接运行真实现，打包部署到真机时也一并附带输出。
+                      <strong>真实纯脚本库源码数组</strong>（支持多文件如 <code>crc16.lua</code> + <code>crc16_table.lua</code>，可选 <code>role: "entry" | "helper"</code>）：既在浏览器沙箱直接运行真实现，也在打包导出真机 <code>.zip</code> 时随行输出。建议直接用「导入脚本库 (.lua/.py)」或卡片回形针按钮自动写入，无需手写 JSON 转义。
                     </td>
                   </tr>
                   <tr>
                     <td><code>simWidgets</code></td>
                     <td>可选</td>
-                    <td>包内共享模拟控件资产表；仅在配置了 <code>sandboxMock</code> 或 <code>bundleModule</code> 时生效，并按已启用积木的 <code>simWidgetKeys</code> 自动过滤显示。</td>
+                    <td>包内共享模拟控件资产表；仅在配置了 <code>sandboxMock</code> 或非空 <code>libs[]</code> 时生效，并按已启用积木的 <code>simWidgetKeys</code> 自动过滤显示。</td>
                   </tr>
                 </tbody>
               </table>
+
+              <h4 className="spec-subhead">模块查找优先级（纯 3 层作用域）与冲突规则</h4>
+              <div className="spec-tip-box">
+                <div>
+                  <strong>唯一查找顺序：</strong>
+                  <code>1. 当前句柄脚本</code> &gt; <code>2. 项目内嵌包</code> &gt; <code>3. 全局扩展包（预装 rt/board 与用户包平级）</code>。项目内嵌包可用任意包 ID（含 <code>rt</code>）在本项目内无条件覆盖全局包。
+                </div>
+                <div style={{ marginTop: 4 }}>
+                  <strong>交付属性解耦：</strong>
+                  浏览器沙箱直接挂载胜出者源码；真机 <code>.zip</code> 导出仅打包胜出的真实源码（句柄脚本与 <code>libs[]</code>），胜出者为 <code>sandboxMock</code> 时严格剥离。同一作用域层级内若 2 个启用包声明同一 <code>moduleName</code>，将触发静态 Error 并阻断运行与导出。
+                </div>
+              </div>
             </div>
           )}
 
@@ -335,7 +347,7 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                 </div>
                 <div style={{ marginTop: 6 }}>
                   2. 仓库已内置 <code>.vscode/polyext.code-snippets</code>，在 JSON 文件内直接输入以下前缀回车即可一键生成骨架：
-                  <code>poly-pack</code>（整包）、<code>poly-section</code>（新组件）、<code>poly-block-stmt</code>（语句块）、<code>poly-block-val</code>（表达式块）、<code>poly-block-hat</code>（事件帽块）、<code>poly-pool</code>（通道池）、<code>poly-widget</code>（模拟控件）。
+                  <code>poly-pack</code>（整包）、<code>poly-section</code>（新组件）、<code>poly-block-stmt</code>（语句块）、<code>poly-block-val</code>（表达式块）、<code>poly-block-hat</code>（事件帽块）、<code>poly-pool</code>（通道池）、<code>poly-widget</code>（模拟控件）、<code>poly-lib</code>（脚本库模块）。
                 </div>
                 <div style={{ marginTop: 6 }}>
                   3. 完整图文规范同步保存在仓库 <code>docs/extension-pack-spec.md</code>。

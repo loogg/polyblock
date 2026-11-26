@@ -3,10 +3,13 @@ import {
   ChevronDown,
   Code2,
   Download,
+  FileCode2,
+  FolderArchive,
   FolderGit2,
   FolderKanban,
   Layers,
   Moon,
+  Package,
   Pause,
   Pencil,
   Play,
@@ -59,6 +62,8 @@ interface TopBarProps {
   onPause: () => void;
   onStop: () => void;
   onExportActiveScript: () => void;
+  onExportHandleBundle: () => void;
+  onExportProjectBundle: () => void;
   onToggleCode: () => void;
   onToggleConsole: () => void;
   onToggleTheme: () => void;
@@ -93,14 +98,18 @@ export function TopBar({
   onPause,
   onStop,
   onExportActiveScript,
+  onExportHandleBundle,
+  onExportProjectBundle,
   onToggleCode,
   onToggleConsole,
   onToggleTheme,
 }: TopBarProps) {
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [renamingProject, setRenamingProject] = useState(false);
   const [draftProjectName, setDraftProjectName] = useState(activeProject.name);
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
 
   const backends = backendRegistry.list();
   const activeBackend = backendRegistry.get(activeProject.language);
@@ -118,6 +127,12 @@ export function TopBar({
       ) {
         setProjectMenuOpen(false);
         setRenamingProject(false);
+      }
+      if (
+        exportMenuRef.current &&
+        !exportMenuRef.current.contains(e.target as Node)
+      ) {
+        setExportMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', onDocClick);
@@ -433,15 +448,75 @@ export function TopBar({
           </>
         )}
 
-        <button
-          type="button"
-          className="btn-outline"
-          onClick={onExportActiveScript}
-          title={`导出当前脚本 ${activeFileName}（干净无插桩）`}
-        >
-          <Download size={14} />
-          <span>导出 .{activeBackend.extension}</span>
-        </button>
+        <div className="popover-anchor" ref={exportMenuRef}>
+          <button
+            type="button"
+            className="btn-outline"
+            onClick={() => setExportMenuOpen((v) => !v)}
+            aria-expanded={exportMenuOpen}
+            aria-label="导出脚本或真机部署包"
+            title="导出单脚本、当前句柄真机包 (.zip) 或整工程部署包 (.zip)"
+          >
+            <Download size={14} />
+            <span>导出</span>
+            <ChevronDown size={12} style={{ color: 'var(--text-muted)' }} />
+          </button>
+
+          {exportMenuOpen && (
+            <div
+              className="dropdown-menu export-dropdown-menu"
+              style={{ right: 0, left: 'auto', minWidth: 268 }}
+            >
+              <div className="dropdown-section-label">目标代码与真机部署包</div>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  onExportActiveScript();
+                }}
+              >
+                <FileCode2 size={13} style={{ flexShrink: 0 }} />
+                <div className="export-item-col">
+                  <span>导出当前脚本 ({activeFileName})</span>
+                  <small>仅导出当前标签页干净源码</small>
+                </div>
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  onExportHandleBundle();
+                }}
+              >
+                <Package size={13} style={{ flexShrink: 0, color: 'var(--accent)' }} />
+                <div className="export-item-col">
+                  <span>打包导出当前句柄 (.zip)</span>
+                  <small>
+                    [{activeHandleName}] 扁平根目录脚本 + 真实 libs[] + manifest（剥离假桩）
+                  </small>
+                </div>
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  onExportProjectBundle();
+                }}
+              >
+                <FolderArchive size={13} style={{ flexShrink: 0, color: '#10b981' }} />
+                <div className="export-item-col">
+                  <span>打包导出整工程 (.zip)</span>
+                  <small>
+                    全部 {activeProject.handles.length} 句柄分目录 + 共享 libs/ + manifest
+                  </small>
+                </div>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="topbar-group">

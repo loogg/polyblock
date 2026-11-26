@@ -1,4 +1,5 @@
 import type { ProjectTimerConfig } from '../../types/project';
+import type { ModuleConflictItem } from '../extensions/moduleResolver';
 
 export const DEFAULT_TIMER_COUNT = 8;
 export const MIN_TIMER_COUNT = 1;
@@ -66,6 +67,15 @@ const activeChannelPools = new Map<string, ProjectTimerConfig>([
 let activeCapabilities: string[] | null = null;
 let activeHandleScripts: ActiveHandleScriptMeta[] = [];
 let activeHandleScriptId: string | null = null;
+let activeModuleConflicts: ModuleConflictItem[] = [];
+
+export function setActiveModuleConflicts(conflicts: ModuleConflictItem[]): void {
+  activeModuleConflicts = [...conflicts];
+}
+
+export function getActiveModuleConflicts(): ModuleConflictItem[] {
+  return activeModuleConflicts;
+}
 
 export function setActiveProjectCapabilities(caps: string[] | null): void {
   activeCapabilities = caps ? [...caps] : null;

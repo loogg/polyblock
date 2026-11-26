@@ -133,5 +133,17 @@
       "  \"default\": ${5:false}",
       "}$0"
     ]
+  },
+  "PolyBlock: Add Real Script Library Module": {
+    "scope": "json,jsonc",
+    "prefix": "poly-lib",
+    "description": "在 pack.libs[] 中插入一个真实脚本库源码模块（沙箱与真机 .zip 共用）",
+    "body": [
+      "{",
+      "  \"moduleName\": \"${1:crc16}\",",
+      "  \"role\": \"${2|entry,helper|}\",",
+      "  \"luaSource\": \"${3:local M = {}\\nreturn M\\n}\"",
+      "}$0"
+    ]
   }
 }

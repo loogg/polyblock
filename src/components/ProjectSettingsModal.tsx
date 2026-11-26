@@ -1,9 +1,12 @@
 import {
+  AlertTriangle,
   CheckSquare,
   Copy,
   Cpu,
   Download,
+  FileCode2,
   Globe,
+  Paperclip,
   Plus,
   Puzzle,
   Settings2,
@@ -27,6 +30,7 @@ import {
   targetProfileRegistry,
 } from '../core/capabilities/registry';
 import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../core/extensions/builtinPacks';
+import { inspectPackImportSourceMatch } from '../core/extensions/moduleResolver';
 import {
   derivePackBadges,
   extensionRegistry,
@@ -36,6 +40,10 @@ import {
   getPackEnableState,
   resolvePackSections,
 } from '../core/extensions/registry';
+import {
+  scanScriptLibraryFile,
+  type UploadedScriptLibFile,
+} from '../core/extensions/scriptLibScanner';
 import type {
   PolyExtensionPack,
   ResolvedHandleChannelPoolSpec,
@@ -94,6 +102,12 @@ interface ProjectSettingsModalProps {
   ) => void;
   onToggleCapabilityForProject: (projectId: string, capId: string) => void;
   onImportLocalExtensionJson: (projectId: string, raw: unknown) => void;
+  onOpenScriptLibImportModal: (projectId: string) => void;
+  onAttachLibsToLocalPack: (
+    projectId: string,
+    packId: string,
+    files: UploadedScriptLibFile[],
+  ) => void;
   onRemoveLocalExtension: (projectId: string, packId: string) => void;
   onPromoteLocalExtensionToGlobal: (pack: PolyExtensionPack) => void;
   onOpenExtensionsPage: () => void;
@@ -118,6 +132,8 @@ export function ProjectSettingsModal({
   onUpdateHandleConfig,
   onToggleCapabilityForProject,
   onImportLocalExtensionJson,
+  onOpenScriptLibImportModal,
+  onAttachLibsToLocalPack,
   onRemoveLocalExtension,
   onPromoteLocalExtensionToGlobal,
   onOpenExtensionsPage,
@@ -134,6 +150,8 @@ export function ProjectSettingsModal({
   const [aliasDraftsByPool, setAliasDraftsByPool] = useState<Record<string, string>>({});
   const profileFileRef = useRef<HTMLInputElement | null>(null);
   const localExtFileRef = useRef<HTMLInputElement | null>(null);
+  const attachLibsInputRef = useRef<HTMLInputElement | null>(null);
+  const [attachTargetPackId, setAttachTargetPackId] = useState<string | null>(null);
 
   const selectedHandle: RuntimeHandle =
     project.handles.find((h) => h.id === selectedHandleId) ?? project.handles[0];
@@ -249,6 +267,19 @@ export function ProjectSettingsModal({
     };
     reader.readAsText(file, 'utf-8');
     e.target.value = '';
+  };
+
+  const handleAttachLibsInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (picked.length === 0 || !attachTargetPackId) return;
+    const scanned: UploadedScriptLibFile[] = [];
+    for (const file of picked) {
+      const text = await file.text();
+      scanned.push(scanScriptLibraryFile(file.name, text, project.language));
+    }
+    onAttachLibsToLocalPack(project.id, attachTargetPackId, scanned);
+    setAttachTargetPackId(null);
   };
 
   const readPoolCfg = (pool: ResolvedHandleChannelPoolSpec): ProjectTimerConfig => {
@@ -602,15 +633,24 @@ export function ProjectSettingsModal({
                     <label className="settings-label">
                       本项目内嵌扩展包（{localPacks.length} · 随工程文件导出，不污染全局库）
                     </label>
-                    <div style={{ display: 'flex', gap: 6 }}>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       <button
                         type="button"
                         className="btn-primary"
                         style={{ fontSize: 11.5, padding: '4px 9px', flexShrink: 0 }}
+                        onClick={() => onOpenScriptLibImportModal(project.id)}
+                      >
+                        <FileCode2 size={11} />
+                        <span>导入脚本库 (.lua/.py)</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-outline"
+                        style={{ fontSize: 11.5, padding: '4px 9px', flexShrink: 0 }}
                         onClick={() => localExtFileRef.current?.click()}
                       >
                         <Upload size={11} />
-                        <span>导入到本项目 (.polyext.json)</span>
+                        <span>导入 .polyext.json</span>
                       </button>
                       <button
                         type="button"
@@ -635,10 +675,18 @@ export function ProjectSettingsModal({
                         style={{ display: 'none' }}
                         onChange={handleLocalExtFileImport}
                       />
+                      <input
+                        ref={attachLibsInputRef}
+                        type="file"
+                        accept=".lua,.py"
+                        multiple
+                        style={{ display: 'none' }}
+                        onChange={handleAttachLibsInput}
+                      />
                     </div>
                   </div>
                   <p className="settings-hint">
-                    适合当前项目专用的板载/业务 C 接口描述。仅保存在本项目 <code>.polyblock.json</code> 内，发给他人开箱即用；同名 ID 时无条件覆盖全局包。
+                    支持直接导入 <code>.lua/.py</code> 脚本库自动扫描生成积木，或导入手写 <code>.polyext.json</code>。仅保存在本项目内，按「句柄 &gt; 项目 &gt; 全局」作用域无条件覆盖全局包（含预装包）。
                   </p>
                   {localPacks.length === 0 ? (
                     <div
@@ -662,6 +710,7 @@ export function ProjectSettingsModal({
                         const overridesGlobal = globalPackIds.has(pack.id);
                         const badges = derivePackBadges(pack);
                         const placementLabel = formatPackPlacementSummary(pack);
+                        const importMatch = inspectPackImportSourceMatch(pack);
                         const toggleBtnClass =
                           enableState.status === 'full'
                             ? 'enabled'
@@ -719,7 +768,7 @@ export function ProjectSettingsModal({
                                   <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                                     v{pack.packVersion} · {getAllPackBlocks(pack).length} 个积木 · {placementLabel} · ID: {pack.id}
                                   </div>
-                                  {badges.length > 0 && (
+                                  {(badges.length > 0 || (pack.libs && pack.libs.length > 0) || importMatch.unmatchedImports.length > 0) && (
                                     <div className="pack-attr-row" style={{ marginTop: 4 }}>
                                       {badges.map((badge) => (
                                         <span
@@ -729,11 +778,45 @@ export function ProjectSettingsModal({
                                           {badge.label}
                                         </span>
                                       ))}
+                                      {(pack.libs ?? []).map((lib) => (
+                                        <span
+                                          key={lib.moduleName}
+                                          className="lib-file-chip"
+                                          title={`真实库模块 moduleName="${lib.moduleName}"（沙箱运行 + 真机导出随行）`}
+                                        >
+                                          {lib.moduleName}
+                                          {lib.role === 'helper' ? '·辅' : ''}
+                                        </span>
+                                      ))}
+                                      {importMatch.unmatchedImports.length > 0 && (
+                                        <span
+                                          className="lib-warn-chip"
+                                          title={`imports 引用了 ${importMatch.unmatchedImports.join(', ')}，包内未附带对应 libs[]/sandboxMock（若由真机 C 固件提供则导出正常）`}
+                                        >
+                                          <AlertTriangle size={10} />
+                                          <span>
+                                            无本地源码: {importMatch.unmatchedImports.join(', ')}
+                                          </span>
+                                        </span>
+                                      )}
                                     </div>
                                   )}
                                 </div>
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                                <button
+                                  type="button"
+                                  className="btn-ghost"
+                                  style={{ padding: '4px 6px' }}
+                                  title="附加或替换此包的真实库源码 (.lua / .py -> libs[])"
+                                  aria-label={`为 ${pack.name} 附加库源码`}
+                                  onClick={() => {
+                                    setAttachTargetPackId(pack.id);
+                                    attachLibsInputRef.current?.click();
+                                  }}
+                                >
+                                  <Paperclip size={13} />
+                                </button>
                                 <button
                                   type="button"
                                   className="btn-ghost"
@@ -800,6 +883,7 @@ export function ProjectSettingsModal({
                         pack,
                         project.enabledCapabilities,
                       );
+                      const overridden = localPackIds.has(pack.id);
                       const badges = derivePackBadges(pack);
                       const placementLabel = formatPackPlacementSummary(pack);
                       const toggleBtnClass =
@@ -808,14 +892,19 @@ export function ProjectSettingsModal({
                           : enableState.status === 'partial'
                             ? 'partial'
                             : 'disabled';
-                      const toggleBtnText =
-                        enableState.status === 'full'
+                      const toggleBtnText = overridden
+                        ? '已覆盖'
+                        : enableState.status === 'full'
                           ? '已启用'
                           : enableState.status === 'partial'
                             ? `部分 (${enableState.enabledCount}/${enableState.totalCount})`
                             : '启用';
                       return (
-                        <div key={pack.id} className="settings-ext-row multi">
+                        <div
+                          key={pack.id}
+                          className="settings-ext-row multi"
+                          style={overridden ? { opacity: 0.65 } : undefined}
+                        >
                           <div className="settings-ext-row-main">
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                               <span
@@ -837,6 +926,7 @@ export function ProjectSettingsModal({
                                 </div>
                                 <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                                   {getAllPackBlocks(pack).length} 个积木 · {placementLabel} · ID: {pack.id}
+                                  {overridden ? ' · 已被本项目内嵌包覆盖' : ''}
                                 </div>
                                 {badges.length > 0 && (
                                   <div className="pack-attr-row" style={{ marginTop: 4 }}>
@@ -856,6 +946,12 @@ export function ProjectSettingsModal({
                               type="button"
                               className={`ext-toggle-btn ${toggleBtnClass}`}
                               style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
+                              disabled={overridden}
+                              title={
+                                overridden
+                                  ? '已被上方同名项目内嵌包覆盖，请操作上方条目'
+                                  : undefined
+                              }
                               onClick={() =>
                                 onToggleCapabilityForProject(project.id, pack.id)
                               }
@@ -863,7 +959,7 @@ export function ProjectSettingsModal({
                               {toggleBtnText}
                             </button>
                           </div>
-                          {renderSectionChips(pack)}
+                          {renderSectionChips(pack, overridden)}
                         </div>
                       );
                     })}

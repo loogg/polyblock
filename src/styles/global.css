@@ -3150,3 +3150,256 @@ select {
 [data-theme='dark'] .tier-pill.tier-L4 {
   color: #f472b6;
 }
+
+
+/* ============================================================================
+   Script Library Import Wizard, Attached Lib Chips & TopBar Export Dropdown
+   ============================================================================ */
+.export-dropdown-menu .dropdown-item {
+  align-items: flex-start;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.export-item-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+
+.export-item-col small {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-weight: 400;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.lib-file-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1.5px 7px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+[data-theme='dark'] .lib-file-chip {
+  color: #34d399;
+}
+
+.lib-warn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1.5px 7px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+[data-theme='dark'] .lib-warn-chip {
+  color: #fbbf24;
+}
+
+.script-lib-modal {
+  width: min(820px, 95vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.script-lib-body {
+  padding: 14px 18px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.script-lib-upload-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px dashed var(--border-strong);
+  background: var(--bg-panel-subtle);
+  flex-wrap: wrap;
+}
+
+.script-lib-meta-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.script-lib-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.script-lib-field span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.script-lib-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lib-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lib-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--bg-panel-subtle);
+  border: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.lib-file-name {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-mod-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.lib-fn-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.lib-fn-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.lib-fn-table th,
+.lib-fn-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.lib-fn-table th {
+  background: var(--bg-panel-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  position: sticky;
+  top: 0;
+}
+
+.lib-fn-table tr.muted {
+  opacity: 0.55;
+}
+
+.lib-fn-sig {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-primary);
+}
+
+.lib-kind-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.lib-kind-pill.value {
+  background: rgba(14, 165, 233, 0.14);
+  color: #0284c7;
+  border-color: rgba(14, 165, 233, 0.35);
+}
+
+.lib-kind-pill.statement {
+  background: rgba(99, 102, 241, 0.14);
+  color: #4f46e5;
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+[data-theme='dark'] .lib-kind-pill.value {
+  color: #38bdf8;
+}
+
+[data-theme='dark'] .lib-kind-pill.statement {
+  color: #a5b4fc;
+}
+
+.lib-empty-hint {
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px dashed var(--border);
+  background: var(--bg-panel-subtle);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.lib-error-banner {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.script-lib-footer {
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}

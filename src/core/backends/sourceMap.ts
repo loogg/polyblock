@@ -4,6 +4,7 @@ import {
   getActiveChannelPoolConfig,
   getActiveHandleScriptId,
   getActiveHandleScripts,
+  getActiveModuleConflicts,
   getActiveProjectCapabilities,
 } from '../blocks/timerConfigBridge';
 import { hasCapability } from '../capabilities/registry';
@@ -90,6 +91,16 @@ export function analyzeWorkspaceDiagnostics(
   workspace: Blockly.Workspace,
 ): DiagnosticItem[] {
   const diagnostics: DiagnosticItem[] = [];
+
+  // 0. Project-wide same-tier moduleName conflict checks (always surface even on empty scripts)
+  for (const conflict of getActiveModuleConflicts()) {
+    diagnostics.push({
+      id: conflict.id,
+      severity: 'error',
+      message: conflict.message,
+    });
+  }
+
   const topBlocks = workspace.getTopBlocks(true);
 
   if (topBlocks.length === 0) {

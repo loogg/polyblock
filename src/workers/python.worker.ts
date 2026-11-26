@@ -362,12 +362,34 @@ for _mn in ${JSON.stringify(mountedModuleNames)}:
     // Mount core rt scheduler module
     mp.runPython(MOUNT_RT_MODULE_SNIPPET);
 
-    for (const mod of mockModules ?? []) {
-      if (!mod.pythonSource || !mod.moduleName) continue;
-      mountedModuleNames.push(mod.moduleName);
+    // Helper to register dotted module paths (`utils.crc16`) cleanly in sys.modules
+    const mountOnePyModule = (mod: NonNullable<typeof mockModules>[number]) => {
+      if (!mod.pythonSource || !mod.moduleName) return;
+      const parts = mod.moduleName.split('.').filter(Boolean);
+      const attachDottedPy = `
+_poly_parts = ${JSON.stringify(parts)}
+sys.modules[${JSON.stringify(mod.moduleName)}] = _poly_m
+if len(_poly_parts) > 1:
+  for _pi in range(len(_poly_parts) - 1):
+    _ppath = ".".join(_poly_parts[:_pi + 1])
+    if _ppath not in sys.modules:
+      _pkg = _PolyVirtualMod()
+      sys.modules[_ppath] = _pkg
+      if _pi > 0:
+        setattr(sys.modules[".".join(_poly_parts[:_pi])], _poly_parts[_pi], _pkg)
+  setattr(sys.modules[".".join(_poly_parts[:-1])], _poly_parts[-1], _poly_m)
+`;
+      for (let pi = 0; pi < parts.length; pi++) {
+        const prefix = parts.slice(0, pi + 1).join('.');
+        if (!mountedModuleNames.includes(prefix)) {
+          mountedModuleNames.push(prefix);
+        }
+      }
       if (mod.packId) {
         const proxyModName = `_poly__${mod.packId.replace(/[^A-Za-z0-9_]/g, '_')}`;
-        mountedModuleNames.push(proxyModName);
+        if (!mountedModuleNames.includes(proxyModName)) {
+          mountedModuleNames.push(proxyModName);
+        }
         const rewrittenSource = mod.pythonSource.replace(
           /\bimport\s+_poly\b/g,
           `import ${proxyModName} as _poly`,
@@ -398,7 +420,7 @@ _poly_m = _PolyVirtualMod()
 for _mk, _mv in _poly_mod_ns.items():
   if not _mk.startswith("__"):
     setattr(_poly_m, _mk, _mv)
-sys.modules[${JSON.stringify(mod.moduleName)}] = _poly_m
+${attachDottedPy}
 `);
       } else {
         mp.runPython(`
@@ -411,8 +433,37 @@ _poly_m = _PolyVirtualMod()
 for _mk, _mv in _poly_mod_ns.items():
   if not _mk.startswith("__"):
     setattr(_poly_m, _mk, _mv)
-sys.modules[${JSON.stringify(mod.moduleName)}] = _poly_m
+${attachDottedPy}
 `);
+      }
+    };
+
+    // Multi-pass mount so multi-file Python libs (`crc16.py` importing `crc16_table.py`)
+    // succeed regardless of upload order, while preserving higher-tier overwrite semantics!
+    let pendingMods = (mockModules ?? []).filter(
+      (m) => Boolean(m.pythonSource && m.moduleName),
+    );
+    for (let pass = 0; pass < 4 && pendingMods.length > 0; pass++) {
+      const nextPending: typeof pendingMods = [];
+      let mountedAny = false;
+      for (const mod of pendingMods) {
+        try {
+          mountOnePyModule(mod);
+          mountedAny = true;
+        } catch (mountErr) {
+          const msg = mountErr instanceof Error ? mountErr.message : String(mountErr);
+          if (pass < 3 && /ImportError|ModuleNotFoundError|no module named/i.test(msg)) {
+            nextPending.push(mod);
+          } else {
+            throw mountErr;
+          }
+        }
+      }
+      pendingMods = nextPending;
+      if (!mountedAny && pendingMods.length > 0) {
+        // Final attempt to surface the exact Python ImportError cleanly
+        mountOnePyModule(pendingMods[0]);
+        break;
       }
     }
 

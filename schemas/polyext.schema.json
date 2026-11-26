@@ -22,7 +22,7 @@
     "id": {
       "type": "string",
       "pattern": "^[a-zA-Z0-9_-]{2,48}$",
-      "description": "扩展包全局唯一 ID（2~48 位字母、数字、横线或下划线），不可与内置包重名。"
+      "description": "扩展包唯一 ID（2~48 位字母、数字、横线或下划线）。全局导入不可覆盖预装包，但项目内嵌包可使用任意 ID（含 rt / virtual-board）在当前项目内无条件覆盖全局包。"
     },
     "name": {
       "type": "string",
@@ -72,15 +72,16 @@
     "simWidgets": {
       "type": "array",
       "items": { "$ref": "#/definitions/SimWidgetSpec" },
-      "description": "包内共享模拟控件资产表；仅在存在 sandboxMock 或 bundleModule 时生效，并按已启用积木的 simWidgetKeys 自动按需加载。"
+      "description": "包内共享模拟控件资产表；仅在存在 sandboxMock 或非空 libs[] 时生效，并按已启用积木的 simWidgetKeys 自动按需加载。"
     },
     "sandboxMock": {
       "$ref": "#/definitions/ExtensionModuleSource",
-      "description": "浏览器沙箱专用假桩实现（模拟真机 C 固件 API，如 board / drive），导出真机代码时严格剥离。"
+      "description": "浏览器沙箱专用假桩实现（模拟真机 C 固件 API，如 board / i2c），真机 .zip 打包导出时严格剥离。单包内 moduleName 不可与 libs[] 重复。"
     },
-    "bundleModule": {
-      "$ref": "#/definitions/ExtensionModuleSource",
-      "description": "真实纯脚本库源码（如 crc16.lua）：既在浏览器沙箱直接运行，打包导出部署到真机时也一并附带。"
+    "libs": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/ExtensionModuleSource" },
+      "description": "真实纯脚本库源码列表（支持多文件入口库 + 辅助依赖表，如 crc16.lua + crc16_table.lua）：沙箱运行与真机 .zip 打包导出共用；单包内 moduleName 不可重复且不可与 sandboxMock 同名。"
     }
   },
   "definitions": {
@@ -108,7 +109,12 @@
         "moduleName": {
           "type": "string",
           "minLength": 1,
-          "description": "供 require(\"<moduleName>\") / import <moduleName> 加载的模块名。"
+          "description": "供 require(\"<moduleName>\") / import <moduleName> 加载的模块名（支持点号路径如 utils.crc16，导出时自动映射为 utils/crc16.lua）。"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["entry", "helper"],
+          "description": "可选角色标注：entry（入口库，暴露给积木调用）或 helper（辅助依赖表，如 crc16_table.lua）。"
         },
         "luaSource": {
           "type": "string",

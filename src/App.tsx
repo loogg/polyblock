@@ -16,6 +16,7 @@ import {
   ProjectSettingsModal,
   type ProjectSettingsTab,
 } from './components/ProjectSettingsModal';
+import { ScriptLibImportModal } from './components/ScriptLibImportModal';
 import { ScriptTabBar } from './components/ScriptTabBar';
 import { StatusBar } from './components/StatusBar';
 import { TimerAliasModal } from './components/TimerAliasModal';
@@ -28,6 +29,7 @@ import {
   setActiveChannelPoolConfig,
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
+  setActiveModuleConflicts,
   setActiveProjectCapabilities,
   type ActiveHandleScriptMeta,
   type ChannelAliasPromptRequest,
@@ -38,10 +40,20 @@ import {
   targetProfileRegistry,
 } from './core/capabilities/registry';
 import {
+  buildProjectTargetBundle,
+  buildSingleHandleTargetBundle,
+  ModuleConflictExportError,
+} from './core/export/bundleExporter';
+import { resolveProjectModules } from './core/extensions/moduleResolver';
+import {
   extensionRegistry,
   getAllPackBlocks,
   togglePackOrSectionCapability,
 } from './core/extensions/registry';
+import {
+  mergeAttachedLibFiles,
+  type UploadedScriptLibFile,
+} from './core/extensions/scriptLibScanner';
 import {
   applySimDeviceEvent,
   buildDefaultSimState,
@@ -194,6 +206,20 @@ function triggerFileDownload(filename: string, content: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
+function triggerBinaryDownload(filename: string, bytes: Uint8Array, mime: string) {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const blob = new Blob([copy], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function App() {
   extensionRegistry.ensureInitialized();
   targetProfileRegistry.ensureInitialized();
@@ -220,6 +246,10 @@ export function App() {
     projectId: string;
     initialTab: ProjectSettingsTab;
     initialHandleId?: string;
+  } | null>(null);
+  const [scriptLibModal, setScriptLibModal] = useState<{
+    targetScope: 'project' | 'global';
+    projectId?: string;
   } | null>(null);
   const [aliasModalReq, setAliasModalReq] =
     useState<ChannelAliasPromptRequest | null>(null);
@@ -274,9 +304,27 @@ export function App() {
     activeProject.enabledCapabilities,
     CAP_RT_TIMERS,
   );
+  const activeModuleResolution = useMemo(
+    () =>
+      resolveProjectModules({
+        enabledCapabilities: activeProject.enabledCapabilities,
+        localExtensions: activeProject.localExtensions,
+        handleScripts: activeHandle.scripts.map((s) => ({
+          scriptId: s.id,
+          scriptName: s.name,
+        })),
+      }),
+    [
+      activeProject.enabledCapabilities,
+      activeProject.localExtensions,
+      activeHandle.scripts,
+      extRevision,
+    ],
+  );
   setActiveChannelPoolConfigs(activeChannelPoolConfigs);
   setActiveProjectCapabilities(activeProject.enabledCapabilities);
   setActiveHandleScripts(buildHandleScriptsMeta(activeHandle), activeScript.id);
+  setActiveModuleConflicts(activeModuleResolution.conflicts);
   extensionRegistry.setActiveProjectLocalPacks(activeProject.localExtensions ?? []);
 
   const language = activeProject.language;
@@ -482,6 +530,15 @@ export function App() {
       );
       setActiveProjectCapabilities(nextProj.enabledCapabilities);
       setActiveHandleScripts(buildHandleScriptsMeta(nextHandle), nextScript.id);
+      const nextModRes = resolveProjectModules({
+        enabledCapabilities: nextProj.enabledCapabilities,
+        localExtensions: nextProj.localExtensions,
+        handleScripts: nextHandle.scripts.map((s) => ({
+          scriptId: s.id,
+          scriptName: s.name,
+        })),
+      });
+      setActiveModuleConflicts(nextModRes.conflicts);
 
       activeProjectIdRef.current = nextProj.id;
       activeHandleIdRef.current = nextHandle.id;
@@ -577,6 +634,16 @@ export function App() {
 
       if (projectId === activeProjectIdRef.current) {
         setActiveProjectCapabilities(nextCapabilities);
+        const curHandle = getActiveHandle(curProj);
+        const modRes = resolveProjectModules({
+          enabledCapabilities: nextCapabilities,
+          localExtensions: curProj.localExtensions,
+          handleScripts: curHandle.scripts.map((s) => ({
+            scriptId: s.id,
+            scriptName: s.name,
+          })),
+        });
+        setActiveModuleConflicts(modRes.conflicts);
         const ws = workbenchRef.current?.getWorkspace();
         if (ws) regenerateFromWorkspace(ws, languageRef.current);
       }
@@ -618,6 +685,16 @@ export function App() {
         if (projectId === activeProjectIdRef.current) {
           extensionRegistry.setActiveProjectLocalPacks(nextLocal);
           setActiveProjectCapabilities(nextCaps);
+          const curHandle = getActiveHandle(curProj);
+          const modRes = resolveProjectModules({
+            enabledCapabilities: nextCaps,
+            localExtensions: nextLocal,
+            handleScripts: curHandle.scripts.map((s) => ({
+              scriptId: s.id,
+              scriptName: s.name,
+            })),
+          });
+          setActiveModuleConflicts(modRes.conflicts);
           const ws = workbenchRef.current?.getWorkspace();
           if (ws) regenerateFromWorkspace(ws, languageRef.current);
         }
@@ -684,6 +761,107 @@ export function App() {
       }
     },
     [notify],
+  );
+
+  const handleAttachLibsToProjectPack = useCallback(
+    (projectId: string, packId: string, files: UploadedScriptLibFile[]) => {
+      const curProj = storeRef.current.projects.find((p) => p.id === projectId);
+      if (!curProj) return;
+      const target = (curProj.localExtensions ?? []).find((p) => p.id === packId);
+      if (!target) return;
+      try {
+        const mergedLibs = mergeAttachedLibFiles(
+          target.libs,
+          files.map((f) => ({
+            moduleName: f.moduleName,
+            language: f.language,
+            source: f.source,
+            role: f.scanForBlocks ? 'entry' : 'helper',
+          })),
+        );
+        const validated = extensionRegistry.validateProjectLocalPack({
+          ...target,
+          libs: mergedLibs,
+        });
+        const nextLocal = (curProj.localExtensions ?? []).map((p) =>
+          p.id === packId ? validated : p,
+        );
+        setStore((prev) =>
+          updateProjectById(prev, projectId, (p) => ({
+            ...p,
+            localExtensions: nextLocal,
+            updatedAt: new Date().toISOString(),
+          })),
+        );
+        if (projectId === activeProjectIdRef.current) {
+          extensionRegistry.setActiveProjectLocalPacks(nextLocal);
+          const curHandle = getActiveHandle(curProj);
+          const modRes = resolveProjectModules({
+            enabledCapabilities: curProj.enabledCapabilities,
+            localExtensions: nextLocal,
+            handleScripts: curHandle.scripts.map((s) => ({
+              scriptId: s.id,
+              scriptName: s.name,
+            })),
+          });
+          setActiveModuleConflicts(modRes.conflicts);
+          const ws = workbenchRef.current?.getWorkspace();
+          if (ws) regenerateFromWorkspace(ws, languageRef.current);
+        }
+        notify(
+          `已为项目内嵌包「${validated.name}」附加 ${files.length} 个源码模块（当前共 ${mergedLibs.length} 个 libs[]）`,
+        );
+      } catch (err) {
+        notify(
+          `附加库源码失败：${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+    [notify, regenerateFromWorkspace],
+  );
+
+  const handleAttachLibsToGlobalPack = useCallback(
+    (packId: string, files: UploadedScriptLibFile[]) => {
+      const target = extensionRegistry.get(packId);
+      if (!target || target.builtin) return;
+      try {
+        const mergedLibs = mergeAttachedLibFiles(
+          target.libs,
+          files.map((f) => ({
+            moduleName: f.moduleName,
+            language: f.language,
+            source: f.source,
+            role: f.scanForBlocks ? 'entry' : 'helper',
+          })),
+        );
+        const updated = extensionRegistry.importCustomPack({
+          ...target,
+          libs: mergedLibs,
+        });
+        setExtRevision((r) => r + 1);
+        const curProj = getActiveProject(storeRef.current);
+        const curHandle = getActiveHandle(curProj);
+        const modRes = resolveProjectModules({
+          enabledCapabilities: curProj.enabledCapabilities,
+          localExtensions: curProj.localExtensions,
+          handleScripts: curHandle.scripts.map((s) => ({
+            scriptId: s.id,
+            scriptName: s.name,
+          })),
+        });
+        setActiveModuleConflicts(modRes.conflicts);
+        const ws = workbenchRef.current?.getWorkspace();
+        if (ws) regenerateFromWorkspace(ws, languageRef.current);
+        notify(
+          `已为全局扩展包「${updated.name}」附加 ${files.length} 个源码模块（当前共 ${mergedLibs.length} 个 libs[]）`,
+        );
+      } catch (err) {
+        notify(
+          `附加库源码失败：${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+    [notify, regenerateFromWorkspace],
   );
 
   const handleApplyTargetProfile = useCallback(
@@ -1498,10 +1676,6 @@ export function App() {
       const runner = runnerManager.getForLanguage(language);
       runnerManager.setActive(runner);
 
-      const extensionMocks = extensionRegistry.getSandboxMocks(
-        activeProject.enabledCapabilities,
-        activeProject.localExtensions,
-      );
       const siblingMocks = buildHandleScriptModules(
         handleForRun,
         entryScript.id,
@@ -1510,6 +1684,33 @@ export function App() {
         activeProject.defaultTimerCount,
         activeChannelPoolConfigs,
       );
+
+      const modResolution = resolveProjectModules({
+        enabledCapabilities: activeProject.enabledCapabilities,
+        localExtensions: activeProject.localExtensions,
+        handleScripts: siblingMocks.map((m, idx) => ({
+          scriptId: `${activeHandle.id}-sib-${idx}`,
+          scriptName: m.moduleName,
+          luaSource: m.luaSource,
+          pythonSource: m.pythonSource,
+        })),
+      });
+
+      if (modResolution.conflicts.length > 0) {
+        setActiveModuleConflicts(modResolution.conflicts);
+        if (ws) regenerateFromWorkspace(ws, language);
+        setLogs(
+          modResolution.conflicts.map((c, idx) => ({
+            id: `mod-conflict-${Date.now()}-${idx}`,
+            timestamp: formatNowTime(),
+            level: 'error' as const,
+            message: c.message,
+          })),
+        );
+        runnerManager.setActive(null);
+        notify(`存在 ${modResolution.conflicts.length} 处同层级模块名冲突，已阻止运行（请查看日志与诊断）`);
+        return;
+      }
 
       const speedDelay = SPEED_DELAY_MS[settings.executionSpeed];
       const bootLogs: LogEntry[] = [
@@ -1532,6 +1733,14 @@ export function App() {
               }）...`,
         },
       ];
+      for (const ov of modResolution.overrides) {
+        bootLogs.push({
+          id: `override-${Date.now()}-${ov.moduleName}`,
+          timestamp: formatNowTime(),
+          level: 'info',
+          message: ov.message,
+        });
+      }
       if (exportOnlyBlocks.size > 0) {
         bootLogs.push({
           id: `warn-export-only-${Date.now()}`,
@@ -1553,7 +1762,7 @@ export function App() {
           stepDelayMs: speedDelay,
           startInStepMode,
           timerCount: activeTimerConfig.count,
-          mockModules: [...extensionMocks, ...siblingMocks],
+          mockModules: modResolution.sandboxMountOrder,
           mockInputs: simStateRef.current,
         },
         {
@@ -1631,6 +1840,8 @@ export function App() {
       generated,
       appendLog,
       handleDeviceEvent,
+      notify,
+      regenerateFromWorkspace,
     ],
   );
 
@@ -1644,25 +1855,47 @@ export function App() {
     const targets = proj.handles.filter((h) => h.autoStart);
     const runList = targets.length > 0 ? targets : [proj.handles[0]];
 
+    const projectModRes = resolveProjectModules({
+      enabledCapabilities: proj.enabledCapabilities,
+      localExtensions: proj.localExtensions,
+    });
+    if (projectModRes.conflicts.length > 0) {
+      setActiveModuleConflicts(projectModRes.conflicts);
+      setLogs(
+        projectModRes.conflicts.map((c, idx) => ({
+          id: `mconflict-${Date.now()}-${idx}`,
+          timestamp: formatNowTime(),
+          level: 'error' as const,
+          message: c.message,
+        })),
+      );
+      notify(`存在 ${projectModRes.conflicts.length} 处同层级模块名冲突，已阻止并发仿真`);
+      return;
+    }
+
     setErrorLine(null);
     setExecutingBlockId(null);
     setLiveVariables({});
     setHandleTelemetries({});
     setMultiHandleRunning(true);
 
-    const extensionMocks = extensionRegistry.getSandboxMocks(
-      proj.enabledCapabilities,
-      proj.localExtensions,
-    );
-
-    setLogs([
+    const multiBootLogs: LogEntry[] = [
       {
         id: `mstart-${Date.now()}`,
         timestamp: formatNowTime(),
         level: 'system',
         message: `启动多句柄并发仿真：${runList.map((h) => h.name).join(' + ')}（共 ${runList.length} 个独立 WASM Worker，定时器与全局变量完全隔离）...`,
       },
-    ]);
+    ];
+    for (const ov of projectModRes.overrides) {
+      multiBootLogs.push({
+        id: `mov-${Date.now()}-${ov.moduleName}`,
+        timestamp: formatNowTime(),
+        level: 'info',
+        message: ov.message,
+      });
+    }
+    setLogs(multiBootLogs);
 
     const t0 = performance.now();
     await multiHandleOrchestrator.runAllHandles(
@@ -1671,7 +1904,6 @@ export function App() {
         timeoutMs: settings.timeoutMs,
         timeSliceMs: settings.timeSliceMs,
         stepDelayMs: SPEED_DELAY_MS[settings.executionSpeed],
-        extensionMocks,
         mockInputs: simStateRef.current,
       },
       {
@@ -1717,6 +1949,7 @@ export function App() {
     flushActiveCanvasIntoStore,
     appendLog,
     handleDeviceEvent,
+    notify,
   ]);
 
   const handleStop = useCallback(() => {
@@ -1739,6 +1972,71 @@ export function App() {
     setIsDirty(false);
     notify(`已导出干净脚本 ${outFile}`);
   }, [language, activeHandle.name, activeScript.name, generated.code, notify]);
+
+  const handleExportHandleBundle = useCallback(() => {
+    const flushed = flushActiveCanvasIntoStore(storeRef.current);
+    setStore(flushed);
+    const proj = getActiveProject(flushed);
+    const hdl = getActiveHandle(proj);
+    try {
+      const bundle = buildSingleHandleTargetBundle(proj, hdl);
+      triggerBinaryDownload(bundle.fileName, bundle.zipBytes, 'application/zip');
+      setIsDirty(false);
+      notify(
+        `已打包导出当前句柄真机包 ${bundle.fileName}（共 ${bundle.entries.length} 个文件，已剥离 ${bundle.strippedSandboxMocks.length} 个沙箱假桩）`,
+      );
+    } catch (err) {
+      if (err instanceof ModuleConflictExportError) {
+        setShowConsole(true);
+        setLogs(
+          err.conflicts.map((c, idx) => ({
+            id: `export-conflict-${Date.now()}-${idx}`,
+            timestamp: formatNowTime(),
+            level: 'error' as const,
+            message: c.message,
+          })),
+        );
+        notify(`存在 ${err.conflicts.length} 处同层级模块名冲突，已阻止导出（请查看日志）`);
+      } else {
+        notify(`打包导出失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    } finally {
+      // Restore active handle scripts metadata in bridge
+      setActiveHandleScripts(buildHandleScriptsMeta(hdl), getActiveScript(hdl).id);
+    }
+  }, [flushActiveCanvasIntoStore, notify]);
+
+  const handleExportProjectBundle = useCallback(() => {
+    const flushed = flushActiveCanvasIntoStore(storeRef.current);
+    setStore(flushed);
+    const proj = getActiveProject(flushed);
+    const hdl = getActiveHandle(proj);
+    try {
+      const bundle = buildProjectTargetBundle(proj);
+      triggerBinaryDownload(bundle.fileName, bundle.zipBytes, 'application/zip');
+      setIsDirty(false);
+      notify(
+        `已打包导出整工程真机包 ${bundle.fileName}（${proj.handles.length} 句柄 · 共 ${bundle.entries.length} 个文件，已剥离沙箱假桩）`,
+      );
+    } catch (err) {
+      if (err instanceof ModuleConflictExportError) {
+        setShowConsole(true);
+        setLogs(
+          err.conflicts.map((c, idx) => ({
+            id: `export-proj-conflict-${Date.now()}-${idx}`,
+            timestamp: formatNowTime(),
+            level: 'error' as const,
+            message: c.message,
+          })),
+        );
+        notify(`存在 ${err.conflicts.length} 处同层级模块名冲突，已阻止导出（请查看日志）`);
+      } else {
+        notify(`整工程打包导出失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    } finally {
+      setActiveHandleScripts(buildHandleScriptsMeta(hdl), getActiveScript(hdl).id);
+    }
+  }, [flushActiveCanvasIntoStore, notify]);
 
   const handleCopyCode = useCallback(async () => {
     try {
@@ -1800,6 +2098,8 @@ export function App() {
         onPause={() => runnerManager.pauseActive()}
         onStop={handleStop}
         onExportActiveScript={handleExportActiveScript}
+        onExportHandleBundle={handleExportHandleBundle}
+        onExportProjectBundle={handleExportProjectBundle}
         onToggleCode={() => setShowCode((v) => !v)}
         onToggleConsole={() => setShowConsole((v) => !v)}
         onToggleTheme={() =>
@@ -1982,6 +2282,7 @@ export function App() {
           {activePage === 'extensions' && (
             <ExtensionsPage
               activeProjectName={activeProject.name}
+              activeProjectLanguage={activeProject.language}
               activeProfileId={activeProject.targetProfileId}
               allPacks={allExtensionPacks}
               allTargetProfiles={allTargetProfiles}
@@ -1993,6 +2294,10 @@ export function App() {
                 handleApplyTargetProfile(activeProject.id, profileId)
               }
               onImportExtensionJson={handleImportExtensionJson}
+              onOpenScriptLibImportModal={() =>
+                setScriptLibModal({ targetScope: 'global' })
+              }
+              onAttachLibsToGlobalPack={handleAttachLibsToGlobalPack}
               onRemoveCustomPack={handleRemoveCustomPack}
               onImportBoardProfileJson={handleImportBoardProfileJson}
               onRemoveCustomProfile={handleRemoveCustomProfile}
@@ -2054,10 +2359,41 @@ export function App() {
           onUpdateHandleConfig={handleUpdateHandleConfig}
           onToggleCapabilityForProject={handleToggleCapabilityForProject}
           onImportLocalExtensionJson={handleImportProjectLocalExtension}
+          onOpenScriptLibImportModal={(pid) =>
+            setScriptLibModal({ targetScope: 'project', projectId: pid })
+          }
+          onAttachLibsToLocalPack={handleAttachLibsToProjectPack}
           onRemoveLocalExtension={handleRemoveProjectLocalExtension}
           onPromoteLocalExtensionToGlobal={handlePromoteLocalExtensionToGlobal}
           onOpenExtensionsPage={() => navigateTo('extensions')}
           onNotify={notify}
+        />
+      )}
+
+      {scriptLibModal && (
+        <ScriptLibImportModal
+          targetScope={scriptLibModal.targetScope}
+          projectName={
+            (scriptLibModal.projectId
+              ? store.projects.find((p) => p.id === scriptLibModal.projectId)?.name
+              : activeProject.name) ?? activeProject.name
+          }
+          defaultLanguage={
+            (scriptLibModal.projectId
+              ? store.projects.find((p) => p.id === scriptLibModal.projectId)?.language
+              : activeProject.language) ?? activeProject.language
+          }
+          onConfirmPack={(pack) => {
+            if (scriptLibModal.targetScope === 'project') {
+              handleImportProjectLocalExtension(
+                scriptLibModal.projectId ?? activeProject.id,
+                pack,
+              );
+            } else {
+              handleImportExtensionJson(pack);
+            }
+          }}
+          onClose={() => setScriptLibModal(null)}
         />
       )}
 

@@ -94,13 +94,15 @@ export interface ExtensionBlockDef {
  * Script module source mounted into Lua `package.preload` / Python `sys.modules`.
  * Used by BOTH:
  * - `sandboxMock`: fake stub for real-hardware C firmware APIs (browser sandbox ONLY, stripped on target export).
- * - `bundleModule`: real pure-script library module like `crc16.lua` (runs in sandbox AND bundled on target export).
+ * - `libs[]`: real pure-script library files like `crc16.lua` + `crc16_table.lua` (runs in sandbox AND bundled on target export).
  */
 export interface ExtensionModuleSource {
   moduleName: string;
   luaSource?: string;
   pythonSource?: string;
-  /** Auto-populated by registry when resolving modules for pack-scoped simState isolation. */
+  /** Optional display hint distinguishing entry library files from internal helper dependencies inside `libs[]`. */
+  role?: 'entry' | 'helper';
+  /** Auto-populated by registry/resolver when mounting modules for pack-scoped simState isolation. */
   packId?: string;
 }
 
@@ -289,6 +291,6 @@ export interface PolyExtensionPack {
   simWidgets?: SimWidgetSpec[];
   /** Browser-sandbox-ONLY stub simulating C firmware APIs (stripped when exporting target device code). */
   sandboxMock?: ExtensionModuleSource;
-  /** Real pure-script library source (e.g. crc16.lua) used in BOTH browser sandbox and target device bundle export. */
-  bundleModule?: ExtensionModuleSource;
+  /** Real pure-script library source files (e.g. crc16.lua + crc16_table.lua) used in BOTH sandbox and target device export. */
+  libs?: ExtensionModuleSource[];
 }

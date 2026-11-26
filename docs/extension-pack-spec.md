@@ -11,9 +11,15 @@
 1. **一模块一扩展包**：一个 `.polyext.json` 对应一个逻辑模块或 SDK（如 `rt`、`board`、`crc16`），不在包层级碎片拆分。
 2. **单轨 `sections[]`**：无论单组件还是多组件包，所有侧边栏落位、排序、显隐、句柄资源配置和积木定义全部统一写在 `sections[]` 内，**零双轨覆盖、零孤儿积木**。
 3. **整包开关 + 按组件细粒度裁剪**：当 `sections.length > 1` 时，自动支持整包 ID（如 `"rt"`）与组件 ID（如 `"rt.timers"`）切换。
-4. **严格分离「沙箱假桩」与「真实脚本库」**：
-   - `sandboxMock`：模拟真机 C 固件接口，**只在浏览器沙箱运行，导出真机时剥离**；
-   - `bundleModule`：真实纯脚本算法库（如 `crc16.lua`），**沙箱运行与真机打包导出共用**。
+4. **纯 3 层作用域优先级 + 交付属性解耦（100% 插件化，无任何硬编码特例）**：
+   - **唯一查找优先级链路（只看作用域，从近到远）**：
+     1. **当前句柄脚本**（`handle.scripts`，如 `timers.lua`）
+     2. **项目内嵌包**（`localExtensions[]`，可使用任意包 ID 含 `rt` / `virtual-board` 仅在本项目内覆盖全局包）
+     3. **全局扩展包**（预装 `rt` / `board` 与用户导入全局包完全平级，一视同仁）
+   - **同层级冲突阻断**：同一层级内若有 2 个已启用包声明同一 `moduleName`，触发静态 **Error**，直接阻断运行与 `.zip` 导出；单包内也禁止将同一 `moduleName` 同时写入 `libs[]` 和 `sandboxMock`。
+   - **交付属性解耦**：
+     - `libs[]`：真实纯脚本库源码列表（支持入口库 + 辅助依赖表，如 `crc16.lua` + `crc16_table.lua`），**沙箱运行与真机 `.zip` 导出共用**；
+     - `sandboxMock`：模拟真机 C 固件接口的假桩（如 `board` / `i2c`），**仅在浏览器沙箱运行，真机 `.zip` 打包导出时严格剥离**（若项目级 `sandboxMock` 覆盖了全局级 `libs[]`，导出真机时同样不会把旧全局库打入包中）。
 5. **按积木驱动模拟面板**：`pack.simWidgets` 作为控件资产表，由积木上的 `simWidgetKeys[]` 自动聚合按需展示。
 
 ---
@@ -25,7 +31,7 @@
 | `$schema` | 否 | - | 推荐填 `"./schemas/polyext.schema.json"` 以启用 VS Code 悬浮说明与补全 |
 | `format` | **是** | - | 固定 `"polyblock-extension"` |
 | `version` | **是** | - | 固定 `1` |
-| `id` | **是** | - | 全局唯一包 ID（2~48 位字母/数字/`-`/`_`，不能与内置包冲突） |
+| `id` | **是** | - | 唯一包 ID（2~48 位字母/数字/`-`/`_`）；项目内嵌包可用任意 ID（含 `rt`）覆盖全局包 |
 | `name` | **是** | - | 扩展包展示名 |
 | `packVersion` | 否 | `"1.0.0"` | 扩展包自身版本号 |
 | `iconLabel` | 否 | 首个 section 的 `label` | 扩展卡片图标缩写（1~4 字） |
@@ -34,9 +40,9 @@
 | `tags` | 否 | `[]` | 最多 6 个自定义标签 |
 | `imports` | 否 | - | 包级默认顶部导入 `{ lua?: string[], python?: string[] }`，全包普通/表达式积木自动继承并按内容全局去重 |
 | `sections` | **是** | - | 至少 1 个组件（见第 3 节） |
-| `simWidgets` | 否 | - | 包内共享模拟控件资产表（见第 5 节，需配合 `sandboxMock` 或 `bundleModule`） |
-| `sandboxMock` | 否 | - | `{ moduleName, luaSource?, pythonSource? }`，仅浏览器沙箱模拟用 |
-| `bundleModule` | 否 | - | `{ moduleName, luaSource?, pythonSource? }`，纯脚本库真实现（沙箱 + 真机共用） |
+| `simWidgets` | 否 | - | 包内共享模拟控件资产表（见第 5 节，需配合 `sandboxMock` 或非空 `libs[]`） |
+| `sandboxMock` | 否 | - | `{ moduleName, luaSource?, pythonSource? }`，仅浏览器沙箱模拟用（真机导出剥离；不可与同包 `libs[]` 重名） |
+| `libs` | 否 | - | `Array<{ moduleName, role?: "entry"\|"helper", luaSource?, pythonSource? }>`，纯脚本库真实现（沙箱与真机 `.zip` 共用；支持直接通过 IDE「导入脚本库」或「附加库源码」自动生成，无需手写 JSON 转义） |
 
 ---
 
@@ -126,14 +132,30 @@
       ]
     }
   ],
-  "bundleModule": {
-    "moduleName": "crc16",
-    "luaSource": "local M = {}\nfunction M.calc(s)\n  local crc = 0xFFFF\n  for i = 1, #s do\n    crc = crc ~ string.byte(s, i)\n    for _ = 1, 8 do\n      if (crc & 1) ~= 0 then crc = (crc >> 1) ~ 0xA001 else crc = crc >> 1 end\n    end\n  end\n  return crc\nend\nreturn M\n"
-  }
+  "libs": [
+    {
+      "moduleName": "crc16",
+      "role": "entry",
+      "luaSource": "local tbl = require(\"crc16_table\")\nlocal M = {}\nfunction M.calc(s)\n  local crc = 0xFFFF\n  for i = 1, #s do\n    crc = ((crc >> 8) ~ tbl[((crc ~ string.byte(s, i)) & 0xFF) + 1]) & 0xFFFF\n  end\n  return crc\nend\nreturn M\n"
+    },
+    {
+      "moduleName": "crc16_table",
+      "role": "helper",
+      "luaSource": "return { 0x0000, 0xC0C1 }\n"
+    }
+  ]
 }
 ```
 
-## 7. VS Code 快捷开发提示
+## 7. 原生脚本库导入与真机 `.zip` 打包导出
+
+1. **导入原生 `.lua` / `.py` 脚本库**：在「项目配置 → 能力与外设」或左侧「扩展」页点击**「导入脚本库 (.lua/.py)」**，可多选入口库与辅助依赖文件，自动扫描公开函数（跳过 Lua `local function` 与 Python `_私有函数`），预览勾选并切换 `value`/`statement` 形态后一键生成标准 `.polyext.json`（含 `libs[]`）；已有手写扩展包也可通过卡片上的**「附加库源码」**（回形针图标）直接挂载源码文件，无需手动转义字符串。
+2. **真机部署 `.zip` 打包导出**：顶部栏「导出 ▾」支持：
+   - **导出当前脚本**：单个干净 `.lua` / `.py` 文件；
+   - **打包导出当前句柄 (`.zip`)**：根目录扁平放置全部句柄脚本 + 胜出的 `libs[]` + `manifest.json`（天然兼容 `./?.lua`，零 `sandboxMock`）；
+   - **打包导出整工程 (`.zip`)**：按 `<handleName>/<script>.<ext>` 分目录 + 共享 `libs/` + `manifest.json`（点号模块名 `utils.crc16` 自动映射为 `libs/utils/crc16.lua`，零 `sandboxMock`）。
+
+## 8. VS Code 快捷开发提示
 
 在 VS Code 中打开任意 `.polyext.json`（或 `.json`）文件，直接键入以下前缀按回车即可一键插入对应结构并按 `Tab` 跳填：
 - `poly-pack`：完整扩展包骨架
@@ -141,3 +163,4 @@
 - `poly-block-stmt` / `poly-block-val` / `poly-block-hat`：新增语句 / 表达式 / 事件帽块
 - `poly-pool`：新增每句柄通道池配置
 - `poly-widget`：新增模拟控件
+- `poly-lib`：在 `libs[]` 中新增一个真实脚本库模块
