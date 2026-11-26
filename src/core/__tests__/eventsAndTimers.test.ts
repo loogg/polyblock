@@ -81,13 +81,20 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(pyMain.code).toContain('import rt');
     expect(pyMain.code).toContain('import board');
     expect(pyMain.code).toContain('import sys');
+    // Scheme A cross-file shared state module (`shared.py`): zero duplicate `= None` or `global`!
+    expect(pyMain.code).toContain('import shared');
+    expect(pyMain.code).not.toContain('led_on = None');
+    expect(pyMain.code).not.toContain('ticks = None');
+    expect(pyMain.code).not.toContain('global led_on');
+    expect(pyMain.code).not.toContain('global ticks');
+    expect(pyMain.code).toContain('shared.led_on = False');
+    expect(pyMain.code).toContain('shared.ticks = 0');
     // Must use legal `import timers` inside def on_start() — NEVER `from timers import *`!
     expect(pyMain.code).toContain('import timers');
     expect(pyMain.code).not.toContain('from timers import *');
     expect(pyMain.code).toContain('def on_start():');
-    expect(pyMain.code).toContain('global led_on, ticks');
     expect(pyMain.code).not.toContain('global cur_temp');
-    // Precise Python `global`: callbacks that don't mutate led_on/ticks emit ZERO `global` line!
+    // Callbacks that don't mutate non-shared globals emit ZERO `global` line!
     expect(pyMain.code).toMatch(/def on_run\(\):\n  cur_temp = board\.read_temp\(\)/);
     expect(pyMain.code).toMatch(/def on_button\(key, pressed\):\n  if key == "A" and pressed:/);
     expect(pyMain.code).toMatch(/def on_stop\(\):\n  board\.led\(False\)/);
@@ -112,12 +119,27 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
 
     const pyTimers = backendRegistry.get('python').generate(timersWs);
     expect(pyTimers.diagnostics).toHaveLength(0);
+    expect(pyTimers.code).toContain('import shared');
+    expect(pyTimers.code).not.toContain('led_on = None');
+    expect(pyTimers.code).not.toContain('ticks = None');
+    expect(pyTimers.code).not.toContain('global led_on');
+    expect(pyTimers.code).not.toContain('global ticks');
+    expect(pyTimers.code).toContain('shared.led_on = not shared.led_on');
+    expect(pyTimers.code).toContain('shared.ticks = ');
     expect(pyTimers.code).toContain('def on_timer_0():');
     expect(pyTimers.code).toContain('def on_timer_1():');
     expect(pyTimers.code).not.toContain('def on_timer(id):');
-    // Precise per-branch global: on_timer_0 only mutates led_on; on_timer_1 only mutates ticks!
-    expect(pyTimers.code).toMatch(/def on_timer_0\(\):\n  global led_on\n/);
-    expect(pyTimers.code).toMatch(/def on_timer_1\(\):\n  global ticks\n/);
+
+    // 3. Single-file handle (`oneshot_vm`) stays clean: ZERO `import shared`, keeps standard module globals!
+    const oneshotHdl = proj.handles.find((h) => h.name === 'oneshot_vm')!;
+    const oneshotMetas = buildHandleScriptsMeta(oneshotHdl);
+    setActiveHandleScripts(oneshotMetas, oneshotHdl.scripts[0].id);
+    const oneshotWs = loadWs(oneshotHdl.scripts[0].workspace);
+    const pyOneshot = backendRegistry.get('python').generate(oneshotWs);
+    expect(pyOneshot.code).not.toContain('import shared');
+    expect(pyOneshot.code).toContain('count = None');
+    expect(pyOneshot.code).toContain('global count');
+    oneshotWs.dispose();
 
     timersWs.dispose();
     setActiveHandleScripts([], null);

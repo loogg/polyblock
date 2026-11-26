@@ -9,7 +9,10 @@ import type {
   ScriptLanguageId,
 } from '../../types/project';
 import { backendRegistry } from '../backends/registry';
-import { buildHandleScriptsMeta } from '../backends/eventMode';
+import {
+  buildHandlePythonSharedModule,
+  buildHandleScriptsMeta,
+} from '../backends/eventMode';
 import {
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
@@ -74,6 +77,27 @@ export function buildHandleScriptModules(
   const poolCfgs = channelPoolConfigs ?? {
     [CAP_RT_TIMERS]: getHandleTimerConfig(handle, defaultTimerCount),
   };
+  const effectiveHandle: RuntimeHandle = liveScriptOverride
+    ? {
+        ...handle,
+        scripts: handle.scripts.map((s) =>
+          s.id === liveScriptOverride.scriptId
+            ? { ...s, workspace: liveScriptOverride.workspace }
+            : s,
+        ),
+      }
+    : handle;
+  const handleMetas = buildHandleScriptsMeta(effectiveHandle);
+
+  if (language === 'python') {
+    const sharedMod = buildHandlePythonSharedModule(effectiveHandle);
+    if (sharedMod) {
+      modules.push({
+        moduleName: sharedMod.moduleName,
+        pythonSource: sharedMod.pythonSource,
+      });
+    }
+  }
 
   for (const script of candidates) {
     try {
@@ -81,7 +105,7 @@ export function buildHandleScriptModules(
         liveScriptOverride && liveScriptOverride.scriptId === script.id
           ? liveScriptOverride.workspace
           : script.workspace;
-      setActiveHandleScripts(buildHandleScriptsMeta(handle), script.id);
+      setActiveHandleScripts(handleMetas, script.id);
       const compiled = compileScriptHeadless(wsJson, language, poolCfgs);
       modules.push({
         moduleName: script.name,

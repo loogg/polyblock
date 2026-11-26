@@ -39,6 +39,8 @@ export interface ActiveHandleScriptMeta {
   requiredScripts: string[];
   /** Extracted dispatch branches (e.g. `on_timer_0`, `on_timer_1`) routed centrally by the entry script. */
   dispatchBranches?: DispatchBranchMeta[];
+  /** Non-parameter workspace variable names actively referenced by enabled blocks in this script. */
+  declaredVariables?: string[];
 }
 
 export function normalizeTimerConfig(
@@ -113,6 +115,7 @@ export function setActiveHandleScripts(
     dispatchBranches: s.dispatchBranches
       ? s.dispatchBranches.map((b) => ({ ...b, params: [...b.params] }))
       : [],
+    declaredVariables: s.declaredVariables ? [...s.declaredVariables] : [],
   }));
   activeHandleScriptId = currentScriptId;
 }

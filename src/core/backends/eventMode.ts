@@ -8,6 +8,7 @@ import {
   type DispatchBranchMeta,
 } from '../blocks/timerConfigBridge';
 import { extensionRegistry } from '../extensions/registry';
+import { sanitizeLocalIdent } from './scopeAnalysis';
 
 export const CORE_TOP_HAT_TYPES = new Set<string>([
   'poly_on_start',
@@ -37,11 +38,27 @@ export function inspectWorkspaceScriptMeta(
   declaredEvents: string[];
   requiredScripts: string[];
   dispatchBranches: DispatchBranchMeta[];
+  declaredVariables: string[];
 } {
   const declared = new Set<string>();
   const required = new Set<string>();
   const dispatchBranches: DispatchBranchMeta[] = [];
   const usedFnNames = new Set<string>();
+  const declaredVariables = new Set<string>();
+
+  // Map Blockly variable id -> user variable name from workspaceJson.variables
+  const varNameById = new Map<string, string>();
+  const rawVars = workspaceJson?.variables;
+  if (Array.isArray(rawVars)) {
+    for (const v of rawVars) {
+      if (v && typeof v === 'object') {
+        const vo = v as Record<string, unknown>;
+        const id = typeof vo.id === 'string' ? vo.id : '';
+        const name = typeof vo.name === 'string' ? vo.name.trim() : '';
+        if (id && name) varNameById.set(id, name);
+      }
+    }
+  }
 
   const blocksContainer = workspaceJson?.blocks as
     | { blocks?: Array<Record<string, unknown>> }
@@ -97,34 +114,78 @@ export function inspectWorkspaceScriptMeta(
     }
   });
 
-  // Deep scan for `poly_require_script` anywhere inside top-level or `on_start`
-  const visit = (node: unknown) => {
+  // Deep scan for `poly_require_script` and actively referenced workspace variables
+  // (excluding formal parameter names inside procedure definitions).
+  const recordVarField = (rawField: unknown, excludedParams: Set<string>) => {
+    if (!rawField) return;
+    let resolvedName = '';
+    if (typeof rawField === 'object') {
+      const fo = rawField as Record<string, unknown>;
+      if (typeof fo.name === 'string' && fo.name.trim()) {
+        resolvedName = fo.name.trim();
+      } else if (typeof fo.id === 'string' && varNameById.has(fo.id)) {
+        resolvedName = varNameById.get(fo.id)!;
+      }
+    } else if (typeof rawField === 'string' && varNameById.has(rawField)) {
+      resolvedName = varNameById.get(rawField)!;
+    }
+    if (resolvedName && !excludedParams.has(resolvedName)) {
+      declaredVariables.add(resolvedName);
+    }
+  };
+
+  const visit = (node: unknown, excludedParams: Set<string>) => {
     if (!node || typeof node !== 'object') return;
     if (Array.isArray(node)) {
-      for (const item of node) visit(item);
+      for (const item of node) visit(item, excludedParams);
       return;
     }
     const obj = node as Record<string, unknown>;
     if (obj.enabled === false) return;
+
+    let nextExcluded = excludedParams;
+    if (
+      obj.type === 'procedures_defnoreturn' ||
+      obj.type === 'procedures_defreturn'
+    ) {
+      const extra = obj.extraState as
+        | { params?: Array<{ name?: string }> }
+        | undefined;
+      if (Array.isArray(extra?.params) && extra.params.length > 0) {
+        nextExcluded = new Set(excludedParams);
+        for (const p of extra.params) {
+          if (typeof p?.name === 'string' && p.name.trim()) {
+            nextExcluded.add(p.name.trim());
+          }
+        }
+      }
+    }
+
+    const fields = obj.fields as Record<string, unknown> | undefined;
     if (obj.type === 'poly_require_script') {
-      const fields = obj.fields as Record<string, unknown> | undefined;
       const targetName = String(fields?.SCRIPT ?? '').trim();
       if (targetName) required.add(targetName);
     }
+    if (fields) {
+      if (fields.VAR !== undefined) recordVarField(fields.VAR, nextExcluded);
+      if (fields.LIST !== undefined) recordVarField(fields.LIST, nextExcluded);
+    }
+
     if (obj.inputs && typeof obj.inputs === 'object') {
       for (const v of Object.values(obj.inputs as Record<string, unknown>)) {
-        visit(v);
+        visit(v, nextExcluded);
       }
     }
-    if (obj.next) visit(obj.next);
-    if (obj.block) visit(obj.block);
+    if (obj.next) visit(obj.next, nextExcluded);
+    if (obj.block) visit(obj.block, nextExcluded);
   };
-  visit(topList);
+  visit(topList, new Set<string>());
 
   return {
     declaredEvents: Array.from(declared),
     requiredScripts: Array.from(required),
     dispatchBranches,
+    declaredVariables: Array.from(declaredVariables),
   };
 }
 
@@ -141,8 +202,164 @@ export function buildHandleScriptsMeta(
       declaredEvents: meta.declaredEvents,
       requiredScripts: meta.requiredScripts,
       dispatchBranches: meta.dispatchBranches,
+      declaredVariables: meta.declaredVariables,
     };
   });
+}
+
+/** Collects non-parameter workspace variable names actively used by enabled blocks in a live workspace. */
+function collectLiveWorkspaceVariableNames(
+  workspace: Blockly.Workspace,
+): string[] {
+  const used = new Set<string>();
+  const varMap = workspace.getVariableMap();
+
+  const getEnclosingProcedureParams = (blk: Blockly.Block): Set<string> => {
+    const params = new Set<string>();
+    let cur: Blockly.Block | null = blk;
+    while (cur) {
+      if (
+        cur.type === 'procedures_defnoreturn' ||
+        cur.type === 'procedures_defreturn'
+      ) {
+        const proc = cur as Blockly.Block & {
+          getProcedureDef?: () => [string, string[], boolean];
+        };
+        const def = proc.getProcedureDef?.();
+        if (def && Array.isArray(def[1])) {
+          for (const p of def[1]) params.add(p);
+        }
+      }
+      cur = cur.getSurroundParent();
+    }
+    return params;
+  };
+
+  for (const blk of workspace.getAllBlocks(false)) {
+    if (blk.isShadow() || !blk.isEnabled()) continue;
+    const varFieldNames = ['VAR', 'LIST'];
+    let paramsCache: Set<string> | null = null;
+    for (const fName of varFieldNames) {
+      if (!blk.getField(fName)) continue;
+      const rawVal = blk.getFieldValue(fName);
+      if (!rawVal) continue;
+      const model = varMap.getVariableById(String(rawVal));
+      if (!model) continue;
+      const vName = model.getName().trim();
+      if (!vName) continue;
+      if (!paramsCache) paramsCache = getEnclosingProcedureParams(blk);
+      if (!paramsCache.has(vName)) {
+        used.add(vName);
+      }
+    }
+  }
+  return Array.from(used);
+}
+
+export interface HandlePythonSharedVarsInfo {
+  /** Safe collision-free Python module name (usually `shared`). */
+  moduleName: string;
+  /** Sorted cross-file shared variables mapped to deterministic Python attributes. */
+  entries: Array<{ name: string; attr: string }>;
+}
+
+/**
+ * Resolves variables shared across >= 2 scripts within the SAME RuntimeHandle so Python
+ * achieves identical cross-file variable sharing semantics to Lua's shared `_G` table
+ * via a clean auto-generated `shared.py` module.
+ */
+export function resolveHandleSharedPythonVars(
+  scriptsMeta: ActiveHandleScriptMeta[],
+  liveWorkspace?: Blockly.Workspace,
+  liveScriptId?: string | null,
+): HandlePythonSharedVarsInfo {
+  if (scriptsMeta.length < 2) {
+    return { moduleName: '', entries: [] };
+  }
+
+  const currentId = liveScriptId ?? getActiveHandleScriptId();
+  const varScriptCounts = new Map<string, number>();
+
+  for (const scr of scriptsMeta) {
+    const names =
+      liveWorkspace && currentId && scr.id === currentId
+        ? collectLiveWorkspaceVariableNames(liveWorkspace)
+        : scr.declaredVariables ?? [];
+    for (const name of new Set(names)) {
+      varScriptCounts.set(name, (varScriptCounts.get(name) ?? 0) + 1);
+    }
+  }
+
+  const sharedNames = Array.from(varScriptCounts.entries())
+    .filter(([, count]) => count >= 2)
+    .map(([name]) => name)
+    .sort((a, b) => a.localeCompare(b));
+
+  if (sharedNames.length === 0) {
+    return { moduleName: '', entries: [] };
+  }
+
+  const existingScriptNames = new Set(scriptsMeta.map((s) => s.name));
+  const moduleName =
+    ['shared', '_poly_shared', '_handle_shared'].find(
+      (cand) => !existingScriptNames.has(cand),
+    ) ?? '_poly_shared_vars';
+
+  const usedAttrs = new Set<string>();
+  const entries: Array<{ name: string; attr: string }> = [];
+  for (const name of sharedNames) {
+    const base = sanitizeLocalIdent(name);
+    let attr = base;
+    let idx = 2;
+    while (usedAttrs.has(attr)) {
+      attr = `${base}_${idx}`;
+      idx += 1;
+    }
+    usedAttrs.add(attr);
+    entries.push({ name, attr });
+  }
+
+  return { moduleName, entries };
+}
+
+/**
+ * Builds the auto-generated `shared.py` source module for a Python handle when >= 1 variable
+ * is shared across multiple scripts in that handle. Returns `null` for single-file handles
+ * or handles with no cross-file shared variables.
+ */
+export function buildHandlePythonSharedModule(
+  handle: RuntimeHandle,
+  liveScriptOverride?: { scriptId: string; workspace: Record<string, unknown> },
+): {
+  moduleName: string;
+  entries: Array<{ name: string; attr: string }>;
+  pythonSource: string;
+} | null {
+  const effectiveHandle: RuntimeHandle = liveScriptOverride
+    ? {
+        ...handle,
+        scripts: handle.scripts.map((s) =>
+          s.id === liveScriptOverride.scriptId
+            ? { ...s, workspace: liveScriptOverride.workspace }
+            : s,
+        ),
+      }
+    : handle;
+  const metas = buildHandleScriptsMeta(effectiveHandle);
+  const info = resolveHandleSharedPythonVars(metas);
+  if (!info.moduleName || info.entries.length === 0) {
+    return null;
+  }
+  const lines = [
+    '# 由 PolyBlock 自动生成的同句柄跨文件共享变量模块',
+    ...info.entries.map((e) => `${e.attr} = None`),
+    '',
+  ];
+  return {
+    moduleName: info.moduleName,
+    entries: info.entries,
+    pythonSource: lines.join('\n'),
+  };
 }
 
 function getHandleSiblingScripts() {

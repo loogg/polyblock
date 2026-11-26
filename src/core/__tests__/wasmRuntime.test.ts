@@ -3,7 +3,10 @@ import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { LuaFactory } from 'wasmoon';
 import { loadMicroPython } from '@micropython/micropython-webassembly-pyscript';
-import { buildHandleScriptsMeta } from '../backends/eventMode';
+import {
+  buildHandlePythonSharedModule,
+  buildHandleScriptsMeta,
+} from '../backends/eventMode';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
 import {
@@ -955,10 +958,17 @@ sys.modules["board"] = _m
     expect(logs.some((l) => l.includes('T1 告警触发次数 = 1'))).toBe(true);
     expect(logs.some((l) => l.includes('on_stop 已安全关闭 LED 与三色灯'))).toBe(true);
 
-    // 2. Real MicroPython WASM: main.py central router dispatches timers.py lazily imported inside on_start()!
+    // 2. Real MicroPython WASM: main.py & timers.py share `shared.py` state AND main.py central router dispatches timers.py!
+    const sharedMod = buildHandlePythonSharedModule(hdl);
+    expect(sharedMod).not.toBeNull();
+    expect(sharedMod!.moduleName).toBe('shared');
+    expect(sharedMod!.pythonSource).toContain('led_on = None');
+    expect(sharedMod!.pythonSource).toContain('ticks = None');
+
     const { logs: pyLogs } = await runPyDebugInMicroPython(mainDebugPy, {
       preloadModules: [
         { name: 'board', pythonSource: VIRTUAL_BOARD_PACK.sandboxMock!.pythonSource },
+        { name: sharedMod!.moduleName, pythonSource: sharedMod!.pythonSource, lazyVfs: true },
         { name: 'timers', pythonSource: timersCleanPy, lazyVfs: true },
       ],
       onReady: (sched) => {
@@ -969,6 +979,139 @@ sys.modules["board"] = _m
     expect(pyLogs.some((l) => l.includes('按键 A 按下'))).toBe(true);
     expect(pyLogs.some((l) => l.includes('T1 告警触发次数 = 1'))).toBe(true);
     expect(pyLogs.some((l) => l.includes('on_stop 已安全关闭 LED 与三色灯'))).toBe(true);
+
+    // 3. Prove TRUE cross-file state synchronization in MicroPython WASM via `shared.py` (matching Lua `_G`!):
+    //    main.py sets `ticks = 100` in on_start() -> timers.py increments `shared.ticks` to 101 -> main.py reads 101 in on_stop()!
+    const syncMainWs = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'sync_s',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'variables_set',
+                  id: 'sync_init',
+                  fields: { VAR: { id: 'v_sync_main' } },
+                  inputs: { VALUE: { block: { type: 'math_number', id: 'n_100', fields: { NUM: 100 } } } },
+                  next: {
+                    block: {
+                      type: 'poly_require_script',
+                      id: 'sync_req',
+                      fields: { SCRIPT: 'timers' },
+                      next: {
+                        block: {
+                          type: 'poly_start_timer',
+                          id: 'sync_t0',
+                          fields: { TIMER_ID: '0' },
+                          inputs: {
+                            PERIOD_MS: { shadow: { type: 'math_number', id: 's_ms', fields: { NUM: 25 } } },
+                            REPEAT: { shadow: { type: 'math_number', id: 's_rep', fields: { NUM: 1 } } },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: 'poly_on_stop',
+            id: 'sync_stop',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_print_kv',
+                  id: 'sync_p_stop',
+                  fields: { LABEL: 'STOP_TICKS' },
+                  inputs: {
+                    VALUE: { block: { type: 'variables_get', id: 'sync_g_stop', fields: { VAR: { id: 'v_sync_main' } } } },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [{ name: 'ticks', id: 'v_sync_main' }],
+    };
+    const syncTimersWs = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_timer',
+            id: 'sync_on_t0',
+            fields: { TIMER_ID: '0' },
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'math_change',
+                  id: 'sync_inc',
+                  fields: { VAR: { id: 'v_sync_timers' } },
+                  inputs: { DELTA: { shadow: { type: 'math_number', id: 's_1', fields: { NUM: 1 } } } },
+                  next: {
+                    block: {
+                      type: 'poly_print_kv',
+                      id: 'sync_p_t0',
+                      fields: { LABEL: 'TIMER_TICKS' },
+                      inputs: {
+                        VALUE: { block: { type: 'variables_get', id: 'sync_g_t0', fields: { VAR: { id: 'v_sync_timers' } } } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [{ name: 'ticks', id: 'v_sync_timers' }],
+    };
+    const syncHdl = {
+      id: 'h_sync',
+      name: 'sync_vm',
+      color: '#10b981',
+      autoStart: true,
+      capabilityConfigs: {},
+      entryScriptId: 'ss_main',
+      activeScriptId: 'ss_main',
+      updatedAt: '',
+      scripts: [
+        { id: 'ss_main', name: 'main', workspace: syncMainWs, breakpoints: [], updatedAt: '' },
+        { id: 'ss_timers', name: 'timers', workspace: syncTimersWs, breakpoints: [], updatedAt: '' },
+      ],
+    };
+    setActiveTimerConfig({ count: 4, aliases: {} });
+    const syncMetas = buildHandleScriptsMeta(syncHdl);
+    const syncShared = buildHandlePythonSharedModule(syncHdl)!;
+    expect(syncShared.moduleName).toBe('shared');
+
+    setActiveHandleScripts(syncMetas, 'ss_timers');
+    const stWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(syncTimersWs, stWs);
+    const syncTimersPy = backendRegistry.get('python').generate(stWs).code;
+    stWs.dispose();
+
+    setActiveHandleScripts(syncMetas, 'ss_main');
+    const smWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(syncMainWs, smWs);
+    const syncMainPyDebug = backendRegistry.get('python').generate(smWs).debugCode;
+    smWs.dispose();
+    setActiveHandleScripts([], null);
+    setActiveTimerConfig({ count: 8, aliases: {} });
+
+    const { logs: syncLogs } = await runPyDebugInMicroPython(syncMainPyDebug, {
+      preloadModules: [
+        { name: syncShared.moduleName, pythonSource: syncShared.pythonSource, lazyVfs: true },
+        { name: 'timers', pythonSource: syncTimersPy, lazyVfs: true },
+      ],
+    });
+    expect(syncLogs).toContain('TIMER_TICKS = 101');
+    expect(syncLogs).toContain('STOP_TICKS = 101');
   });
 
   it('executes top-level floating blocks before on_start() and keeps conditional sibling import lazy in Lua 5.4 & MicroPython', async () => {

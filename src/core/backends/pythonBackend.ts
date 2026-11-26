@@ -3,13 +3,16 @@ import { Order, pythonGenerator } from 'blockly/python';
 import {
   buildPythonGlobalLineForBlocks,
   codegenContext,
+  formatPythonVarRef,
   resetCodegenPassContext,
 } from './codegenContext';
 import {
   buildEntryDispatchRouters,
   hasExternalKeepAliveHat,
   isEventDrivenWorkspace,
+  resolveHandleSharedPythonVars,
 } from './eventMode';
+import { getActiveHandleScripts } from '../blocks/timerConfigBridge';
 import {
   analyzeWorkspaceScopes,
   sanitizeLocalIdent,
@@ -26,6 +29,98 @@ let pythonGeneratorsRegistered = false;
 
 function registerPythonBlockGenerators(): void {
   if (pythonGeneratorsRegistered) return;
+
+  // Wrap Blockly's pythonGenerator.init so cross-file shared variables:
+  // 1) are NOT re-declared as `<var> = None` at top of every file
+  // 2) automatically add `import shared` cleanly at the top imports section
+  const origInit = pythonGenerator.init.bind(pythonGenerator);
+  pythonGenerator.init = (workspace: Blockly.Workspace) => {
+    origInit(workspace);
+    const sharedMod = codegenContext.pythonSharedModuleName;
+    const sharedIdents = codegenContext.pythonSharedVarIdents;
+    if (sharedMod && sharedIdents.size > 0) {
+      const defs = (
+        pythonGenerator as unknown as { definitions_: Record<string, string> }
+      ).definitions_;
+      if (typeof defs.variables === 'string') {
+        const kept = defs.variables
+          .split('\n')
+          .filter((line) => {
+            const m = line.match(/^([A-Za-z0-9_]+)\s*=\s*None$/);
+            return !m || !sharedIdents.has(m[1]);
+          });
+        if (kept.length > 0) {
+          defs.variables = kept.join('\n');
+        } else {
+          delete defs.variables;
+        }
+      }
+      defs['import_poly_shared'] = `import ${sharedMod}`;
+    }
+  };
+
+  pythonGenerator.forBlock['variables_get'] = (block, generator) => {
+    const ref = formatPythonVarRef(
+      String(block.getFieldValue('VAR') || ''),
+      generator,
+      block,
+    );
+    return [ref, Order.ATOMIC];
+  };
+
+  pythonGenerator.forBlock['variables_set'] = (block, generator) => {
+    const ref = formatPythonVarRef(
+      String(block.getFieldValue('VAR') || ''),
+      generator,
+      block,
+    );
+    const val = generator.valueToCode(block, 'VALUE', Order.NONE) || '0';
+    return `${ref} = ${val}\n`;
+  };
+
+  const origTextAppend = pythonGenerator.forBlock['text_append'];
+  if (origTextAppend) {
+    pythonGenerator.forBlock['text_append'] = (block, generator) => {
+      const varId = String(block.getFieldValue('VAR') || '');
+      const ref = formatPythonVarRef(varId, generator, block);
+      const ident = generator.getVariableName(varId);
+      if (ref === ident) return origTextAppend(block, generator);
+      const val = generator.valueToCode(block, 'TEXT', Order.NONE) || "''";
+      return `${ref} = str(${ref}) + str(${val})\n`;
+    };
+  }
+
+  const origControlsFor = pythonGenerator.forBlock['controls_for'];
+  if (origControlsFor) {
+    pythonGenerator.forBlock['controls_for'] = (block, generator) => {
+      const out = origControlsFor(block, generator);
+      if (typeof out !== 'string') return out;
+      const varId = String(block.getFieldValue('VAR') || '');
+      const ref = formatPythonVarRef(varId, generator, block);
+      const ident = generator.getVariableName(varId);
+      if (ref === ident) return out;
+      return out.replace(
+        new RegExp(`(^|\\n)for ${ident} in `),
+        `$1for ${ref} in `,
+      );
+    };
+  }
+
+  const origControlsForEach = pythonGenerator.forBlock['controls_forEach'];
+  if (origControlsForEach) {
+    pythonGenerator.forBlock['controls_forEach'] = (block, generator) => {
+      const out = origControlsForEach(block, generator);
+      if (typeof out !== 'string') return out;
+      const varId = String(block.getFieldValue('VAR') || '');
+      const ref = formatPythonVarRef(varId, generator, block);
+      const ident = generator.getVariableName(varId);
+      if (ref === ident) return out;
+      return out.replace(
+        new RegExp(`(^|\\n)for ${ident} in `),
+        `$1for ${ref} in `,
+      );
+    };
+  }
 
   pythonGenerator.forBlock['poly_on_start'] = (block, generator) => {
     const body = generator.statementToCode(block, 'BODY');
@@ -75,7 +170,11 @@ function registerPythonBlockGenerators(): void {
   };
 
   pythonGenerator.forBlock['poly_for_range'] = (block, generator) => {
-    const variableName = generator.getVariableName(block.getFieldValue('VAR'));
+    const variableName = formatPythonVarRef(
+      String(block.getFieldValue('VAR') || ''),
+      generator,
+      block,
+    );
     const from = generator.valueToCode(block, 'FROM', Order.NONE) || '1';
     const to = generator.valueToCode(block, 'TO', Order.NONE) || '1';
     const by = generator.valueToCode(block, 'BY', Order.NONE) || '1';
@@ -157,7 +256,11 @@ function registerPythonBlockGenerators(): void {
   };
 
   pythonGenerator.forBlock['poly_list_append'] = (block, generator) => {
-    const listVar = generator.getVariableName(block.getFieldValue('LIST'));
+    const listVar = formatPythonVarRef(
+      String(block.getFieldValue('LIST') || ''),
+      generator,
+      block,
+    );
     const item = generator.valueToCode(block, 'ITEM', Order.NONE) || 'None';
     return `${listVar}.append(${item})\n`;
   };
@@ -166,7 +269,11 @@ function registerPythonBlockGenerators(): void {
   // which is absent in MicroPython WASM while remaining 100% valid in CPython.
   pythonGenerator.forBlock['math_change'] = (block, generator) => {
     const delta = generator.valueToCode(block, 'DELTA', Order.ADDITIVE) || '0';
-    const varName = generator.getVariableName(block.getFieldValue('VAR'));
+    const varName = formatPythonVarRef(
+      String(block.getFieldValue('VAR') || ''),
+      generator,
+      block,
+    );
     return `${varName} = (${varName} if isinstance(${varName}, (int, float)) else 0) + ${delta}\n`;
   };
 
@@ -183,14 +290,29 @@ function registerPythonBlockGenerators(): void {
       generator: typeof pythonGenerator,
     ) => {
       const out = orig(block, generator);
-      if (codegenContext.debugPass) {
-        const defs = (
-          generator as unknown as { definitions_: Record<string, string> }
-        ).definitions_;
-        for (const key of Object.keys(defs)) {
-          if (defs[key].startsWith('def ') || defs[key].includes('\ndef ')) {
-            defs[key] = defs[key].replace(/(^|\n)def /g, '$1async def ');
-          }
+      const defs = (
+        generator as unknown as { definitions_: Record<string, string> }
+      ).definitions_;
+      const sharedIdents = codegenContext.pythonSharedVarIdents;
+      for (const key of Object.keys(defs)) {
+        if (!key.startsWith('%')) continue;
+        if (sharedIdents.size > 0) {
+          defs[key] = defs[key].replace(
+            /^([ \t]+)global ([^\n]+)\n/gm,
+            (_m, indent: string, list: string) => {
+              const kept = list
+                .split(',')
+                .map((s) => s.trim())
+                .filter((name) => name && !sharedIdents.has(name));
+              return kept.length > 0 ? `${indent}global ${kept.join(', ')}\n` : '';
+            },
+          );
+        }
+        if (
+          codegenContext.debugPass &&
+          (defs[key].startsWith('def ') || defs[key].includes('\ndef '))
+        ) {
+          defs[key] = defs[key].replace(/(^|\n)def /g, '$1async def ');
         }
       }
       return out;
@@ -340,17 +462,46 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
     let rawClean = '';
     const varEntries: Array<[string, string]> = [];
     const varIdToIdent = new Map<string, string>();
+    const sharedInfo = resolveHandleSharedPythonVars(
+      getActiveHandleScripts(),
+      workspace,
+    );
+    const sharedAttrByName = new Map(
+      sharedInfo.entries.map((e) => [e.name, e.attr]),
+    );
+    const sharedVarIdToAttr = new Map<string, string>();
+    const sharedVarIdents = new Set<string>();
+    const sharedSnapEntries: Array<[string, string]> = [];
+    const nonSharedVarIdents: string[] = [];
+
     try {
+      resetCodegenPassContext({
+        debugPass: false,
+        eventDrivenMode: eventDriven,
+      });
       pythonGenerator.init(workspace);
       for (const v of workspace.getVariableMap().getAllVariables()) {
         const ident = pythonGenerator.getVariableName(v.getId());
         varEntries.push([v.getName(), ident]);
         varIdToIdent.set(v.getId(), ident);
+        const sharedAttr = sharedAttrByName.get(v.getName());
+        if (sharedAttr && sharedInfo.moduleName) {
+          sharedVarIdToAttr.set(v.getId(), sharedAttr);
+          sharedVarIdents.add(ident);
+          sharedSnapEntries.push([v.getName(), sharedAttr]);
+        } else {
+          nonSharedVarIdents.push(ident);
+        }
       }
+      const activeSharedModName =
+        sharedVarIdToAttr.size > 0 ? sharedInfo.moduleName : '';
       resetCodegenPassContext({
         debugPass: false,
         eventDrivenMode: eventDriven,
-        pythonGlobalVarIdents: varEntries.map(([, ident]) => ident),
+        pythonGlobalVarIdents: nonSharedVarIdents,
+        pythonSharedModuleName: activeSharedModName,
+        pythonSharedVarIdToAttr: sharedVarIdToAttr,
+        pythonSharedVarIdents: sharedVarIdents,
       });
       rawClean = pythonGenerator.workspaceToCode(workspace);
     } finally {
@@ -385,11 +536,16 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
 
     // --- Pass 2: Instrumented async sandbox debug code ---
     let debugBody = '';
+    const activeSharedModName =
+      sharedVarIdToAttr.size > 0 ? sharedInfo.moduleName : '';
     try {
       resetCodegenPassContext({
         debugPass: true,
         eventDrivenMode: eventDriven,
-        pythonGlobalVarIdents: varEntries.map(([, ident]) => ident),
+        pythonGlobalVarIdents: nonSharedVarIdents,
+        pythonSharedModuleName: activeSharedModName,
+        pythonSharedVarIdToAttr: sharedVarIdToAttr,
+        pythonSharedVarIdents: sharedVarIdents,
       });
       pythonGenerator.STATEMENT_PREFIX = `await _poly_tick(%1, _poly_snap(locals(), globals()))\n`;
       pythonGenerator.STATEMENT_SUFFIX = null;
@@ -399,13 +555,21 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
         debugPass: false,
         eventDrivenMode: false,
         pythonGlobalVarIdents: [],
+        pythonSharedModuleName: '',
+        pythonSharedVarIdToAttr: new Map(),
+        pythonSharedVarIdents: new Set(),
       });
       pythonGenerator.STATEMENT_PREFIX = prevPrefix;
       pythonGenerator.STATEMENT_SUFFIX = prevSuffix;
     }
 
-    const snapVarEntries: Array<[string, string]> = [...varEntries];
-    const seenPyLabels = new Set(varEntries.map(([label]) => label));
+    const snapVarEntries: Array<[string, string]> = varEntries.filter(
+      ([, ident]) => !sharedVarIdents.has(ident),
+    );
+    const seenPyLabels = new Set([
+      ...snapVarEntries.map(([label]) => label),
+      ...sharedSnapEntries.map(([label]) => label),
+    ]);
     for (const loc of allLocalEntries) {
       if (!seenPyLabels.has(loc.label)) {
         seenPyLabels.add(loc.label);
@@ -414,8 +578,10 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
     }
 
     const debugPrelude = [
-      `import _poly, json, asyncio`,
+      `import sys, _poly, json, asyncio`,
       `_POLY_VAR_MAP = ${JSON.stringify(snapVarEntries)}`,
+      `_POLY_SHARED_MOD = ${JSON.stringify(activeSharedModName)}`,
+      `_POLY_SHARED_MAP = ${JSON.stringify(sharedSnapEntries)}`,
       `_POLY_EVENT_MODE = False`,
       `_POLY_IN_START = False`,
       `_POLY_ACTIVE_CB = ''`,
@@ -491,6 +657,16 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       `      _out[_label] = repr(_v)`,
       `    except Exception:`,
       `      _out[_label] = str(_v)`,
+      `  if _POLY_SHARED_MOD and _POLY_SHARED_MAP:`,
+      `    _sm = sys.modules.get(_POLY_SHARED_MOD)`,
+      `    if _sm is not None:`,
+      `      for _label, _attr in _POLY_SHARED_MAP:`,
+      `        if hasattr(_sm, _attr):`,
+      `          _v = getattr(_sm, _attr)`,
+      `          try:`,
+      `            _out[_label] = repr(_v)`,
+      `          except Exception:`,
+      `            _out[_label] = str(_v)`,
       `  return json.dumps(_out)`,
       ``,
     ].join('\n');

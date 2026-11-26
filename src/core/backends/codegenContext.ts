@@ -10,6 +10,12 @@ export interface CodegenPassContext {
   eventDrivenMode: boolean;
   emittedDispatchEvents: Set<string>;
   pythonGlobalVarIdents: string[];
+  /** Auto-generated cross-file shared state module name (e.g. 'shared'), empty when unused. */
+  pythonSharedModuleName: string;
+  /** Map of current-workspace Blockly variable ID -> shared module attribute name. */
+  pythonSharedVarIdToAttr: Map<string, string>;
+  /** Sanitized local Blockly identifiers belonging to the shared module (excluded from `<v> = None` & `global`). */
+  pythonSharedVarIdents: Set<string>;
 }
 
 export const codegenContext: CodegenPassContext = {
@@ -17,17 +23,73 @@ export const codegenContext: CodegenPassContext = {
   eventDrivenMode: false,
   emittedDispatchEvents: new Set<string>(),
   pythonGlobalVarIdents: [],
+  pythonSharedModuleName: '',
+  pythonSharedVarIdToAttr: new Map<string, string>(),
+  pythonSharedVarIdents: new Set<string>(),
 };
 
 export function resetCodegenPassContext(opts: {
   debugPass: boolean;
   eventDrivenMode: boolean;
   pythonGlobalVarIdents?: string[];
+  pythonSharedModuleName?: string;
+  pythonSharedVarIdToAttr?: Map<string, string>;
+  pythonSharedVarIdents?: Set<string>;
 }): void {
   codegenContext.debugPass = opts.debugPass;
   codegenContext.eventDrivenMode = opts.eventDrivenMode;
   codegenContext.emittedDispatchEvents = new Set<string>();
   codegenContext.pythonGlobalVarIdents = opts.pythonGlobalVarIdents ?? [];
+  codegenContext.pythonSharedModuleName = opts.pythonSharedModuleName ?? '';
+  codegenContext.pythonSharedVarIdToAttr = new Map(
+    opts.pythonSharedVarIdToAttr ?? [],
+  );
+  codegenContext.pythonSharedVarIdents = new Set(
+    opts.pythonSharedVarIdents ?? [],
+  );
+}
+
+/**
+ * Resolves a Python variable reference for a block field (`VAR` / `LIST`):
+ * - If the variable is shadowed by an enclosing custom procedure's formal parameter, keeps bare local ident.
+ * - If the variable belongs to the handle's cross-file shared module (`shared.py`), emits `shared.<attr>`.
+ * - Otherwise returns the standard Blockly Python variable identifier.
+ */
+export function formatPythonVarRef(
+  varId: string,
+  generator: { getVariableName(id: string): string },
+  block?: Blockly.Block,
+): string {
+  const sharedMod = codegenContext.pythonSharedModuleName;
+  const sharedAttr = sharedMod
+    ? codegenContext.pythonSharedVarIdToAttr.get(varId)
+    : undefined;
+  if (sharedMod && sharedAttr) {
+    if (block) {
+      const model = block.workspace?.getVariableMap()?.getVariableById(varId);
+      const rawName = model?.getName();
+      if (rawName) {
+        let cur: Blockly.Block | null = block;
+        while (cur) {
+          if (
+            cur.type === 'procedures_defnoreturn' ||
+            cur.type === 'procedures_defreturn'
+          ) {
+            const proc = cur as Blockly.Block & {
+              getProcedureDef?: () => [string, string[], boolean];
+            };
+            const def = proc.getProcedureDef?.();
+            if (def && Array.isArray(def[1]) && def[1].includes(rawName)) {
+              return generator.getVariableName(varId);
+            }
+          }
+          cur = cur.getSurroundParent();
+        }
+      }
+    }
+    return `${sharedMod}.${sharedAttr}`;
+  }
+  return generator.getVariableName(varId);
 }
 
 const PY_VAR_WRITE_BLOCK_TYPES = new Set<string>([
@@ -60,6 +122,7 @@ export function buildPythonGlobalLineForBlocks(
       if (!PY_VAR_WRITE_BLOCK_TYPES.has(blk.type)) continue;
       const varId = blk.getFieldValue('VAR');
       if (!varId) continue;
+      if (codegenContext.pythonSharedVarIdToAttr.has(String(varId))) continue;
       const ident = generator.getVariableName(String(varId));
       if (ident && !paramSet.has(ident)) {
         mutatedIdents.add(ident);

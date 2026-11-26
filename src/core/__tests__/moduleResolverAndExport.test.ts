@@ -744,4 +744,39 @@ def reset():
     ws.dispose();
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
+
+  it('auto-bundles shared.py ONLY for Python handles with cross-file shared variables (never for single-file or Lua bundles)', () => {
+    const pyProj = instantiateProjectFromTemplate('event_timer_demo');
+    pyProj.language = 'python';
+    const boardVm = pyProj.handles.find((h) => h.name === 'board_vm')!;
+    const oneshotVm = pyProj.handles.find((h) => h.name === 'oneshot_vm')!;
+
+    // 1. Single-handle Python export for multi-file `board_vm` includes `shared.py`
+    const pyBoardBundle = buildSingleHandleTargetBundle(pyProj, boardVm);
+    const pyBoardPaths = pyBoardBundle.entries.map((e) => e.path);
+    expect(pyBoardPaths).toContain('shared.py');
+    expect(pyBoardPaths).toContain('main.py');
+    expect(pyBoardPaths).toContain('timers.py');
+    const sharedEntry = pyBoardBundle.entries.find((e) => e.path === 'shared.py')!;
+    expect(sharedEntry.content).toContain('led_on = None');
+    expect(sharedEntry.content).toContain('ticks = None');
+
+    // 2. Single-handle Python export for single-file `oneshot_vm` has NO `shared.py`
+    const pyOneshotBundle = buildSingleHandleTargetBundle(pyProj, oneshotVm);
+    expect(pyOneshotBundle.entries.map((e) => e.path)).not.toContain('shared.py');
+
+    // 3. Full-project Python ZIP places `board_vm/shared.py` ONLY under `board_vm/`
+    const pyFullBundle = buildProjectTargetBundle(pyProj);
+    const pyFullPaths = pyFullBundle.entries.map((e) => e.path);
+    expect(pyFullPaths).toContain('board_vm/shared.py');
+    expect(pyFullPaths).not.toContain('oneshot_vm/shared.py');
+
+    // 4. Lua bundle NEVER emits `shared.lua` or `shared.py` (Lua uses native `_G`)
+    const luaProj = instantiateProjectFromTemplate('event_timer_demo');
+    luaProj.language = 'lua';
+    const luaBoardBundle = buildSingleHandleTargetBundle(luaProj, luaProj.handles[0]);
+    const luaPaths = luaBoardBundle.entries.map((e) => e.path);
+    expect(luaPaths).not.toContain('shared.lua');
+    expect(luaPaths).not.toContain('shared.py');
+  });
 });

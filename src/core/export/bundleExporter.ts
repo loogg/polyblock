@@ -1,5 +1,8 @@
 import type { ProjectModel, RuntimeHandle } from '../../types/project';
-import { buildHandleScriptsMeta } from '../backends/eventMode';
+import {
+  buildHandlePythonSharedModule,
+  buildHandleScriptsMeta,
+} from '../backends/eventMode';
 import { backendRegistry } from '../backends/registry';
 import {
   setActiveChannelPoolConfigs,
@@ -61,6 +64,16 @@ function compileHandleAllScripts(
   const scriptMetas = buildHandleScriptsMeta(handle);
 
   const compiled: Array<{ scriptId: string; scriptName: string; code: string }> = [];
+  if (project.language === 'python') {
+    const sharedMod = buildHandlePythonSharedModule(handle);
+    if (sharedMod) {
+      compiled.push({
+        scriptId: '__poly_shared__',
+        scriptName: sharedMod.moduleName,
+        code: sharedMod.pythonSource,
+      });
+    }
+  }
   for (const scr of handle.scripts) {
     setActiveHandleScripts(scriptMetas, scr.id);
     const res = compileScriptHeadless(scr.workspace, project.language, poolCfgs);
