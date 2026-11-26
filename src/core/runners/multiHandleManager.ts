@@ -15,7 +15,7 @@ import {
 } from '../blocks/timerConfigBridge';
 import { CAP_RT_TIMERS } from '../capabilities/registry';
 import { extensionRegistry } from '../extensions/registry';
-import type { ExtensionSandboxMock } from '../extensions/types';
+import type { ExtensionModuleSource } from '../extensions/types';
 import {
   getAllHandleChannelPoolConfigs,
   getHandleTimerConfig,
@@ -24,7 +24,7 @@ import { WasmoonLuaRunner } from './luaRunner';
 import { MicroPythonWasmRunner } from './pythonRunner';
 import type { RunResult, RunnerStatus, ScriptRunner } from './types';
 
-function compileScriptHeadless(
+export function compileScriptHeadless(
   workspaceJson: Record<string, unknown>,
   language: ScriptLanguageId,
   channelPoolConfigs: Record<string, ReturnType<typeof getHandleTimerConfig>>,
@@ -56,8 +56,9 @@ export function buildHandleScriptModules(
   sharedModules: ProjectScript[] = [],
   defaultTimerCount = 8,
   channelPoolConfigs?: Record<string, ReturnType<typeof getHandleTimerConfig>>,
-): ExtensionSandboxMock[] {
-  const modules: ExtensionSandboxMock[] = [];
+  liveScriptOverride?: { scriptId: string; workspace: Record<string, unknown> },
+): ExtensionModuleSource[] {
+  const modules: ExtensionModuleSource[] = [];
   const candidates = [
     ...sharedModules,
     ...handle.scripts.filter((s) => s.id !== excludeScriptId),
@@ -68,11 +69,11 @@ export function buildHandleScriptModules(
 
   for (const script of candidates) {
     try {
-      const compiled = compileScriptHeadless(
-        script.workspace,
-        language,
-        poolCfgs,
-      );
+      const wsJson =
+        liveScriptOverride && liveScriptOverride.scriptId === script.id
+          ? liveScriptOverride.workspace
+          : script.workspace;
+      const compiled = compileScriptHeadless(wsJson, language, poolCfgs);
       modules.push({
         moduleName: script.name,
         luaSource: language === 'lua' ? compiled.code : undefined,
@@ -91,7 +92,7 @@ export interface MultiHandleRunOptions {
   timeoutMs: number;
   timeSliceMs?: number;
   stepDelayMs: number;
-  extensionMocks: ExtensionSandboxMock[];
+  extensionMocks: ExtensionModuleSource[];
   mockInputs: Record<string, unknown>;
 }
 

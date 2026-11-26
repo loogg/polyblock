@@ -19,8 +19,8 @@ import {
   validateExtensionPack,
 } from '../extensions/registry';
 import type {
-  HandleChannelPoolSpec,
   PolyExtensionPack,
+  ResolvedHandleChannelPoolSpec,
 } from '../extensions/types';
 import {
   FLAGSHIP_DRIVE_CTRL_WS,
@@ -43,7 +43,7 @@ import type {
   WorkspaceStoreState,
 } from '../../types/project';
 
-export const STORAGE_STORE_V4_KEY = 'polyblock.store.v4';
+export const STORAGE_STORE_V5_KEY = 'polyblock.store.v5';
 export const STORAGE_STORE_V2_KEY = 'polyblock.store.v2';
 export const STORAGE_LEGACY_V1_KEY = 'polyblock.workspace.v1';
 
@@ -240,7 +240,7 @@ export function setHandleChannelPoolConfig(
 
 export function getAllHandleChannelPoolConfigs(
   handle: RuntimeHandle,
-  channelPools: HandleChannelPoolSpec[],
+  channelPools: ResolvedHandleChannelPoolSpec[],
   defaultTimerCount = DEFAULT_TIMER_COUNT,
 ): Record<string, ProjectTimerConfig> {
   const out: Record<string, ProjectTimerConfig> = {
@@ -1244,7 +1244,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     id: 'starter_suite',
     name: '入门演示项目',
     description:
-      '纯脚本环境（零外设、零定时器）：含顺序累加日志（main）、延时与断点单步（step_debug）、随机采样阈值告警（threshold_alarm），适合快速熟悉积木与双语代码导出。',
+      '纯脚本环境（零外设、零定时器）：3 个独立入门句柄（每句柄唯一 on_start），分别演示顺序累加日志（main_vm）、延时与断点单步（step_debug_vm）、随机采样阈值告警（alarm_vm）。',
     language: 'lua',
     targetProfileId: 'generic-script',
     defaultTimerCount: 8,
@@ -1257,13 +1257,29 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     handles: [
       {
         name: 'main_vm',
-        description: '默认主运行句柄',
+        description: '顺序累加与日志输出句柄',
         color: '#4f46e5',
         autoStart: true,
         scripts: [
           { name: 'main', isEntry: true, workspace: tplById('demo_logger').workspace },
-          { name: 'step_debug', workspace: tplById('step_debug_demo').workspace },
-          { name: 'threshold_alarm', workspace: tplById('threshold_alarm').workspace },
+        ],
+      },
+      {
+        name: 'step_debug_vm',
+        description: '延时与断点单步调试句柄',
+        color: '#0ea5e9',
+        autoStart: false,
+        scripts: [
+          { name: 'main', isEntry: true, workspace: tplById('step_debug_demo').workspace },
+        ],
+      },
+      {
+        name: 'alarm_vm',
+        description: '随机采样阈值告警句柄',
+        color: '#10b981',
+        autoStart: false,
+        scripts: [
+          { name: 'main', isEntry: true, workspace: tplById('threshold_alarm').workspace },
         ],
       },
     ],
@@ -1272,7 +1288,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     id: 'virtual_board_demo',
     name: '智能温控与虚拟板联动',
     description:
-      '中等难度（Python 3 + 外设与工具库）：启用虚拟硬件外设包、字典与秒表包；含 LED/三色灯/OLED 开机自检、交互式温度滑块告警（temp_guard）与字典配置耗时统计（dict_config）。',
+      '中等难度（Python 3 + 外设与工具库）：启用虚拟硬件外设包、字典与秒表包；含 LED/三色灯/OLED 自检（board_vm）、交互式温度滑块告警（temp_guard_vm）与字典耗时统计（dict_config_vm）。',
     language: 'python',
     targetProfileId: 'virtual-board-basic',
     defaultTimerCount: 8,
@@ -1285,13 +1301,29 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     handles: [
       {
         name: 'board_vm',
-        description: 'Python 虚拟硬件联动句柄',
+        description: 'LED / 三色灯 / OLED 开机自检句柄',
         color: '#0ea5e9',
         autoStart: true,
         scripts: [
           { name: 'main', isEntry: true, workspace: VIRTUAL_BOARD_LED_WS },
-          { name: 'temp_guard', workspace: VIRTUAL_BOARD_TEMP_WS },
-          { name: 'dict_config', workspace: MEDIUM_DICT_CONFIG_WS },
+        ],
+      },
+      {
+        name: 'temp_guard_vm',
+        description: '交互式温度传感器阈值告警句柄',
+        color: '#f59e0b',
+        autoStart: false,
+        scripts: [
+          { name: 'main', isEntry: true, workspace: VIRTUAL_BOARD_TEMP_WS },
+        ],
+      },
+      {
+        name: 'dict_config_vm',
+        description: '字典配置与毫秒秒表耗时统计句柄',
+        color: '#8b5cf6',
+        autoStart: false,
+        scripts: [
+          { name: 'main', isEntry: true, workspace: MEDIUM_DICT_CONFIG_WS },
         ],
       },
     ],
@@ -1300,7 +1332,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     id: 'event_timer_demo',
     name: '事件回调与多路定时器示例',
     description:
-      '进阶事件驱动（Lua 5.4 多文件句柄拆分 + 顶层零闭包 ABI）：主入口 main.lua 通过 require("timers") 加载同句柄 timers.lua，展示 on_start 设周期、独立 on_timer_0/1 函数分发、按键中断与 on_stop 安全停机。',
+      '进阶事件驱动（Lua 5.4 单句柄多文件协同 + 顶层零闭包 ABI）：board_vm 句柄内由唯一入口 main.lua 的 on_start 显式 require("timers") 加载同句柄定时器回调模块；另附独立单次定时退出句柄 oneshot_vm。',
     language: 'lua',
     targetProfileId: 'virtual-board-rt',
     defaultTimerCount: 8,
@@ -1308,12 +1340,12 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     difficulty: {
       level: 'L3',
       label: 'L3 进阶 · 事件定时',
-      highlights: ['main + timers 拆文件', '独立 on_timer_N 函数', '按键边沿回调', '局部变量作用域'],
+      highlights: ['main + timers 同句柄协同', '唯一 on_start / on_stop', '独立 on_timer_N 函数', '按键边沿回调'],
     },
     handles: [
       {
         name: 'board_vm',
-        description: '板载事件循环控制句柄',
+        description: '板载事件循环控制句柄（main.lua + timers.lua 协同运行）',
         color: '#4f46e5',
         autoStart: true,
         timerConfig: {
@@ -1326,7 +1358,21 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
         scripts: [
           { name: 'main', isEntry: true, workspace: EVENT_LOOP_MAIN_WS },
           { name: 'timers', workspace: EVENT_LOOP_TIMERS_WS },
-          { name: 'timer_oneshot', workspace: TIMER_ONESHOT_WS },
+        ],
+      },
+      {
+        name: 'oneshot_vm',
+        description: '3 次定时自动退出独立句柄',
+        color: '#10b981',
+        autoStart: false,
+        timerConfig: {
+          count: 8,
+          aliases: {
+            '0': '三次采样',
+          },
+        },
+        scripts: [
+          { name: 'main', isEntry: true, workspace: TIMER_ONESHOT_WS },
         ],
       },
     ],
@@ -2012,9 +2058,9 @@ export function countProjectScripts(project: ProjectModel): number {
 }
 
 export function loadWorkspaceStore(): WorkspaceStoreState {
-  // 1. Try current v4 store
+  // 1. Try current v5 store
   try {
-    const rawCurrent = localStorage.getItem(STORAGE_STORE_V4_KEY);
+    const rawCurrent = localStorage.getItem(STORAGE_STORE_V5_KEY);
     if (rawCurrent) {
       const parsed = JSON.parse(rawCurrent) as WorkspaceStoreState;
       if (
@@ -2102,7 +2148,7 @@ export function loadWorkspaceStore(): WorkspaceStoreState {
 
 export function saveWorkspaceStore(store: WorkspaceStoreState): void {
   try {
-    localStorage.setItem(STORAGE_STORE_V4_KEY, JSON.stringify(store));
+    localStorage.setItem(STORAGE_STORE_V5_KEY, JSON.stringify(store));
   } catch {
     // ignore storage quota errors
   }

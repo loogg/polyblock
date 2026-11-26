@@ -39,13 +39,14 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     expect(p1.language).toBe('lua');
     expect(p1.targetProfileId).toBe('generic-script');
     expect(p1.enabledCapabilities).toEqual([]);
-    expect(p1.handles).toHaveLength(1);
-    const h1 = getActiveHandle(p1);
-    expect(h1.scripts.map((s) => s.name)).toEqual([
-      'main',
-      'step_debug',
-      'threshold_alarm',
+    // Each independent demo program lives in its own handle (strictly 1 on_start per handle)
+    expect(p1.handles.map((h) => h.name)).toEqual([
+      'main_vm',
+      'step_debug_vm',
+      'alarm_vm',
     ]);
+    const h1 = getActiveHandle(p1);
+    expect(h1.scripts.map((s) => s.name)).toEqual(['main']);
     expect(h1.entryScriptId).toBe(h1.scripts[0].id);
     expect(h1.activeScriptId).toBe(h1.scripts[0].id);
 
@@ -108,7 +109,7 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     );
     expect(switched.targetProfileId).toBe('embedded-rt');
     expect(switched.enabledCapabilities).toEqual([CAP_RT]);
-    expect(switched.handles).toHaveLength(1);
+    expect(switched.handles).toHaveLength(3);
 
     const updatedHandle = setHandleTimerConfig(switched.handles[0], {
       count: 16,

@@ -3,10 +3,15 @@ export interface ExtensionBlockShadow {
   value: number | string;
 }
 
+export interface ExtensionPackImports {
+  lua?: string[];
+  python?: string[];
+}
+
 export interface ExtensionCodeTemplate {
   /** Template string supporting {{ARG}}, {{ARG:json}}, {{ARG:int}}, {{ARG:bool_lua}}, {{ARG:bool_py}}, {{ARG:channel_comment_lua}}, {{ARG:channel_comment_py}} */
   template: string;
-  /** Deduplicated module import lines hoisted to file top (e.g. `import board` or `local board = require("board")`) */
+  /** Optional override of pack-level default imports (pass `[]` to suppress default import for a pure-syntax block). */
   imports?: string[];
 }
 
@@ -26,12 +31,8 @@ export interface ExtensionHatSpec {
    *   with `if / elseif` (Lua) or `if / elif` (Python) branches.
    */
   mode: 'singleton' | 'dispatch';
-  /** Optional statement emitted right before the callback definition (e.g. `rt.set_run_period({{PERIOD_MS}})`). */
-  preludeLua?: string;
-  preludePython?: string;
-  /** Module imports hoisted to file top when this hat is present. */
-  importsLua?: string[];
-  importsPython?: string[];
+  /** Optional module imports hoisted when this hat is present (hats do not auto-hoist pack imports). */
+  imports?: ExtensionPackImports;
   /** Branch condition template for mode='dispatch'. */
   conditionLua?: string;
   conditionPython?: string;
@@ -46,16 +47,21 @@ export interface ExtensionHatSpec {
   extractBranchFnPrefix?: string;
   /** Template producing a uniqueness key to warn on duplicate dispatch branches (e.g. "{{KEY}}:{{EDGE}}"). */
   duplicateKeyTemplate?: string;
-  /** Scope-tree display label template (e.g. "on_button · 按键 {{KEY}} {{EDGE}}"). */
+  /** Scope-tree display label template (e.g. "on_button · 按键 {{KEY}} {{EDGE:edge_zh}}"). */
   scopeLabelTemplate?: string;
   scopeShortTemplate?: string;
-  scopeCategory?: 'lifecycle' | 'timer' | 'button' | 'function';
+  scopeCategory?: 'lifecycle' | 'event' | 'function';
   /** Whether defining this callback keeps the browser sandbox event loop alive waiting for events (default: true). */
   keepsAlive?: boolean;
 }
 
 export interface ExtensionBlockDef {
   type: string;
+  /**
+   * - 'statement': action block with top/bottom connectors (returns nothing, e.g. LED set, variable assign).
+   * - 'value': expression block with output connector plugged into another block's input slot.
+   * - 'hat': top-level event callback wrapper generating `function on_xxx(...)`.
+   */
   kind: 'statement' | 'value' | 'hat';
   message0: string;
   args0?: Array<Record<string, unknown>>;
@@ -72,19 +78,35 @@ export interface ExtensionBlockDef {
   python?: ExtensionCodeTemplate;
   /** Required when kind='hat'. */
   hat?: ExtensionHatSpec;
+  /**
+   * References widget `key`s from `pack.simWidgets` driven or observed by this block.
+   * When a section is enabled, Simulator panel automatically loads only widgets referenced by enabled blocks.
+   */
+  simWidgetKeys?: string[];
+  /**
+   * Whether this block can run inside the browser WASM sandbox (default: true).
+   * Set to `false` for export-only blocks (e.g. direct chip registers / private C APIs with no sandbox mock).
+   */
+  sandboxRunnable?: boolean;
 }
 
-export interface ExtensionSandboxMock {
+/**
+ * Script module source mounted into Lua `package.preload` / Python `sys.modules`.
+ * Used by BOTH:
+ * - `sandboxMock`: fake stub for real-hardware C firmware APIs (browser sandbox ONLY, stripped on target export).
+ * - `bundleModule`: real pure-script library module like `crc16.lua` (runs in sandbox AND bundled on target export).
+ */
+export interface ExtensionModuleSource {
   moduleName: string;
   luaSource?: string;
   pythonSource?: string;
-  /** Auto-populated by registry when resolving mocks for pack-scoped simState isolation. */
+  /** Auto-populated by registry when resolving modules for pack-scoped simState isolation. */
   packId?: string;
 }
 
 /**
  * Built-in generic declarative simulation widget types rendered in the right-hand Simulator tab:
- * - `led`: single-color on/off LED
+ * - `led`: single-color on/off LED (OFF state uses uniform theme-styled dark bulb)
  * - `tricolor`: 3-color discrete indicator lamp (ONLY Red / Green / Blue + OFF)
  * - `rgb`: full-color RGB LED (arbitrary #RRGGBB color, e.g. WS2812 / PWM RGB)
  */
@@ -136,23 +158,41 @@ export interface SimWidgetSpec {
 }
 
 /**
- * Declarative per-handle integer channel pool configuration schema (e.g. 0..N-1 timers, PWM, CAN slots).
- * Enables automatic per-handle channel count & alias UI in ProjectSettingsModal plus OOB static checks.
+ * Extensible per-handle resource configuration spec (`kind: 'channel-pool'`, extensible to `'fields'` etc.).
+ * Automatically drives:
+ * 1. Per-handle channel count & alias management UI in ProjectSettingsModal
+ * 2. Automatic flyout shortcut button (`⚙ 配置本句柄<label>`) on standalone toolbox sections
+ * 3. Dynamic `field_channel_id` dropdown labels & static out-of-range checks
  */
-export interface HandleChannelPoolSpec {
-  /** Key in RuntimeHandle.capabilityConfigs (e.g. 'rt.timers'). */
-  configKey: string;
-  /** Display name (e.g. '定时器通道'). */
+export interface HandleChannelPoolConfigSpec {
+  kind: 'channel-pool';
+  /** Optional override for `RuntimeHandle.capabilityConfigs` storage key (defaults to section `capId`). */
+  configKey?: string;
+  /** Resource type name (e.g. '定时器通道', 'PWM 舵机通道'). */
   label: string;
-  /** Short channel prefix (e.g. 'T' -> T0, T1...). */
+  /** Short human-readable prefix (e.g. 'T' -> T0, 'PWM' -> PWM0; defaults to 'CH'). */
+  prefix?: string;
+  min: number;
+  max: number;
+  defaultCount: number;
+  presets?: number[];
+  hint?: string;
+}
+
+/** Extensible discriminated union for per-handle resource configuration types (channel pools, future UART/CAN fields, etc.). */
+export type HandleConfigSpec = HandleChannelPoolConfigSpec;
+
+/** Normalized channel-pool config with guaranteed derived `configKey` and `prefix`. */
+export interface ResolvedHandleChannelPoolSpec {
+  kind: 'channel-pool';
+  configKey: string;
+  label: string;
   prefix: string;
   min: number;
   max: number;
   defaultCount: number;
   presets?: number[];
   hint?: string;
-  /** Field name on blocks that references this channel pool (default 'TIMER_ID'). */
-  fieldName?: string;
 }
 
 /** Unified shared simulator state map across all active handles and extension widget cards. */
@@ -165,7 +205,7 @@ export interface PackAttributeBadge {
   tone: 'sim' | 'event' | 'pool' | 'lib' | 'tag';
 }
 
-/** Layer 0 core Blockly toolbox category IDs that any pack section can declaratively merge into. */
+/** Layer 0 core Blockly toolbox category IDs that any section can declaratively merge into. */
 export type CoreCategoryTarget =
   | 'event'
   | 'print'
@@ -177,42 +217,37 @@ export type CoreCategoryTarget =
   | 'lists'
   | 'functions';
 
-/** Where a pack (or section) places its blocks in the left toolbox: standalone tab or merged into a core category. */
+/** Where a section places its blocks in the left toolbox: `'own'` (standalone tab, default) or any core category ID. */
 export type CategoryTargetSpec = 'own' | CoreCategoryTarget;
 
 /**
- * Declarative sub-section inside a multi-section extension pack (1 Pack = 1 logical module/SDK).
- * Each section independently controls sidebar visibility, target category (`'own'` or any core category),
- * sort order, color, flyout button, optional channel pool, and which blocks belong to it.
+ * Single-track declarative section inside a PolyBlock extension pack (1 Pack = 1 logical module/SDK).
+ * Every pack has at least 1 section, with blocks nested directly inside their owning section.
  * Projects can toggle the entire pack (`"rt"`) or finely prune individual sections (`"rt.timers"`).
  */
 export interface ExtensionSectionSpec {
-  /** Section ID unique within its pack (e.g. 'lifecycle', 'timers', 'tick'). Capability ID is `<pack.id>.<section.id>`. */
+  /** Section ID unique within its pack (e.g. 'lifecycle', 'timers', 'tick', or 'main'). */
   id: string;
-  /** Display label in the sidebar tab (when categoryTarget === 'own') and pack section chips. */
+  /** Display label in the sidebar tab (when categoryTarget === 'own') and pack section checkboxes. */
   label: string;
   description?: string;
   /** Whether this section is displayed in the left Blockly toolbox (default: true). */
   visible?: boolean;
-  /** 'own' creates a standalone toolbox tab (default); or any core category ID to merge blocks into that core tab. */
+  /** `'own'` creates a standalone toolbox tab (default); or any core category ID to merge into that tab. */
   categoryTarget?: CategoryTargetSpec;
-  /** Numeric sort order in the left toolbox when categoryTarget === 'own' (default: pack.toolboxOrder ?? 100). */
+  /** Numeric sort order in the left toolbox when categoryTarget === 'own' (default: 100). */
   toolboxOrder?: number;
   /** Category accent color (default: pack.color). */
   color?: string;
-  /** Optional toolbox header button inside this section's flyout. */
-  flyoutButton?: { text: string; callbackKey: string };
-  /** Whether this section enables the per-handle RT scheduler monitor card in Simulator tab & event-driven ABI. */
-  hasRtMonitorUi?: boolean;
-  /** Optional per-handle channel pool config owned by this section (e.g. 0..N-1 timer, PWM, or CAN channels). */
-  handleChannelPool?: HandleChannelPoolSpec;
-  /** Ordered list of block `type` IDs from `pack.blocks` belonging to this section. */
-  blocks: string[];
+  /** Extensible per-handle resource configs owned by this section (e.g. channel-pool, future UART/CAN fields). */
+  handleConfigs?: HandleConfigSpec[];
+  /** Blocks belonging to this section (defined directly inline — zero duplicate ID lists). */
+  blocks: ExtensionBlockDef[];
 }
 
-/** Normalized runtime view of a pack section (single-section packs synthesize one default section). */
+/** Normalized runtime view of a section with all defaults and derived keys resolved. */
 export interface ResolvedPackSection {
-  /** Full capability ID: `<pack.id>` for single-section packs, `<pack.id>.<section.id>` for multi-section packs. */
+  /** Full capability ID: `<pack.id>` for 1-section packs, `<pack.id>.<section.id>` for multi-section packs. */
   capId: string;
   sectionId: string;
   label: string;
@@ -221,64 +256,39 @@ export interface ResolvedPackSection {
   categoryTarget: CategoryTargetSpec;
   toolboxOrder: number;
   color: string;
-  flyoutButton?: { text: string; callbackKey: string };
-  hasRtMonitorUi: boolean;
-  handleChannelPool?: HandleChannelPoolSpec;
+  handleConfigs: ResolvedHandleChannelPoolSpec[];
+  /** Convenience reference to the primary `kind: 'channel-pool'` entry in `handleConfigs`, if any. */
+  channelPool?: ResolvedHandleChannelPoolSpec;
   blocks: ExtensionBlockDef[];
   isMultiSection: boolean;
 }
 
 /**
- * Unified Declarative PolyBlock Extension Pack schema (.polyext.json).
- * 1 Pack = 1 logical module / SDK; optional `sections[]` splits a large SDK into independently
- * placed, ordered, visible, and prunable toolbox sections without splitting the pack itself.
+ * Unified Single-Track Declarative PolyBlock Extension Pack schema (.polyext.json).
+ * 1 Pack = 1 logical module / SDK; all blocks and sidebar placements live cleanly inside `sections[]`.
  */
 export interface PolyExtensionPack {
+  $schema?: string;
   format: 'polyblock-extension';
   version: 1;
   id: string;
   name: string;
   packVersion: string;
-  categoryLabel: string;
+  /** Short 1-4 character badge text shown on pack icon tiles (e.g. '运行', '硬件', 'MCU'). */
+  iconLabel: string;
   color: string;
   description: string;
   builtin?: boolean;
-  /** Whether this pack is shown in the left toolbox when single-section (default: true). */
-  visible?: boolean;
-  /**
-   * Continuous numeric sort order in the left Blockly toolbox.
-   * Core categories occupy 10..90 (事件=10, 打印=20, ..., 函数=90);
-   * extension packs default to 100 (appearing in the extension section below 函数).
-   */
-  toolboxOrder?: number;
-  /** Optional custom attribute tags displayed as pills on pack cards (e.g. ["电机", "CAN"]). */
+  /** Optional custom attribute tags displayed as pills on pack cards (e.g. ["RTOS", "CAN"]). */
   tags?: string[];
-  /** Where blocks appear in the left toolbox for single-section packs: 'own' (default) or any core category ID. */
-  categoryTarget?: CategoryTargetSpec;
-  /** Optional toolbox header button inside this pack's category flyout (single-section packs). */
-  flyoutButton?: { text: string; callbackKey: string };
-  /** Whether this pack enables the per-handle RT scheduler monitor card & event-driven ABI (single-section packs). */
-  hasRtMonitorUi?: boolean;
-  /** @deprecated Prefer declarative `simWidgets`. */
-  hasVirtualBoardUi?: boolean;
-  /** Optional per-handle channel pool config (single-section packs; multi-section packs declare this per section). */
-  handleChannelPool?: HandleChannelPoolSpec;
-  /** Optional multi-section layout & fine-grained pruning definitions referencing block types in `blocks`. */
-  sections?: ExtensionSectionSpec[];
-  blocks: ExtensionBlockDef[];
-  sandboxMock?: ExtensionSandboxMock;
-  /** Optional declarative widgets rendered as a dedicated peripheral card in the Simulator tab. */
+  /** Optional pack-level default imports inherited by statement/value blocks (deduplicated globally by content). */
+  imports?: ExtensionPackImports;
+  /** One or more declarative sections owning sidebar layout, per-handle configs, and inline block definitions. */
+  sections: ExtensionSectionSpec[];
+  /** Optional shared widget asset catalog; only widgets referenced by enabled blocks' `simWidgetKeys` are shown. */
   simWidgets?: SimWidgetSpec[];
-}
-
-export interface VirtualBoardState {
-  led: boolean;
-  rgb: string;
-  oledLines: string[];
-}
-
-export interface VirtualBoardInputs {
-  temp: number;
-  btnA: boolean;
-  btnB: boolean;
+  /** Browser-sandbox-ONLY stub simulating C firmware APIs (stripped when exporting target device code). */
+  sandboxMock?: ExtensionModuleSource;
+  /** Real pure-script library source (e.g. crc16.lua) used in BOTH browser sandbox and target device bundle export. */
+  bundleModule?: ExtensionModuleSource;
 }

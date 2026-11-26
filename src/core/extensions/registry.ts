@@ -16,19 +16,22 @@ import type {
   CoreCategoryTarget,
   ExtensionBlockDef,
   ExtensionHatSpec,
-  ExtensionSandboxMock,
+  ExtensionModuleSource,
+  ExtensionPackImports,
   ExtensionSectionSpec,
-  HandleChannelPoolSpec,
+  HandleConfigSpec,
   PackAttributeBadge,
   PolyExtensionPack,
+  ResolvedHandleChannelPoolSpec,
   ResolvedPackSection,
   SimWidgetEventTrigger,
   SimWidgetKind,
   SimWidgetSpec,
 } from './types';
 
-export const STORAGE_CUSTOM_EXTENSIONS_KEY = 'polyblock.extensions.custom.v1';
+export const STORAGE_CUSTOM_EXTENSIONS_KEY = 'polyblock.extensions.custom.v2';
 export const DEFAULT_PACK_TOOLBOX_ORDER = 100;
+export const OPEN_HANDLE_CHANNEL_CONFIG_CALLBACK = 'OPEN_HANDLE_CHANNEL_CONFIG';
 
 export const CORE_CATEGORY_LABELS: Record<CoreCategoryTarget, string> = {
   event: '事件',
@@ -53,55 +56,52 @@ function parseCategoryTarget(raw: unknown): CategoryTargetSpec {
   return 'own';
 }
 
+/** Returns all blocks across all sections of a pack in declaration order. */
+export function getAllPackBlocks(pack: PolyExtensionPack): ExtensionBlockDef[] {
+  return pack.sections.flatMap((s) => s.blocks);
+}
+
 /**
- * Normalizes any pack (single-section OR multi-section `sections[]`) into a uniform
- * list of `ResolvedPackSection` entries so the entire engine & UI treat both identically.
+ * Normalizes a pack's `sections[]` into `ResolvedPackSection[]` with guaranteed derived
+ * `capId`, `channelPool.configKey`, `channelPool.prefix`, `color`, `visible`, and `toolboxOrder`.
  */
 export function resolvePackSections(
   pack: PolyExtensionPack,
 ): ResolvedPackSection[] {
-  if (pack.sections && pack.sections.length > 0) {
-    const blockByType = new Map(pack.blocks.map((b) => [b.type, b]));
-    return pack.sections.map((sec) => {
-      const secBlocks = sec.blocks
-        .map((t) => blockByType.get(t))
-        .filter((b): b is ExtensionBlockDef => Boolean(b));
-      return {
-        capId: `${pack.id}.${sec.id}`,
-        sectionId: sec.id,
-        label: sec.label,
-        description: sec.description,
-        visible: sec.visible !== false,
-        categoryTarget: sec.categoryTarget ?? 'own',
-        toolboxOrder:
-          sec.toolboxOrder ?? pack.toolboxOrder ?? DEFAULT_PACK_TOOLBOX_ORDER,
-        color: sec.color ?? pack.color,
-        flyoutButton: sec.flyoutButton,
-        hasRtMonitorUi: Boolean(sec.hasRtMonitorUi),
-        handleChannelPool: sec.handleChannelPool,
-        blocks: secBlocks,
-        isMultiSection: true,
-      };
-    });
-  }
+  const isMultiSection = pack.sections.length > 1;
+  return pack.sections.map((sec) => {
+    const capId = isMultiSection ? `${pack.id}.${sec.id}` : pack.id;
+    const resolvedConfigs: ResolvedHandleChannelPoolSpec[] = (
+      sec.handleConfigs ?? []
+    )
+      .filter((c) => c.kind === 'channel-pool')
+      .map((c) => ({
+        kind: 'channel-pool',
+        configKey: c.configKey?.trim() || capId,
+        label: c.label,
+        prefix: c.prefix?.trim() || 'CH',
+        min: c.min,
+        max: c.max,
+        defaultCount: c.defaultCount,
+        ...(c.presets ? { presets: c.presets } : {}),
+        ...(c.hint ? { hint: c.hint } : {}),
+      }));
 
-  return [
-    {
-      capId: pack.id,
-      sectionId: 'default',
-      label: pack.categoryLabel,
-      description: pack.description,
-      visible: pack.visible !== false,
-      categoryTarget: pack.categoryTarget ?? 'own',
-      toolboxOrder: pack.toolboxOrder ?? DEFAULT_PACK_TOOLBOX_ORDER,
-      color: pack.color,
-      flyoutButton: pack.flyoutButton,
-      hasRtMonitorUi: Boolean(pack.hasRtMonitorUi),
-      handleChannelPool: pack.handleChannelPool,
-      blocks: pack.blocks,
-      isMultiSection: false,
-    },
-  ];
+    return {
+      capId,
+      sectionId: sec.id,
+      label: sec.label,
+      description: sec.description,
+      visible: sec.visible !== false,
+      categoryTarget: sec.categoryTarget ?? 'own',
+      toolboxOrder: sec.toolboxOrder ?? DEFAULT_PACK_TOOLBOX_ORDER,
+      color: sec.color ?? pack.color,
+      handleConfigs: resolvedConfigs,
+      channelPool: resolvedConfigs[0],
+      blocks: sec.blocks,
+      isMultiSection,
+    };
+  });
 }
 
 export function findSectionForBlockType(
@@ -171,7 +171,7 @@ export function togglePackOrSectionCapability(
   const basePackId = isSectionToggle ? capId.slice(0, dotIdx) : capId;
   const pack = extensionRegistry.resolvePack(basePackId, localPacks);
 
-  if (!pack || !pack.sections || pack.sections.length === 0) {
+  if (!pack || pack.sections.length <= 1) {
     const exists = enabledCapabilities.includes(capId);
     const nextCapabilities = exists
       ? enabledCapabilities.filter((id) => id !== capId)
@@ -261,13 +261,14 @@ export function formatPackPlacementSummary(pack: PolyExtensionPack): string {
 export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] {
   const badges: PackAttributeBadge[] = [];
   const sections = resolvePackSections(pack);
-  const widgetCount = pack.simWidgets?.length ?? 0;
-  const hasHat = pack.blocks.some((b) => b.kind === 'hat');
+  const allBlocks = getAllPackBlocks(pack);
+  const hasSimDriver = Boolean(pack.sandboxMock || pack.bundleModule);
+  const widgetCount = hasSimDriver ? (pack.simWidgets?.length ?? 0) : 0;
+  const hasHat = allBlocks.some((b) => b.kind === 'hat');
   const pools = sections
-    .map((s) => s.handleChannelPool)
-    .filter((p): p is HandleChannelPoolSpec => Boolean(p));
-  const hasRtMonitor = sections.some((s) => s.hasRtMonitorUi);
-  const hasApiBlocks = pack.blocks.some(
+    .map((s) => s.channelPool)
+    .filter((p): p is ResolvedHandleChannelPoolSpec => Boolean(p));
+  const hasApiBlocks = allBlocks.some(
     (b) => b.kind === 'statement' || b.kind === 'value',
   );
 
@@ -293,6 +294,14 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
     });
   }
 
+  if (pack.bundleModule) {
+    badges.push({
+      id: 'bundle-lib',
+      label: '内置脚本库',
+      tone: 'lib',
+    });
+  }
+
   if (hasHat) {
     badges.push({
       id: 'hat',
@@ -309,7 +318,13 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
     });
   }
 
-  if (hasApiBlocks && widgetCount === 0 && pools.length === 0 && !hasRtMonitor) {
+  if (
+    hasApiBlocks &&
+    widgetCount === 0 &&
+    pools.length === 0 &&
+    !hasHat &&
+    !pack.bundleModule
+  ) {
     badges.push({
       id: 'lib',
       label: '功能库',
@@ -334,7 +349,8 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
 
 const SENTINEL_START = '__PB_S:';
 const SENTINEL_END = '__PB_E:';
-const PLACEHOLDER_RE = /\{\{([A-Za-z0-9_]+)(?::([a-z0-9_]+)(?::([A-Za-z0-9_]+))?)?\}\}/g;
+const PLACEHOLDER_RE =
+  /\{\{([A-Za-z0-9_]+)(?::([a-z0-9_]+)(?::([A-Za-z0-9_]+))?)?\}\}/g;
 
 const VALID_SIM_WIDGET_KINDS = new Set<SimWidgetKind>([
   'led',
@@ -375,9 +391,8 @@ function renderTemplate(
 ): string {
   const argKinds = buildArgKindMap(def);
   const pool =
-    section?.handleChannelPool ??
-    (pack ? findSectionForBlockType(pack, def.type)?.handleChannelPool : undefined) ??
-    pack?.handleChannelPool;
+    section?.channelPool ??
+    (pack ? findSectionForBlockType(pack, def.type)?.channelPool : undefined);
   const poolKey = pool?.configKey ?? DEFAULT_TIMER_POOL_KEY;
   const poolPrefix = pool?.prefix ?? 'T';
   const poolDefault = pool?.defaultCount ?? 8;
@@ -392,7 +407,8 @@ function renderTemplate(
         if (lang === 'lua') {
           rawValue = luaGenerator.valueToCode(block, argName, LuaOrder.NONE) || '""';
         } else {
-          rawValue = pythonGenerator.valueToCode(block, argName, PyOrder.NONE) || '""';
+          rawValue =
+            pythonGenerator.valueToCode(block, argName, PyOrder.NONE) || '""';
         }
         return rawValue;
       }
@@ -475,10 +491,15 @@ function renderTemplate(
 function registerSingleBlockInBlockly(
   pack: PolyExtensionPack,
   b: ExtensionBlockDef,
-  section?: ResolvedPackSection,
+  section: ResolvedPackSection,
 ): void {
-  const blockColor = section?.color ?? pack.color;
-  const pool = section?.handleChannelPool ?? pack.handleChannelPool;
+  const blockColor = section.color;
+  const pool = section.channelPool;
+  const baseTooltip = b.tooltip ?? `${pack.name} · ${b.type}`;
+  const fullTooltip =
+    b.sandboxRunnable === false
+      ? `${baseTooltip}（仅真机导出，浏览器沙箱不支持模拟运行）`
+      : baseTooltip;
   const hasChannelField = (b.args0 ?? []).some(
     (arg) => arg.type === 'field_channel_id',
   );
@@ -489,7 +510,7 @@ function registerSingleBlockInBlockly(
       message0: b.message0,
       args0: b.args0 ?? [],
       inputsInline: b.inputsInline ?? true,
-      tooltip: b.tooltip ?? `${pack.name} · ${b.type}`,
+      tooltip: fullTooltip,
     };
 
     if (b.blockStyle) {
@@ -546,7 +567,7 @@ function registerSingleBlockInBlockly(
             createChannelIdField({
               configKey: pool?.configKey ?? DEFAULT_TIMER_POOL_KEY,
               prefix: pool?.prefix ?? 'T',
-              label: pool?.label ?? '定时器通道',
+              label: pool?.label ?? '通道',
               defaultCount: pool?.defaultCount ?? 8,
               maxCount: pool?.max ?? 32,
             }),
@@ -596,7 +617,7 @@ function registerSingleBlockInBlockly(
       } else {
         this.setColour(blockColor);
       }
-      this.setTooltip(b.tooltip ?? `${pack.name} · ${b.type}`);
+      this.setTooltip(fullTooltip);
     },
   };
 }
@@ -608,8 +629,7 @@ function getPythonGlobalLine(): string {
 
 /**
  * Pure content-based import hoisting & deduplication across ALL packs and sections.
- * Zero hardcoded module names: identical trimmed import statements from any pack/section
- * automatically collapse to a single hoisted definition line.
+ * Zero hardcoded module names: identical trimmed import lines collapse to one hoisted line.
  */
 function hoistImports(generator: unknown, imports: string[] | undefined): void {
   if (!imports || imports.length === 0) return;
@@ -625,25 +645,21 @@ function registerHatGenerators(
   pack: PolyExtensionPack,
   b: ExtensionBlockDef,
   hatSpec: ExtensionHatSpec,
-  section?: ResolvedPackSection,
+  section: ResolvedPackSection,
 ): void {
   const paramsStr = (hatSpec.params ?? []).join(', ');
 
   // --- Lua Hat Generator ---
   luaGenerator.forBlock[b.type] = (block, generator) => {
-    hoistImports(generator, hatSpec.importsLua);
+    hoistImports(generator, hatSpec.imports?.lua);
 
     if (hatSpec.mode === 'singleton') {
-      const prelude = hatSpec.preludeLua
-        ? `${renderTemplate(hatSpec.preludeLua, b, block, 'lua', pack, section)}\n`
-        : '';
       const body = generator.statementToCode(block, 'BODY');
       if (codegenContext.debugPass) {
-        return `${prelude}function ${hatSpec.eventName}(${paramsStr})\n${body}end\n`;
+        return `function ${hatSpec.eventName}(${paramsStr})\n${body}end\n`;
       }
       return (
         `${SENTINEL_START}'${block.id}'__\n` +
-        `${prelude}` +
         `function ${hatSpec.eventName}(${paramsStr})\n` +
         `${body}` +
         `end\n` +
@@ -673,10 +689,24 @@ function registerHatGenerators(
           ? renderTemplate(hatSpec.conditionLua, b, hatBlk, 'lua', pack, section)
           : 'true';
         const comment = hatSpec.branchCommentLua
-          ? renderTemplate(hatSpec.branchCommentLua, b, hatBlk, 'lua', pack, section)
+          ? renderTemplate(
+              hatSpec.branchCommentLua,
+              b,
+              hatBlk,
+              'lua',
+              pack,
+              section,
+            )
           : '';
         const rawKey = hatSpec.duplicateKeyTemplate
-          ? renderTemplate(hatSpec.duplicateKeyTemplate, b, hatBlk, 'lua', pack, section)
+          ? renderTemplate(
+              hatSpec.duplicateKeyTemplate,
+              b,
+              hatBlk,
+              'lua',
+              pack,
+              section,
+            )
           : String(idx);
         const safeSuffix = rawKey.replace(/[^A-Za-z0-9_]+/g, '_') || String(idx);
         let fnName = `${fnPrefix}${safeSuffix}`;
@@ -739,22 +769,18 @@ function registerHatGenerators(
 
   // --- Python Hat Generator ---
   pythonGenerator.forBlock[b.type] = (block, generator) => {
-    hoistImports(generator, hatSpec.importsPython);
+    hoistImports(generator, hatSpec.imports?.python);
     const defKw = codegenContext.debugPass ? 'async def' : 'def';
     const globalLine = getPythonGlobalLine();
 
     if (hatSpec.mode === 'singleton') {
-      const prelude = hatSpec.preludePython
-        ? `${renderTemplate(hatSpec.preludePython, b, block, 'python', pack, section)}\n`
-        : '';
       const body = generator.statementToCode(block, 'BODY');
       const safeBody = body.trim() ? body : '  pass\n';
       if (codegenContext.debugPass) {
-        return `${prelude}${defKw} ${hatSpec.eventName}(${paramsStr}):\n${globalLine}${safeBody}\n`;
+        return `${defKw} ${hatSpec.eventName}(${paramsStr}):\n${globalLine}${safeBody}\n`;
       }
       return (
         `${SENTINEL_START}'${block.id}'__\n` +
-        `${prelude}` +
         `${defKw} ${hatSpec.eventName}(${paramsStr}):\n` +
         `${globalLine}${safeBody}` +
         `${SENTINEL_END}'${block.id}'__\n`
@@ -780,13 +806,34 @@ function registerHatGenerators(
       matchingHats.forEach((hatBlk, idx) => {
         const kw = idx === 0 ? 'if' : 'elif';
         const cond = hatSpec.conditionPython
-          ? renderTemplate(hatSpec.conditionPython, b, hatBlk, 'python', pack, section)
+          ? renderTemplate(
+              hatSpec.conditionPython,
+              b,
+              hatBlk,
+              'python',
+              pack,
+              section,
+            )
           : 'True';
         const comment = hatSpec.branchCommentPython
-          ? renderTemplate(hatSpec.branchCommentPython, b, hatBlk, 'python', pack, section)
+          ? renderTemplate(
+              hatSpec.branchCommentPython,
+              b,
+              hatBlk,
+              'python',
+              pack,
+              section,
+            )
           : '';
         const rawKey = hatSpec.duplicateKeyTemplate
-          ? renderTemplate(hatSpec.duplicateKeyTemplate, b, hatBlk, 'python', pack, section)
+          ? renderTemplate(
+              hatSpec.duplicateKeyTemplate,
+              b,
+              hatBlk,
+              'python',
+              pack,
+              section,
+            )
           : String(idx);
         const safeSuffix = rawKey.replace(/[^A-Za-z0-9_]+/g, '_') || String(idx);
         let fnName = `${fnPrefix}${safeSuffix}`;
@@ -811,7 +858,9 @@ function registerHatGenerators(
               `${SENTINEL_END}'${hatBlk.id}'__\n`,
           );
         }
-        dispatchBranches.push(`  ${kw} ${cond}:${comment}\n    ${callPrefix}${fnName}()\n`);
+        dispatchBranches.push(
+          `  ${kw} ${cond}:${comment}\n    ${callPrefix}${fnName}()\n`,
+        );
       });
 
       return (
@@ -828,10 +877,19 @@ function registerHatGenerators(
         ? renderTemplate(hatSpec.conditionPython, b, hatBlk, 'python', pack, section)
         : 'True';
       const comment = hatSpec.branchCommentPython
-        ? renderTemplate(hatSpec.branchCommentPython, b, hatBlk, 'python', pack, section)
+        ? renderTemplate(
+            hatSpec.branchCommentPython,
+            b,
+            hatBlk,
+            'python',
+            pack,
+            section,
+          )
         : '';
       const rawBody = generator.statementToCode(hatBlk, 'BODY');
-      const indentedBody = rawBody.trim() ? indentLines(rawBody, '  ') : '    pass\n';
+      const indentedBody = rawBody.trim()
+        ? indentLines(rawBody, '  ')
+        : '    pass\n';
       if (codegenContext.debugPass) {
         branches.push(`  ${kw} ${cond}:${comment}\n${indentedBody}`);
       } else {
@@ -850,58 +908,57 @@ function registerHatGenerators(
 
 function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
   const sections = resolvePackSections(pack);
-  const sectionByBlockType = new Map<string, ResolvedPackSection>();
-  for (const sec of sections) {
-    for (const blk of sec.blocks) {
-      sectionByBlockType.set(blk.type, sec);
-    }
-  }
 
-  for (const b of pack.blocks) {
-    const ownerSection = sectionByBlockType.get(b.type);
-    registerSingleBlockInBlockly(pack, b, ownerSection);
+  for (const section of sections) {
+    for (const b of section.blocks) {
+      registerSingleBlockInBlockly(pack, b, section);
 
-    if (b.kind === 'hat' && b.hat) {
-      registerHatGenerators(pack, b, b.hat, ownerSection);
-      continue;
-    }
+      if (b.kind === 'hat' && b.hat) {
+        registerHatGenerators(pack, b, b.hat, section);
+        continue;
+      }
 
-    if (b.lua) {
-      const luaSpec = b.lua;
-      luaGenerator.forBlock[b.type] = (block, generator) => {
-        hoistImports(generator, luaSpec.imports);
-        const rendered = renderTemplate(
-          luaSpec.template,
-          b,
-          block,
-          'lua',
-          pack,
-          ownerSection,
-        );
-        if (b.kind === 'value') {
-          return [rendered, LuaOrder.ATOMIC];
-        }
-        return `${rendered}\n`;
-      };
-    }
+      if (b.lua) {
+        const luaSpec = b.lua;
+        const luaImports =
+          luaSpec.imports !== undefined ? luaSpec.imports : pack.imports?.lua;
+        luaGenerator.forBlock[b.type] = (block, generator) => {
+          hoistImports(generator, luaImports);
+          const rendered = renderTemplate(
+            luaSpec.template,
+            b,
+            block,
+            'lua',
+            pack,
+            section,
+          );
+          if (b.kind === 'value') {
+            return [rendered, LuaOrder.ATOMIC];
+          }
+          return `${rendered}\n`;
+        };
+      }
 
-    if (b.python) {
-      const pySpec = b.python;
-      pythonGenerator.forBlock[b.type] = (block, generator) => {
-        hoistImports(generator, pySpec.imports);
-        const rendered = renderTemplate(
-          pySpec.template,
-          b,
-          block,
-          'python',
-          pack,
-          ownerSection,
-        );
-        if (b.kind === 'value') {
-          return [rendered, PyOrder.ATOMIC];
-        }
-        return `${rendered}\n`;
-      };
+      if (b.python) {
+        const pySpec = b.python;
+        const pyImports =
+          pySpec.imports !== undefined ? pySpec.imports : pack.imports?.python;
+        pythonGenerator.forBlock[b.type] = (block, generator) => {
+          hoistImports(generator, pyImports);
+          const rendered = renderTemplate(
+            pySpec.template,
+            b,
+            block,
+            'python',
+            pack,
+            section,
+          );
+          if (b.kind === 'value') {
+            return [rendered, PyOrder.ATOMIC];
+          }
+          return `${rendered}\n`;
+        };
+      }
     }
   }
 }
@@ -926,7 +983,9 @@ function validateEmitEvent(raw: unknown): SimWidgetEventTrigger | undefined {
       ? {
           args: obj.args.filter(
             (a): a is string | number | boolean =>
-              typeof a === 'string' || typeof a === 'number' || typeof a === 'boolean',
+              typeof a === 'string' ||
+              typeof a === 'number' ||
+              typeof a === 'boolean',
           ),
         }
       : {}),
@@ -969,14 +1028,18 @@ function validateSimWidgets(raw: unknown): SimWidgetSpec[] | undefined {
       ...(w.default !== undefined
         ? { default: w.default as SimWidgetSpec['default'] }
         : {}),
-      ...(typeof w.color === 'string' && w.color.trim() ? { color: w.color.trim() } : {}),
+      ...(typeof w.color === 'string' && w.color.trim()
+        ? { color: w.color.trim() }
+        : {}),
       ...(typeof w.min === 'number' && Number.isFinite(w.min) ? { min: w.min } : {}),
       ...(typeof w.max === 'number' && Number.isFinite(w.max) ? { max: w.max } : {}),
       ...(typeof w.step === 'number' && Number.isFinite(w.step) && w.step > 0
         ? { step: w.step }
         : {}),
       ...(typeof w.unit === 'string' ? { unit: w.unit } : {}),
-      ...(typeof w.maxLines === 'number' && Number.isFinite(w.maxLines) && w.maxLines >= 1
+      ...(typeof w.maxLines === 'number' &&
+      Number.isFinite(w.maxLines) &&
+      w.maxLines >= 1
         ? { maxLines: Math.min(12, Math.trunc(w.maxLines)) }
         : {}),
       ...(typeof w.hint === 'string' ? { hint: w.hint } : {}),
@@ -991,59 +1054,153 @@ function validateSimWidgets(raw: unknown): SimWidgetSpec[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-function validateHandleChannelPool(
-  raw: unknown,
-  defaultKey: string,
-): HandleChannelPoolSpec | undefined {
+function validateHandleConfigs(raw: unknown): HandleConfigSpec[] | undefined {
   if (raw === undefined || raw === null) return undefined;
-  if (typeof raw !== 'object') throw new Error('handleChannelPool 必须是对象');
+  if (!Array.isArray(raw)) throw new Error('handleConfigs 必须是数组');
+  const out: HandleConfigSpec[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') {
+      throw new Error('handleConfigs 中的每一项必须是对象');
+    }
+    const obj = item as Record<string, unknown>;
+    if (obj.kind !== 'channel-pool') {
+      throw new Error(
+        `暂不支持的 handleConfigs.kind "${String(obj.kind)}"（当前支持：channel-pool）`,
+      );
+    }
+    const min = Number.isFinite(Number(obj.min))
+      ? Math.max(1, Math.trunc(Number(obj.min)))
+      : 1;
+    const max = Number.isFinite(Number(obj.max))
+      ? Math.max(min, Math.min(32, Math.trunc(Number(obj.max))))
+      : 32;
+    const defaultCount = Number.isFinite(Number(obj.defaultCount))
+      ? Math.max(min, Math.min(max, Math.trunc(Number(obj.defaultCount))))
+      : Math.min(max, 8);
+    out.push({
+      kind: 'channel-pool',
+      ...(typeof obj.configKey === 'string' && obj.configKey.trim()
+        ? { configKey: obj.configKey.trim() }
+        : {}),
+      label:
+        typeof obj.label === 'string' && obj.label.trim() ? obj.label.trim() : '通道',
+      ...(typeof obj.prefix === 'string' && obj.prefix.trim()
+        ? { prefix: obj.prefix.trim() }
+        : {}),
+      min,
+      max,
+      defaultCount,
+      ...(Array.isArray(obj.presets)
+        ? {
+            presets: obj.presets.filter(
+              (n): n is number => typeof n === 'number' && Number.isFinite(n),
+            ),
+          }
+        : {}),
+      ...(typeof obj.hint === 'string' ? { hint: obj.hint } : {}),
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+function validateImports(raw: unknown): ExtensionPackImports | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object') throw new Error('imports 必须是对象（含 lua / python 数组）');
   const obj = raw as Record<string, unknown>;
-  const min = Number.isFinite(Number(obj.min))
-    ? Math.max(1, Math.trunc(Number(obj.min)))
-    : 1;
-  const max = Number.isFinite(Number(obj.max))
-    ? Math.max(min, Math.min(32, Math.trunc(Number(obj.max))))
-    : 32;
-  const defaultCount = Number.isFinite(Number(obj.defaultCount))
-    ? Math.max(min, Math.min(max, Math.trunc(Number(obj.defaultCount))))
-    : Math.min(max, 8);
+  const lua = Array.isArray(obj.lua)
+    ? obj.lua.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+    : undefined;
+  const python = Array.isArray(obj.python)
+    ? obj.python.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+    : undefined;
+  if (!lua?.length && !python?.length) return undefined;
   return {
-    configKey:
-      typeof obj.configKey === 'string' && obj.configKey.trim()
-        ? obj.configKey.trim()
-        : defaultKey,
-    label: typeof obj.label === 'string' && obj.label.trim() ? obj.label.trim() : '通道',
-    prefix: typeof obj.prefix === 'string' && obj.prefix.trim() ? obj.prefix.trim() : 'CH',
-    min,
-    max,
-    defaultCount,
-    ...(Array.isArray(obj.presets)
-      ? {
-          presets: obj.presets.filter(
-            (n): n is number => typeof n === 'number' && Number.isFinite(n),
-          ),
-        }
-      : {}),
-    ...(typeof obj.hint === 'string' ? { hint: obj.hint } : {}),
-    ...(typeof obj.fieldName === 'string' && obj.fieldName.trim()
-      ? { fieldName: obj.fieldName.trim() }
+    ...(lua?.length ? { lua } : {}),
+    ...(python?.length ? { python } : {}),
+  };
+}
+
+function validateModuleSource(
+  raw: unknown,
+  fieldLabel: string,
+): ExtensionModuleSource | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object') {
+    throw new Error(`${fieldLabel} 必须是对象`);
+  }
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.moduleName !== 'string' || !obj.moduleName.trim()) {
+    throw new Error(`${fieldLabel}.moduleName 必填`);
+  }
+  return {
+    moduleName: obj.moduleName.trim(),
+    ...(typeof obj.luaSource === 'string' ? { luaSource: obj.luaSource } : {}),
+    ...(typeof obj.pythonSource === 'string'
+      ? { pythonSource: obj.pythonSource }
       : {}),
   };
 }
 
-function validateSections(
+function validateBlockDef(
   raw: unknown,
-  packId: string,
-  validBlockTypes: Set<string>,
-): ExtensionSectionSpec[] | undefined {
-  if (raw === undefined || raw === null) return undefined;
-  if (!Array.isArray(raw)) {
-    throw new Error('sections 必须是数组');
+  seenBlockTypes: Set<string>,
+): ExtensionBlockDef {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('每个积木定义必须是对象');
   }
-  if (raw.length === 0) return undefined;
+  const blk = raw as Record<string, unknown>;
+  if (typeof blk.type !== 'string' || !blk.type.trim()) {
+    throw new Error('每个积木必须包含非空 type 字段');
+  }
+  if (seenBlockTypes.has(blk.type)) {
+    throw new Error(`扩展包内存在重复积木类型 "${blk.type}"`);
+  }
+  seenBlockTypes.add(blk.type);
+
+  if (blk.kind !== 'statement' && blk.kind !== 'value' && blk.kind !== 'hat') {
+    throw new Error(
+      `积木 ${blk.type} 的 kind 必须为 "statement"、"value" 或 "hat"`,
+    );
+  }
+  if (typeof blk.message0 !== 'string' || !blk.message0.trim()) {
+    throw new Error(`积木 ${blk.type} 缺少 message0`);
+  }
+  if (blk.kind === 'hat') {
+    const hatObj = blk.hat as Record<string, unknown> | undefined;
+    if (
+      !hatObj ||
+      typeof hatObj.eventName !== 'string' ||
+      !/^[A-Za-z_][A-Za-z0-9_]*$/.test(hatObj.eventName)
+    ) {
+      throw new Error(`事件帽块 ${blk.type} 缺少合法的 hat.eventName`);
+    }
+    if (hatObj.mode !== 'singleton' && hatObj.mode !== 'dispatch') {
+      throw new Error(
+        `事件帽块 ${blk.type} 的 hat.mode 必须为 "singleton" 或 "dispatch"`,
+      );
+    }
+  } else {
+    const luaSpec = blk.lua as Record<string, unknown> | undefined;
+    const pySpec = blk.python as Record<string, unknown> | undefined;
+    if (!luaSpec || typeof luaSpec.template !== 'string') {
+      throw new Error(`积木 ${blk.type} 缺少 lua.template`);
+    }
+    if (!pySpec || typeof pySpec.template !== 'string') {
+      throw new Error(`积木 ${blk.type} 缺少 python.template`);
+    }
+  }
+  return blk as unknown as ExtensionBlockDef;
+}
+
+function validateSections(raw: unknown): ExtensionSectionSpec[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error('扩展包必须至少包含 1 个 sections 组件定义');
+  }
 
   const out: ExtensionSectionSpec[] = [];
   const seenIds = new Set<string>();
+  const seenBlockTypes = new Set<string>();
+
   for (const item of raw) {
     if (!item || typeof item !== 'object') {
       throw new Error('sections 中的每一项必须是对象');
@@ -1062,19 +1219,12 @@ function validateSections(
       throw new Error(`section "${s.id}" 缺少非空 label`);
     }
     if (!Array.isArray(s.blocks) || s.blocks.length === 0) {
-      throw new Error(`section "${s.id}" 必须至少引用 1 个 block type`);
+      throw new Error(`section "${s.id}" 必须至少包含 1 个 blocks 积木定义`);
     }
-    const blockRefs: string[] = [];
-    for (const ref of s.blocks) {
-      if (typeof ref !== 'string' || !validBlockTypes.has(ref)) {
-        throw new Error(
-          `section "${s.id}" 引用了不存在的积木类型 "${String(ref)}"`,
-        );
-      }
-      blockRefs.push(ref);
-    }
+    const blocks = s.blocks.map((b) => validateBlockDef(b, seenBlockTypes));
     const rawOrder = Number(s.toolboxOrder);
-    const pool = validateHandleChannelPool(s.handleChannelPool, `${packId}.${s.id}`);
+    const handleConfigs = validateHandleConfigs(s.handleConfigs);
+
     out.push({
       id: s.id,
       label: s.label.trim().slice(0, 12),
@@ -1087,12 +1237,8 @@ function validateSections(
       ...(typeof s.color === 'string' && s.color.startsWith('#')
         ? { color: s.color }
         : {}),
-      ...(s.flyoutButton && typeof s.flyoutButton === 'object'
-        ? { flyoutButton: s.flyoutButton as ExtensionSectionSpec['flyoutButton'] }
-        : {}),
-      ...(s.hasRtMonitorUi ? { hasRtMonitorUi: true } : {}),
-      ...(pool ? { handleChannelPool: pool } : {}),
-      blocks: blockRefs,
+      ...(handleConfigs ? { handleConfigs } : {}),
+      blocks,
     });
   }
   return out;
@@ -1104,63 +1250,23 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
   }
   const obj = raw as Record<string, unknown>;
   if (typeof obj.id !== 'string' || !/^[a-zA-Z0-9_-]{2,48}$/.test(obj.id)) {
-    throw new Error('扩展包 id 必填，且只能包含字母、数字、横线或下划线（2~48 字符）');
+    throw new Error(
+      '扩展包 id 必填，且只能包含字母、数字、横线或下划线（2~48 字符）',
+    );
   }
   if (typeof obj.name !== 'string' || !obj.name.trim()) {
     throw new Error('扩展包 name 必填');
   }
-  if (typeof obj.categoryLabel !== 'string' || !obj.categoryLabel.trim()) {
-    throw new Error('扩展包 categoryLabel 必填');
-  }
-  if (!Array.isArray(obj.blocks) || obj.blocks.length === 0) {
-    throw new Error('扩展包必须至少包含 1 个 blocks 积木定义');
-  }
+  const sections = validateSections(obj.sections);
+  const iconLabelRaw =
+    typeof obj.iconLabel === 'string' && obj.iconLabel.trim()
+      ? obj.iconLabel.trim()
+      : sections[0].label;
 
-  const validBlockTypes = new Set<string>();
-  for (const blk of obj.blocks as Array<Record<string, unknown>>) {
-    if (typeof blk.type !== 'string' || !blk.type.trim()) {
-      throw new Error('每个积木必须包含非空 type 字段');
-    }
-    validBlockTypes.add(blk.type);
-    if (blk.kind !== 'statement' && blk.kind !== 'value' && blk.kind !== 'hat') {
-      throw new Error(`积木 ${blk.type} 的 kind 必须为 "statement"、"value" 或 "hat"`);
-    }
-    if (typeof blk.message0 !== 'string' || !blk.message0.trim()) {
-      throw new Error(`积木 ${blk.type} 缺少 message0`);
-    }
-    if (blk.kind === 'hat') {
-      const hatObj = blk.hat as Record<string, unknown> | undefined;
-      if (
-        !hatObj ||
-        typeof hatObj.eventName !== 'string' ||
-        !/^[A-Za-z_][A-Za-z0-9_]*$/.test(hatObj.eventName)
-      ) {
-        throw new Error(`事件帽块 ${blk.type} 缺少合法的 hat.eventName`);
-      }
-      if (hatObj.mode !== 'singleton' && hatObj.mode !== 'dispatch') {
-        throw new Error(
-          `事件帽块 ${blk.type} 的 hat.mode 必须为 "singleton" 或 "dispatch"`,
-        );
-      }
-    } else {
-      const luaSpec = blk.lua as Record<string, unknown> | undefined;
-      const pySpec = blk.python as Record<string, unknown> | undefined;
-      if (!luaSpec || typeof luaSpec.template !== 'string') {
-        throw new Error(`积木 ${blk.type} 缺少 lua.template`);
-      }
-      if (!pySpec || typeof pySpec.template !== 'string') {
-        throw new Error(`积木 ${blk.type} 缺少 python.template`);
-      }
-    }
-  }
-
+  const imports = validateImports(obj.imports);
   const simWidgets = validateSimWidgets(obj.simWidgets);
-  const handleChannelPool = validateHandleChannelPool(obj.handleChannelPool, obj.id);
-  const sections = validateSections(obj.sections, obj.id, validBlockTypes);
-  const rawOrder = Number(obj.toolboxOrder);
-  const toolboxOrder = Number.isFinite(rawOrder)
-    ? Math.max(0, Math.min(9999, Math.round(rawOrder)))
-    : DEFAULT_PACK_TOOLBOX_ORDER;
+  const sandboxMock = validateModuleSource(obj.sandboxMock, 'sandboxMock');
+  const bundleModule = validateModuleSource(obj.bundleModule, 'bundleModule');
   const tags = Array.isArray(obj.tags)
     ? obj.tags
         .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
@@ -1169,35 +1275,28 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
     : undefined;
 
   return {
+    ...(typeof obj.$schema === 'string' ? { $schema: obj.$schema } : {}),
     format: 'polyblock-extension',
     version: 1,
     id: obj.id,
     name: obj.name.trim(),
     packVersion: typeof obj.packVersion === 'string' ? obj.packVersion : '1.0.0',
-    categoryLabel: obj.categoryLabel.trim().slice(0, 6),
+    iconLabel: iconLabelRaw.slice(0, 6),
     color:
       typeof obj.color === 'string' && obj.color.startsWith('#')
         ? obj.color
-        : typeof obj.categoryColor === 'string' && obj.categoryColor.startsWith('#')
-          ? obj.categoryColor
-          : '#6366f1',
+        : '#6366f1',
     description:
-      typeof obj.description === 'string' ? obj.description : '用户自定义扩展积木包',
+      typeof obj.description === 'string'
+        ? obj.description
+        : '用户自定义扩展积木包',
     builtin: Boolean(obj.builtin),
-    ...(obj.visible === false ? { visible: false } : {}),
-    toolboxOrder,
     ...(tags && tags.length > 0 ? { tags } : {}),
-    categoryTarget: parseCategoryTarget(obj.categoryTarget),
-    ...(obj.flyoutButton && typeof obj.flyoutButton === 'object'
-      ? { flyoutButton: obj.flyoutButton as PolyExtensionPack['flyoutButton'] }
-      : {}),
-    hasRtMonitorUi: Boolean(obj.hasRtMonitorUi),
-    hasVirtualBoardUi: Boolean(obj.hasVirtualBoardUi),
-    ...(handleChannelPool ? { handleChannelPool } : {}),
-    ...(sections ? { sections } : {}),
-    blocks: obj.blocks as ExtensionBlockDef[],
-    sandboxMock: obj.sandboxMock as ExtensionSandboxMock | undefined,
+    ...(imports ? { imports } : {}),
+    sections,
     ...(simWidgets ? { simWidgets } : {}),
+    ...(sandboxMock ? { sandboxMock } : {}),
+    ...(bundleModule ? { bundleModule } : {}),
   };
 }
 
@@ -1328,7 +1427,10 @@ class ExtensionRegistry {
   private persistCustomPacks(): void {
     try {
       const customOnly = Array.from(this.packs.values()).filter((p) => !p.builtin);
-      localStorage.setItem(STORAGE_CUSTOM_EXTENSIONS_KEY, JSON.stringify(customOnly));
+      localStorage.setItem(
+        STORAGE_CUSTOM_EXTENSIONS_KEY,
+        JSON.stringify(customOnly),
+      );
     } catch {
       // ignore quota errors
     }
@@ -1385,11 +1487,11 @@ class ExtensionRegistry {
       ...this.packs.values(),
     ];
     for (const pack of searchPacks) {
-      const blk = pack.blocks.find((b) => b.type === blockType);
-      if (blk) {
-        const sec =
-          findSectionForBlockType(pack, blockType) ?? resolvePackSections(pack)[0];
-        return { pack, section: sec, block: blk };
+      for (const sec of resolvePackSections(pack)) {
+        const blk = sec.blocks.find((b) => b.type === blockType);
+        if (blk) {
+          return { pack, section: sec, block: blk };
+        }
       }
     }
     return undefined;
@@ -1437,16 +1539,10 @@ class ExtensionRegistry {
     return Boolean(this.getHatBlockDef(blockType));
   }
 
-  isEventDrivenBlock(blockType: string): boolean {
-    const found = this.findOwnerForBlockType(blockType);
-    if (!found) return false;
-    return found.block.kind === 'hat' || found.section.hasRtMonitorUi;
-  }
-
   renderHatScopeInfo(block: Blockly.Block): {
     label: string;
     shortLabel: string;
-    category: 'lifecycle' | 'timer' | 'button' | 'function';
+    category: 'lifecycle' | 'event' | 'function';
   } | null {
     const found = this.getHatBlockDef(block.type);
     if (!found) return null;
@@ -1460,7 +1556,7 @@ class ExtensionRegistry {
     return {
       label,
       shortLabel,
-      category: hat.scopeCategory ?? 'button',
+      category: hat.scopeCategory ?? 'event',
     };
   }
 
@@ -1528,8 +1624,7 @@ class ExtensionRegistry {
 
   /**
    * Generic core-category block injector: returns toolbox blocks from ALL enabled, visible
-   * pack sections whose declarative `categoryTarget` matches `coreCategoryId`
-   * (`'event' | 'print' | 'control' | 'variables' | 'math' | 'logic' | 'text' | 'lists' | 'functions'`).
+   * pack sections whose declarative `categoryTarget` matches `coreCategoryId`.
    */
   getMergedBlocksForCategory(
     coreCategoryId: CoreCategoryTarget,
@@ -1537,7 +1632,10 @@ class ExtensionRegistry {
     localPacks?: PolyExtensionPack[],
   ): ToolboxBlockSpec[] {
     const out: ToolboxBlockSpec[] = [];
-    for (const { pack, section } of this.getEnabledSections(enabledIds, localPacks)) {
+    for (const { pack, section } of this.getEnabledSections(
+      enabledIds,
+      localPacks,
+    )) {
       if (section.visible && section.categoryTarget === coreCategoryId) {
         out.push(...buildToolboxBlocksForSection(pack, section));
       }
@@ -1545,16 +1643,89 @@ class ExtensionRegistry {
     return out;
   }
 
+  /**
+   * Returns all modules to mount into the browser WASM sandbox (`sandboxMock` + `bundleModule`).
+   * Note: For real-device export, use `getBundleModules()` so `sandboxMock` stubs are strictly stripped!
+   */
   getSandboxMocks(
     enabledIds: string[],
     localPacks?: PolyExtensionPack[],
-  ): ExtensionSandboxMock[] {
+  ): ExtensionModuleSource[] {
+    const out: ExtensionModuleSource[] = [];
+    for (const p of this.getEnabledPacks(enabledIds, localPacks)) {
+      if (p.sandboxMock) {
+        out.push({ ...p.sandboxMock, packId: p.id });
+      }
+      if (p.bundleModule) {
+        out.push({ ...p.bundleModule, packId: p.id });
+      }
+    }
+    return out;
+  }
+
+  /** Returns ONLY real pure-script library modules (`bundleModule`) that should be shipped with target exports. */
+  getBundleModules(
+    enabledIds: string[],
+    localPacks?: PolyExtensionPack[],
+  ): ExtensionModuleSource[] {
     return this.getEnabledPacks(enabledIds, localPacks)
-      .filter((p) => Boolean(p.sandboxMock))
-      .map((p) => ({
-        ...p.sandboxMock!,
-        packId: p.id,
-      }));
+      .filter((p) => Boolean(p.bundleModule))
+      .map((p) => ({ ...p.bundleModule!, packId: p.id }));
+  }
+
+  /**
+   * Automatically resolves active Simulator panel cards from enabled blocks:
+   * - Requires a runnable driver (`sandboxMock` or `bundleModule`) AND non-empty `simWidgets`;
+   * - When any block in the pack declares `simWidgetKeys`, strictly filters `simWidgets` to ONLY
+   *   keys referenced by currently enabled blocks (omitting the card if 0 widgets remain).
+   */
+  getActiveSimPacks(
+    enabledIds: string[],
+    localPacks?: PolyExtensionPack[],
+  ): PolyExtensionPack[] {
+    const enabledByPack = new Map<
+      string,
+      { pack: PolyExtensionPack; blocks: ExtensionBlockDef[] }
+    >();
+    for (const { pack, section } of this.getEnabledSections(
+      enabledIds,
+      localPacks,
+    )) {
+      const entry = enabledByPack.get(pack.id);
+      if (entry) {
+        entry.blocks.push(...section.blocks);
+      } else {
+        enabledByPack.set(pack.id, { pack, blocks: [...section.blocks] });
+      }
+    }
+
+    const out: PolyExtensionPack[] = [];
+    for (const { pack, blocks } of enabledByPack.values()) {
+      if (!pack.simWidgets || pack.simWidgets.length === 0) continue;
+      if (!pack.sandboxMock && !pack.bundleModule) continue;
+
+      const packUsesBlockWidgetKeys = getAllPackBlocks(pack).some(
+        (b) => (b.simWidgetKeys?.length ?? 0) > 0,
+      );
+      if (!packUsesBlockWidgetKeys) {
+        out.push(pack);
+        continue;
+      }
+
+      const activeKeys = new Set<string>();
+      for (const blk of blocks) {
+        for (const k of blk.simWidgetKeys ?? []) {
+          activeKeys.add(k);
+        }
+      }
+      const filteredWidgets = pack.simWidgets.filter((w) =>
+        activeKeys.has(w.key),
+      );
+      if (filteredWidgets.length > 0) {
+        out.push({ ...pack, simWidgets: filteredWidgets });
+      }
+    }
+    return out;
   }
 
   /** Lists all enabled section-level channel pools across all enabled packs. */
@@ -1564,40 +1735,37 @@ class ExtensionRegistry {
   ): Array<{
     pack: PolyExtensionPack;
     section: ResolvedPackSection;
-    pool: HandleChannelPoolSpec;
+    pool: ResolvedHandleChannelPoolSpec;
   }> {
     const out: Array<{
       pack: PolyExtensionPack;
       section: ResolvedPackSection;
-      pool: HandleChannelPoolSpec;
+      pool: ResolvedHandleChannelPoolSpec;
     }> = [];
-    for (const { pack, section } of this.getEnabledSections(enabledIds, localPacks)) {
-      if (section.handleChannelPool) {
-        out.push({ pack, section, pool: section.handleChannelPool });
+    for (const { pack, section } of this.getEnabledSections(
+      enabledIds,
+      localPacks,
+    )) {
+      if (section.channelPool) {
+        out.push({ pack, section, pool: section.channelPool });
       }
     }
     return out;
   }
 
-  hasRtMonitor(
-    enabledIds: string[],
-    localPacks?: PolyExtensionPack[],
-  ): boolean {
-    return this.getEnabledSections(enabledIds, localPacks).some(
-      ({ section }) => section.hasRtMonitorUi,
-    );
-  }
-
   /**
    * Converts all enabled, visible standalone sections (`categoryTarget === 'own'`)
-   * into ordered Blockly toolbox categories. Zero hardcoded pack IDs.
+   * into ordered Blockly toolbox categories. Automatically derives the flyout config
+   * shortcut button whenever a standalone section declares a `channel-pool` config.
    */
   toCategorySpecs(
     enabledIds: string[],
     localPacks?: PolyExtensionPack[],
   ): BlockCategorySpec[] {
     return this.getEnabledSections(enabledIds, localPacks)
-      .filter(({ section }) => section.visible && section.categoryTarget === 'own')
+      .filter(
+        ({ section }) => section.visible && section.categoryTarget === 'own',
+      )
       .map(({ pack, section }) => ({
         id: section.isMultiSection
           ? `ext_${pack.id}_${section.sectionId}`
@@ -1607,7 +1775,14 @@ class ExtensionRegistry {
         order: section.toolboxOrder,
         isExtension: true,
         blocks: buildToolboxBlocksForSection(pack, section),
-        ...(section.flyoutButton ? { flyoutButton: section.flyoutButton } : {}),
+        ...(section.channelPool
+          ? {
+              flyoutButton: {
+                text: `⚙ 配置本句柄${section.channelPool.label}`,
+                callbackKey: OPEN_HANDLE_CHANNEL_CONFIG_CALLBACK,
+              },
+            }
+          : {}),
       }));
   }
 }

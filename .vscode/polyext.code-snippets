@@ -1,0 +1,137 @@
+{
+  "PolyBlock: Full Extension Pack Skeleton": {
+    "scope": "json,jsonc",
+    "prefix": "poly-pack",
+    "description": "插入完整的 PolyBlock 单轨声明式扩展包 (.polyext.json) 骨架",
+    "body": [
+      "{",
+      "  \"\\$schema\": \"./schemas/polyext.schema.json\",",
+      "  \"format\": \"polyblock-extension\",",
+      "  \"version\": 1,",
+      "  \"id\": \"${1:my-module}\",",
+      "  \"name\": \"${2:自定义扩展包}\",",
+      "  \"packVersion\": \"1.0.0\",",
+      "  \"iconLabel\": \"${3:模块}\",",
+      "  \"color\": \"${4:#0ea5e9}\",",
+      "  \"description\": \"${5:对应真机 C 端或脚本模块}\",",
+      "  \"imports\": {",
+      "    \"lua\": [\"local ${6:mod} = require(\\\"${6:mod}\\\")\"],",
+      "    \"python\": [\"import ${6:mod}\"]",
+      "  },",
+      "  \"sections\": [",
+      "    {",
+      "      \"id\": \"main\",",
+      "      \"label\": \"${3:模块}\",",
+      "      \"toolboxOrder\": ${7:100},",
+      "      \"blocks\": [",
+      "        $0",
+      "      ]",
+      "    }",
+      "  ]",
+      "}"
+    ]
+  },
+  "PolyBlock: Add Section": {
+    "scope": "json,jsonc",
+    "prefix": "poly-section",
+    "description": "在扩展包 sections[] 中快速插入一个新组件（支持选独立分类或并入核心分类）",
+    "body": [
+      "{",
+      "  \"id\": \"${1:sec_id}\",",
+      "  \"label\": \"${2:组件名}\",",
+      "  \"visible\": ${3|true,false|},",
+      "  \"categoryTarget\": \"${4|own,event,print,control,variables,math,logic,text,lists,functions|}\",",
+      "  \"toolboxOrder\": ${5:100},",
+      "  \"blocks\": [",
+      "    $0",
+      "  ]",
+      "}"
+    ]
+  },
+  "PolyBlock: Add Statement Block": {
+    "scope": "json,jsonc",
+    "prefix": "poly-block-stmt",
+    "description": "插入一个动作语句积木（kind: statement，如控制外设、赋值操作）",
+    "body": [
+      "{",
+      "  \"type\": \"ext_${1:mod}_${2:action}\",",
+      "  \"kind\": \"statement\",",
+      "  \"message0\": \"${3:执行动作 %1}\",",
+      "  \"args0\": [",
+      "    { \"type\": \"input_value\", \"name\": \"${4:VAL}\", \"check\": \"${5|Number,String,Boolean|}\" }",
+      "  ],",
+      "  \"inputsInline\": true,",
+      "  \"tooltip\": \"${6:积木说明}\",",
+      "  \"lua\": { \"template\": \"${1:mod}.${2:action}({{${4:VAL}}})\" },",
+      "  \"python\": { \"template\": \"${1:mod}.${2:action}({{${4:VAL}}})\" }",
+      "}$0"
+    ]
+  },
+  "PolyBlock: Add Value Block": {
+    "scope": "json,jsonc",
+    "prefix": "poly-block-val",
+    "description": "插入一个带返回值的表达式积木（kind: value，可嵌入变量赋值/判断槽位）",
+    "body": [
+      "{",
+      "  \"type\": \"ext_${1:mod}_${2:read}\",",
+      "  \"kind\": \"value\",",
+      "  \"outputType\": \"${3|Number,String,Boolean|}\",",
+      "  \"message0\": \"${4:读取数值}\",",
+      "  \"tooltip\": \"${5:返回值说明}\",",
+      "  \"lua\": { \"template\": \"${1:mod}.${2:read}()\" },",
+      "  \"python\": { \"template\": \"${1:mod}.${2:read}()\" }",
+      "}$0"
+    ]
+  },
+  "PolyBlock: Add Event Hat Block": {
+    "scope": "json,jsonc",
+    "prefix": "poly-block-hat",
+    "description": "插入一个顶层零闭包事件回调帽块（kind: hat）",
+    "body": [
+      "{",
+      "  \"type\": \"ext_${1:mod}_on_${2:event}\",",
+      "  \"kind\": \"hat\",",
+      "  \"message0\": \"当 ${3:事件触发} 时\",",
+      "  \"inputsInline\": true,",
+      "  \"tooltip\": \"${4:顶层事件回调}\",",
+      "  \"hat\": {",
+      "    \"eventName\": \"on_${2:event}\",",
+      "    \"params\": [${5}],",
+      "    \"mode\": \"${6|singleton,dispatch|}\",",
+      "    \"scopeCategory\": \"event\",",
+      "    \"keepsAlive\": true",
+      "  }",
+      "}$0"
+    ]
+  },
+  "PolyBlock: Add Channel Pool HandleConfig": {
+    "scope": "json,jsonc",
+    "prefix": "poly-pool",
+    "description": "在 section.handleConfigs[] 中插入一个每句柄隔离编号通道池配置（自动生成抽屉按钮与越界校验）",
+    "body": [
+      "{",
+      "  \"kind\": \"channel-pool\",",
+      "  \"label\": \"${1:PWM 通道}\",",
+      "  \"prefix\": \"${2:PWM}\",",
+      "  \"min\": 1,",
+      "  \"max\": ${3:8},",
+      "  \"defaultCount\": ${4:4},",
+      "  \"presets\": [2, 4, 8]",
+      "}$0"
+    ]
+  },
+  "PolyBlock: Add SimWidget": {
+    "scope": "json,jsonc",
+    "prefix": "poly-widget",
+    "description": "在 pack.simWidgets[] 中插入一个右侧模拟面板控件",
+    "body": [
+      "{",
+      "  \"kind\": \"${1|led,tricolor,rgb,bar,screen,slider,toggle,button|}\",",
+      "  \"key\": \"${2:status_led}\",",
+      "  \"label\": \"${3:状态灯}\",",
+      "  \"color\": \"${4:#10b981}\",",
+      "  \"default\": ${5:false}",
+      "}$0"
+    ]
+  }
+}

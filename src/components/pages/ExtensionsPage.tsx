@@ -1,5 +1,14 @@
-import { ArrowLeft, Cpu, Download, Trash2, Upload } from 'lucide-react';
-import { useRef } from 'react';
+import {
+  ArrowLeft,
+  BookOpen,
+  CheckSquare,
+  Cpu,
+  Download,
+  Square,
+  Trash2,
+  Upload,
+} from 'lucide-react';
+import { useRef, useState } from 'react';
 import { backendRegistry } from '../../core/backends/registry';
 import {
   CORE_TOOLBOX_ORDERS,
@@ -14,11 +23,13 @@ import {
   derivePackBadges,
   formatPackPlacementSummary,
   formatSectionPlacement,
+  getAllPackBlocks,
   getPackEnableState,
   resolvePackSections,
 } from '../../core/extensions/registry';
 import type { PolyExtensionPack } from '../../core/extensions/types';
 import type { TargetProfile } from '../../types/project';
+import { ExtensionSpecModal } from '../ExtensionSpecModal';
 
 interface ExtensionsPageProps {
   activeProjectName: string;
@@ -65,6 +76,7 @@ export function ExtensionsPage({
   onReturnToBlocks,
   onNotify,
 }: ExtensionsPageProps) {
+  const [showSpecModal, setShowSpecModal] = useState(false);
   const extFileInputRef = useRef<HTMLInputElement | null>(null);
   const boardFileInputRef = useRef<HTMLInputElement | null>(null);
   const builtinPacks = allPacks.filter((p) => Boolean(p.builtin));
@@ -112,6 +124,7 @@ export function ExtensionsPage({
     const isAnyEnabled = enableState.status !== 'none';
     const badges = derivePackBadges(pack);
     const sections = resolvePackSections(pack);
+    const allBlocks = getAllPackBlocks(pack);
     const placementLabel = formatPackPlacementSummary(pack);
     const toggleBtnClass =
       enableState.status === 'full'
@@ -145,12 +158,12 @@ export function ExtensionsPage({
               className="card-icon"
               style={{ background: pack.color, fontSize: 11.5 }}
             >
-              {pack.categoryLabel}
+              {pack.iconLabel}
             </div>
             <div>
               <div style={{ fontWeight: 700, fontSize: 13.5 }}>{pack.name}</div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                v{pack.packVersion} · {pack.blocks.length} 个积木 · {placementLabel}
+                v{pack.packVersion} · {allBlocks.length} 个积木 · {placementLabel}
               </div>
             </div>
           </div>
@@ -178,9 +191,9 @@ export function ExtensionsPage({
           <div
             className="pack-sections-bar"
             role="group"
-            aria-label={`${pack.name} 可裁剪组件`}
+            aria-label={`${pack.name} 按组件勾选启用`}
           >
-            <span className="pack-sections-title">组件：</span>
+            <span className="pack-sections-title">按组件勾选：</span>
             {sections.map((sec) => {
               const secOn = hasCapability(enabledCapabilityIds, sec.capId);
               const posText = formatSectionPlacement(sec);
@@ -188,24 +201,25 @@ export function ExtensionsPage({
                 <button
                   key={sec.capId}
                   type="button"
+                  aria-pressed={secOn}
                   className={`pack-section-chip ${secOn ? 'active' : ''}`}
                   style={
                     secOn
                       ? {
-                          borderColor: `${sec.color}88`,
+                          borderColor: `${sec.color}99`,
                           color: sec.color,
+                          background: `${sec.color}12`,
                         }
                       : undefined
                   }
-                  title={`${sec.label}（${posText}）${sec.description ? `：${sec.description}` : ''} · 点击单独${secOn ? '停用' : '启用'}`}
+                  title={`${sec.label}（${posText}）${sec.description ? `：${sec.description}` : ''} · 点击单独${secOn ? '取消勾选' : '勾选启用'}`}
                   onClick={() => onToggleCapability(sec.capId)}
                 >
-                  <span
-                    className="pack-section-dot"
-                    style={{
-                      background: secOn ? sec.color : 'var(--text-muted)',
-                    }}
-                  />
+                  {secOn ? (
+                    <CheckSquare size={12} style={{ flexShrink: 0 }} />
+                  ) : (
+                    <Square size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
+                  )}
                   <span>{sec.label}</span>
                   <span className="pack-section-pos">{posText}</span>
                 </button>
@@ -215,14 +229,14 @@ export function ExtensionsPage({
         )}
 
         <div className="paused-var-chips">
-          {pack.blocks.slice(0, 4).map((b) => (
+          {allBlocks.slice(0, 4).map((b) => (
             <span key={b.type} className="var-chip" style={{ fontSize: 10.5 }}>
               {b.message0.replace(/%\d/g, '▢')}
             </span>
           ))}
-          {pack.blocks.length > 4 && (
+          {allBlocks.length > 4 && (
             <span className="var-chip" style={{ fontSize: 10.5 }}>
-              +{pack.blocks.length - 4} 项
+              +{allBlocks.length - 4} 项
             </span>
           )}
         </div>
@@ -285,7 +299,7 @@ export function ExtensionsPage({
             <h1 className="subpage-title">全局扩展库、能力模块与板型预设</h1>
             <p className="subpage-sub">
               此处管理<strong>跨项目共享的全局扩展库</strong>（可为当前项目{' '}
-              <strong>{activeProjectName}</strong> 勾选整包或按组件细粒度裁剪）。若外设包仅归属单个项目，请在「项目配置 → 能力与外设」导入为
+              <strong>{activeProjectName}</strong> 整包开关，或直接点击多组件卡片中的勾选框按组件部分启用）。若外设包仅归属单个项目，请在「项目配置 → 能力与外设」导入为
               <strong>项目内嵌包</strong>，不会污染此页。
             </p>
           </div>
@@ -305,6 +319,14 @@ export function ExtensionsPage({
             >
               <Cpu size={14} />
               <span>导入板型 (.polyboard.json)</span>
+            </button>
+            <button
+              type="button"
+              className="btn-outline"
+              onClick={() => setShowSpecModal(true)}
+            >
+              <BookOpen size={14} />
+              <span>扩展包规范</span>
             </button>
             <button
               type="button"
@@ -406,8 +428,7 @@ export function ExtensionsPage({
             >
               暂未导入自定义全局扩展包。点击右上角{' '}
               <strong>「导入到全局库 (.polyext.json)」</strong>{' '}
-              可导入团队复用的硬件驱动、底层 C 接口或功能算法包（单个包支持用{' '}
-              <code>sections[]</code> 声明多个独立侧边栏组件、外设模拟控件、事件回调帽块与通道池）；若仅归属单个项目，请在「项目配置 → 能力与外设」导入为项目内嵌包。
+              可导入团队复用的硬件驱动、底层 C 接口或纯脚本算法库（点击「扩展包规范」可随时查看全部字段说明）；若仅归属单个项目，请在「项目配置 → 能力与外设」导入为项目内嵌包。
             </div>
           </div>
         ) : (
@@ -532,6 +553,10 @@ export function ExtensionsPage({
           ))}
         </div>
       </div>
+
+      {showSpecModal && (
+        <ExtensionSpecModal onClose={() => setShowSpecModal(false)} />
+      )}
     </div>
   );
 }

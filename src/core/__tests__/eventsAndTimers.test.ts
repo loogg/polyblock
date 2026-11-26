@@ -321,7 +321,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(dispatched).toContain('run');
   });
 
-  it('flags cross-file global callback conflicts when linked scripts both define on_timer, and re-arms setRunPeriod immediately', async () => {
+  it('enforces handle-wide unique on_start/on_stop and cross-file callback conflict across ALL scripts in a handle, detects event-loop purely from sibling hats, and re-arms setRunPeriod immediately', async () => {
     setActiveHandleScripts(
       [
         {
@@ -335,7 +335,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
           id: 's_timers',
           name: 'timers',
           isEntry: false,
-          declaredEvents: ['on_timer'],
+          declaredEvents: ['on_start', 'on_timer'],
           requiredScripts: [],
         },
       ],
@@ -367,6 +367,15 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
       },
     });
     const res = backendRegistry.get('lua').generate(conflictWs);
+    // Handle-wide singleton uniqueness: duplicate `on_start` in sibling script is flagged!
+    expect(
+      res.diagnostics.some(
+        (d) =>
+          d.severity === 'error' &&
+          d.id.startsWith('handle-dup-lifecycle-on_start-timers'),
+      ),
+    ).toBe(true);
+    // Duplicate dispatch callback `on_timer` across sibling script is also flagged!
     expect(
       res.diagnostics.some(
         (d) =>
@@ -375,6 +384,64 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
       ),
     ).toBe(true);
     conflictWs.dispose();
+
+    // Pure hat-driven event-loop detection across the whole handle (ZERO requiresEventLoop flag needed!):
+    // `main.lua` has ONLY `on_start` calling `require("timers")` + `rt.start_timer(...)`,
+    // while `timers.lua` holds `on_timer`. `isEventDriven` MUST be true!
+    setActiveHandleScripts(
+      [
+        {
+          id: 's_main_only',
+          name: 'main',
+          isEntry: true,
+          declaredEvents: ['on_start'],
+          requiredScripts: ['timers'],
+        },
+        {
+          id: 's_timers_hat',
+          name: 'timers',
+          isEntry: false,
+          declaredEvents: ['on_timer'],
+          requiredScripts: [],
+        },
+      ],
+      's_main_only',
+    );
+    const mainOnlyWs = loadWs({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'mo_s',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_require_script',
+                  id: 'mo_req',
+                  fields: { SCRIPT: 'timers' },
+                  next: {
+                    block: {
+                      type: 'poly_start_timer',
+                      id: 'mo_t0',
+                      fields: { TIMER_ID: '0' },
+                      inputs: {
+                        PERIOD_MS: { shadow: { type: 'math_number', id: 'mo_ms', fields: { NUM: 200 } } },
+                        REPEAT: { shadow: { type: 'math_number', id: 'mo_rep', fields: { NUM: 1 } } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+    const mainOnlyRes = backendRegistry.get('lua').generate(mainOnlyWs);
+    expect(mainOnlyRes.isEventDriven).toBe(true);
+    expect(mainOnlyRes.diagnostics).toHaveLength(0);
+    mainOnlyWs.dispose();
     setActiveHandleScripts([], null);
 
     // setRunPeriod immediately re-arms next trigger (from 5000ms down to 25ms)

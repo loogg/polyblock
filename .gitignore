@@ -11,6 +11,7 @@ dist-ssr/
 # Editor & OS files
 .vscode/*
 !.vscode/extensions.json
+!.vscode/polyext.code-snippets
 .idea/
 .DS_Store
 Thumbs.db

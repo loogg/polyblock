@@ -11,117 +11,108 @@ export const FLAGSHIP_ROBOT_DRIVE_PACK: PolyExtensionPack = {
   id: 'robot-drive',
   name: '差速底盘驱动包',
   packVersion: '1.0.0',
-  categoryLabel: '底盘',
+  iconLabel: '底盘',
   color: '#ec4899',
-  toolboxOrder: 105,
   tags: ['机器人', '差速驱动'],
   description:
     '项目内嵌自定义外设包：提供双轮差速控制、电池监测与声明式急停中断回调（on_drive_estop），随工程文件自动携带且不污染全局库。',
   builtin: false,
-  blocks: [
+  imports: {
+    lua: ['local drive = require("drive")'],
+    python: ['import drive'],
+  },
+  sections: [
     {
-      type: 'ext_drive_set_wheels',
-      kind: 'statement',
-      message0: '差速驱动 左轮 %1 %% 右轮 %2 %%',
-      args0: [
-        { type: 'input_value', name: 'LEFT', check: 'Number' },
-        { type: 'input_value', name: 'RIGHT', check: 'Number' },
-      ],
-      inputsInline: true,
-      shadows: {
-        LEFT: { type: 'math_number', value: 60 },
-        RIGHT: { type: 'math_number', value: 60 },
-      },
-      tooltip: '设置左右轮目标转速百分比（0~100%）；若急停开关处于锁定态会自动归零保护。',
-      keywords: '底盘 差速 驱动 左轮 右轮 速度 drive set_wheels',
-      lua: {
-        imports: ['local drive = require("drive")'],
-        template: 'drive.set_wheels({{LEFT}}, {{RIGHT}})',
-      },
-      python: {
-        imports: ['import drive'],
-        template: 'drive.set_wheels({{LEFT}}, {{RIGHT}})',
-      },
-    },
-    {
-      type: 'ext_drive_stop',
-      kind: 'statement',
-      message0: '底盘立即刹车停机',
-      inputsInline: true,
-      tooltip: '立刻切断左右轮动力并刷新底盘状态灯与指令终端。',
-      keywords: '底盘 刹车 停机 stop drive',
-      lua: {
-        imports: ['local drive = require("drive")'],
-        template: 'drive.stop()',
-      },
-      python: {
-        imports: ['import drive'],
-        template: 'drive.stop()',
-      },
-    },
-    {
-      type: 'ext_drive_battery',
-      kind: 'value',
-      outputType: 'Number',
-      message0: '读取底盘电量 (%)',
-      tooltip: '读取机器人动力电池当前剩余百分比（可在右侧「模拟」面板拖动电量滑块实时测试）。',
-      keywords: '底盘 电池 电量 battery drive',
-      lua: {
-        imports: ['local drive = require("drive")'],
-        template: 'drive.battery()',
-      },
-      python: {
-        imports: ['import drive'],
-        template: 'drive.battery()',
-      },
-    },
-    {
-      type: 'ext_drive_is_estop',
-      kind: 'value',
-      outputType: 'Boolean',
-      message0: '底盘处于急停锁定?',
-      tooltip: '检查急停开关（E-Stop）当前是否被拨至锁定状态。',
-      keywords: '底盘 急停 锁定 estop drive',
-      lua: {
-        imports: ['local drive = require("drive")'],
-        template: 'drive.is_estop()',
-      },
-      python: {
-        imports: ['import drive'],
-        template: 'drive.is_estop()',
-      },
-    },
-    {
-      type: 'ext_drive_on_estop',
-      kind: 'hat',
-      message0: '当底盘急停 %1 时',
-      args0: [
+      id: 'main',
+      label: '底盘',
+      toolboxOrder: 105,
+      blocks: [
         {
-          type: 'field_dropdown',
-          name: 'STATE',
-          options: [
-            ['触发', 'press'],
-            ['解除', 'release'],
+          type: 'ext_drive_set_wheels',
+          kind: 'statement',
+          message0: '差速驱动 左轮 %1 %% 右轮 %2 %%',
+          args0: [
+            { type: 'input_value', name: 'LEFT', check: 'Number' },
+            { type: 'input_value', name: 'RIGHT', check: 'Number' },
           ],
+          inputsInline: true,
+          shadows: {
+            LEFT: { type: 'math_number', value: 60 },
+            RIGHT: { type: 'math_number', value: 60 },
+          },
+          tooltip: '设置左右轮目标转速百分比（0~100%）；若急停开关处于锁定态会自动归零保护。',
+          keywords: '底盘 差速 驱动 左轮 右轮 速度 drive set_wheels',
+          simWidgetKeys: ['moving', 'left_speed', 'right_speed', 'drive_log'],
+          lua: { template: 'drive.set_wheels({{LEFT}}, {{RIGHT}})' },
+          python: { template: 'drive.set_wheels({{LEFT}}, {{RIGHT}})' },
+        },
+        {
+          type: 'ext_drive_stop',
+          kind: 'statement',
+          message0: '底盘立即刹车停机',
+          inputsInline: true,
+          tooltip: '立刻切断左右轮动力并刷新底盘状态灯与指令终端。',
+          keywords: '底盘 刹车 停机 stop drive',
+          simWidgetKeys: ['moving', 'left_speed', 'right_speed', 'drive_log'],
+          lua: { template: 'drive.stop()' },
+          python: { template: 'drive.stop()' },
+        },
+        {
+          type: 'ext_drive_battery',
+          kind: 'value',
+          outputType: 'Number',
+          message0: '读取底盘电量 (%)',
+          tooltip: '读取机器人动力电池当前剩余百分比（可在右侧「模拟」面板拖动电量滑块实时测试）。',
+          keywords: '底盘 电池 电量 battery drive',
+          simWidgetKeys: ['battery'],
+          lua: { template: 'drive.battery()' },
+          python: { template: 'drive.battery()' },
+        },
+        {
+          type: 'ext_drive_is_estop',
+          kind: 'value',
+          outputType: 'Boolean',
+          message0: '底盘处于急停锁定?',
+          tooltip: '检查急停开关（E-Stop）当前是否被拨至锁定状态。',
+          keywords: '底盘 急停 锁定 estop drive',
+          simWidgetKeys: ['estop'],
+          lua: { template: 'drive.is_estop()' },
+          python: { template: 'drive.is_estop()' },
+        },
+        {
+          type: 'ext_drive_on_estop',
+          kind: 'hat',
+          message0: '当底盘急停 %1 时',
+          args0: [
+            {
+              type: 'field_dropdown',
+              name: 'STATE',
+              options: [
+                ['触发', 'press'],
+                ['解除', 'release'],
+              ],
+            },
+          ],
+          inputsInline: true,
+          fields: { STATE: 'press' },
+          tooltip:
+            '自定义声明式硬件中断回调：聚合成顶层零闭包 on_drive_estop(active)，点击右侧急停开关即刻触发。',
+          keywords: '当底盘 急停 触发 解除 回调 on_drive_estop hat',
+          simWidgetKeys: ['estop'],
+          hat: {
+            eventName: 'on_drive_estop',
+            params: ['active'],
+            mode: 'dispatch',
+            conditionLua: '{{STATE:edge_lua:active}}',
+            conditionPython: '{{STATE:edge_py:active}}',
+            duplicateKeyTemplate: '{{STATE}}',
+            scopeLabelTemplate: 'on_drive_estop · {{STATE:edge_zh}}',
+            scopeShortTemplate: '急停',
+            scopeCategory: 'event',
+            keepsAlive: true,
+          },
         },
       ],
-      inputsInline: true,
-      fields: { STATE: 'press' },
-      tooltip:
-        '自定义声明式硬件中断回调：聚合成顶层零闭包 on_drive_estop(active)，点击右侧急停开关即刻触发。',
-      keywords: '当底盘 急停 触发 解除 回调 on_drive_estop hat',
-      hat: {
-        eventName: 'on_drive_estop',
-        params: ['active'],
-        mode: 'dispatch',
-        conditionLua: '{{STATE:edge_lua:active}}',
-        conditionPython: '{{STATE:edge_py:active}}',
-        duplicateKeyTemplate: '{{STATE}}',
-        scopeLabelTemplate: 'on_drive_estop · {{STATE:edge_zh}}',
-        scopeShortTemplate: '急停',
-        scopeCategory: 'button',
-        keepsAlive: true,
-      },
     },
   ],
   sandboxMock: {
@@ -254,7 +245,7 @@ def is_estop():
  * Embedded custom extension pack #2 for the L4 Flagship Robot project:
  * Pan/Tilt PWM servo pack demonstrating:
  * - Custom `toolboxOrder: 35` (slots cleanly between 控制 #30 and 变量 #40)
- * - Isolated per-handle `handleChannelPool` (`configKey: 'pwm-servo'`, completely independent of `rt.timers`)
+ * - Isolated per-handle `handleConfigs` (`channel-pool` -> `pwm-servo`, completely independent of `rt.timers`)
  * - Pack-scoped `simWidgets` angle bars
  */
 export const FLAGSHIP_PWM_SERVO_PACK: PolyExtensionPack = {
@@ -263,64 +254,69 @@ export const FLAGSHIP_PWM_SERVO_PACK: PolyExtensionPack = {
   id: 'pwm-servo',
   name: '云台 PWM 舵机通道包',
   packVersion: '1.0.0',
-  categoryLabel: '云台',
+  iconLabel: '云台',
   color: '#14b8a6',
-  toolboxOrder: 35,
   tags: ['云台', 'PWM通道'],
   description:
     '项目内嵌自定义通道池外设包：演示独立每句柄 PWM 舵机通道（PWM0~PWM7，与定时器 T0~T7 彻底隔离）以及自定义工具箱序号（#35）。',
   builtin: false,
-  handleChannelPool: {
-    configKey: 'pwm-servo',
-    label: 'PWM 舵机通道',
-    prefix: 'PWM',
-    min: 1,
-    max: 8,
-    defaultCount: 4,
-    presets: [2, 4, 8],
-    fieldName: 'PWM_ID',
-    hint: '独立存储在 capabilityConfigs["pwm-servo"]，与多路编号定时器 T0~T7 完全隔离；右键积木可就地标注轴名称。',
+  imports: {
+    lua: ['local servo = require("servo")'],
+    python: ['import servo'],
   },
-  blocks: [
+  sections: [
     {
-      type: 'ext_servo_set_angle',
-      kind: 'statement',
-      message0: '设置舵机 %1 角度 %2 °',
-      args0: [
-        { type: 'field_channel_id', name: 'PWM_ID' },
-        { type: 'input_value', name: 'ANGLE', check: 'Number' },
+      id: 'main',
+      label: '云台',
+      toolboxOrder: 35,
+      handleConfigs: [
+        {
+          kind: 'channel-pool',
+          label: 'PWM 舵机通道',
+          prefix: 'PWM',
+          min: 1,
+          max: 8,
+          defaultCount: 4,
+          presets: [2, 4, 8],
+          hint: '独立存储在 capabilityConfigs["pwm-servo"]，与多路编号定时器 T0~T7 完全隔离；右键积木可就地标注轴名称。',
+        },
       ],
-      inputsInline: true,
-      fields: { PWM_ID: '0' },
-      shadows: { ANGLE: { type: 'math_number', value: 90 } },
-      tooltip: '设置指定 PWM 舵机通道的目标角度（0~180°）。',
-      keywords: '舵机 云台 pwm 角度 servo set_angle',
-      lua: {
-        imports: ['local servo = require("servo")'],
-        template:
-          'servo.set_angle({{PWM_ID:int}}, {{ANGLE}}){{PWM_ID:channel_comment_lua}}',
-      },
-      python: {
-        imports: ['import servo'],
-        template:
-          'servo.set_angle({{PWM_ID:int}}, {{ANGLE}}){{PWM_ID:channel_comment_py}}',
-      },
-    },
-    {
-      type: 'ext_servo_center_all',
-      kind: 'statement',
-      message0: '云台全部舵机归中 (90°)',
-      inputsInline: true,
-      tooltip: '将偏航（PWM0）与俯仰（PWM1）舵机同步归中至 90°。',
-      keywords: '云台 舵机 归中 center servo',
-      lua: {
-        imports: ['local servo = require("servo")'],
-        template: 'servo.center_all()',
-      },
-      python: {
-        imports: ['import servo'],
-        template: 'servo.center_all()',
-      },
+      blocks: [
+        {
+          type: 'ext_servo_set_angle',
+          kind: 'statement',
+          message0: '设置舵机 %1 角度 %2 °',
+          args0: [
+            { type: 'field_channel_id', name: 'PWM_ID' },
+            { type: 'input_value', name: 'ANGLE', check: 'Number' },
+          ],
+          inputsInline: true,
+          fields: { PWM_ID: '0' },
+          shadows: { ANGLE: { type: 'math_number', value: 90 } },
+          tooltip: '设置指定 PWM 舵机通道的目标角度（0~180°）。',
+          keywords: '舵机 云台 pwm 角度 servo set_angle',
+          simWidgetKeys: ['pan_deg', 'tilt_deg'],
+          lua: {
+            template:
+              'servo.set_angle({{PWM_ID:int}}, {{ANGLE}}){{PWM_ID:channel_comment_lua}}',
+          },
+          python: {
+            template:
+              'servo.set_angle({{PWM_ID:int}}, {{ANGLE}}){{PWM_ID:channel_comment_py}}',
+          },
+        },
+        {
+          type: 'ext_servo_center_all',
+          kind: 'statement',
+          message0: '云台全部舵机归中 (90°)',
+          inputsInline: true,
+          tooltip: '将偏航（PWM0）与俯仰（PWM1）舵机同步归中至 90°。',
+          keywords: '云台 舵机 归中 center servo',
+          simWidgetKeys: ['pan_deg', 'tilt_deg'],
+          lua: { template: 'servo.center_all()' },
+          python: { template: 'servo.center_all()' },
+        },
+      ],
     },
   ],
   sandboxMock: {
@@ -918,19 +914,21 @@ export const FLAGSHIP_DRIVE_CTRL_WS: Record<string, unknown> = {
 };
 
 /**
- * L4 Flagship Handle #1 Aux Script (`patrol_test`): short linear self-test ideal for single-step debugging.
+ * L4 Flagship Handle #1 Aux Module (`patrol_test`): defines reusable helper function `run_patrol_check()`
+ * (NO duplicate `on_start` — each handle owns exactly one `on_start` in `main.lua`).
  */
 export const FLAGSHIP_PATROL_TEST_WS: Record<string, unknown> = {
   blocks: {
     languageVersion: 0,
     blocks: [
       {
-        type: 'poly_on_start',
-        id: 'fg_p_start',
+        type: 'procedures_defnoreturn',
+        id: 'fg_p_fn',
         x: 36,
         y: 28,
+        fields: { NAME: 'run_patrol_check' },
         inputs: {
-          BODY: {
+          STACK: {
             block: {
               type: 'ext_servo_set_angle',
               id: 'fg_p_s1',
@@ -963,7 +961,7 @@ export const FLAGSHIP_PATROL_TEST_WS: Record<string, unknown> = {
                                   id: 'fg_p_done',
                                   fields: { LEVEL: 'OK' },
                                   inputs: {
-                                    MESSAGE: { block: { type: 'text', id: 'fg_p_ok', fields: { TEXT: '底盘差速与云台单步自检完成！' } } },
+                                    MESSAGE: { block: { type: 'text', id: 'fg_p_ok', fields: { TEXT: '底盘差速与云台自检函数执行完成！' } } },
                                   },
                                 },
                               },

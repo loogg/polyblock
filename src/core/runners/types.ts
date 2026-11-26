@@ -3,7 +3,7 @@ import type {
   RuntimeTelemetry,
   ScriptLanguageId,
 } from '../../types/project';
-import type { ExtensionSandboxMock } from '../extensions/types';
+import type { ExtensionModuleSource } from '../extensions/types';
 
 export type RunnerKind = 'browser-wasm' | 'network-ws' | 'local-bridge' | 'web-serial';
 
@@ -23,8 +23,8 @@ export interface RunRequest {
   startInStepMode?: boolean;
   /** Project-configured timer channel count (1..32, IDs 0..count-1). */
   timerCount?: number;
-  /** Extension sandbox mocks mounted into Lua package.preload / Python sys.modules. */
-  mockModules?: ExtensionSandboxMock[];
+  /** Extension sandbox/bundle modules mounted into Lua package.preload / Python sys.modules. */
+  mockModules?: ExtensionModuleSource[];
   /** Live interactive simulator inputs (e.g., virtual board temperature / buttons). */
   mockInputs?: Record<string, unknown>;
 }

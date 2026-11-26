@@ -84,7 +84,7 @@ export function extractSourceMap(rawCode: string): StrippedCodeResult {
  * - Duplicate dispatch hat branches (timers, buttons, or any custom `.polyext.json` dispatch hat)
  * - Floating blocks, empty `on_start`
  * - Disabled / removed extension & runtime pack blocks
- * - Out-of-range channel pool IDs for any pack declaring `handleChannelPool`
+ * - Out-of-range channel pool IDs for any section declaring `handleConfigs` (`channel-pool`)
  */
 export function analyzeWorkspaceDiagnostics(
   workspace: Blockly.Workspace,
@@ -232,83 +232,99 @@ export function analyzeWorkspaceDiagnostics(
       }
     }
 
-    // Channel pool range check (strictly isolated per section pool.configKey!)
-    const pool = owner?.section.handleChannelPool;
-    if (pool) {
-      const fieldName = pool.fieldName || 'TIMER_ID';
-      if (blk.getField(fieldName)) {
-        const poolCfg = getActiveChannelPoolConfig(pool.configKey, pool.defaultCount);
-        const cid = Math.trunc(Number(blk.getFieldValue(fieldName) ?? 0));
-        if (!Number.isInteger(cid) || cid < 0 || cid >= poolCfg.count) {
-          diagnostics.push({
-            id: `pool-${pool.configKey}-oob-${cid}-${blk.id}`,
-            severity: 'error',
-            message: `${pool.label} ${pool.prefix}${cid} 超出当前句柄配置范围（0~${poolCfg.count - 1}），请更换通道或在句柄配置中调大通道数。`,
-            blockId: blk.id,
-          });
+    // Channel pool range check (automatically detects all `field_channel_id` args — zero manual fieldName!)
+    const pool = owner?.section.channelPool;
+    if (pool && owner) {
+      const channelArgNames = (owner.block.args0 ?? [])
+        .filter(
+          (a) => a.type === 'field_channel_id' && typeof a.name === 'string',
+        )
+        .map((a) => String(a.name));
+      for (const fieldName of channelArgNames) {
+        if (blk.getField(fieldName)) {
+          const poolCfg = getActiveChannelPoolConfig(
+            pool.configKey,
+            pool.defaultCount,
+          );
+          const cid = Math.trunc(Number(blk.getFieldValue(fieldName) ?? 0));
+          if (!Number.isInteger(cid) || cid < 0 || cid >= poolCfg.count) {
+            diagnostics.push({
+              id: `pool-${pool.configKey}-oob-${cid}-${blk.id}`,
+              severity: 'error',
+              message: `${pool.label} ${pool.prefix}${cid} 超出当前句柄配置范围（0~${poolCfg.count - 1}），请更换通道或在句柄配置中调大通道数。`,
+              blockId: blk.id,
+            });
+          }
         }
       }
     }
   }
 
-  // 5. Cross-file global callback collision & missing `require` script checks within the active handle
+  // 5. Handle-wide uniqueness & cross-file checks across ALL scripts in the active handle
+  //    1 Handle = 1 isolated runtime VM (`lua_State*`), so all `.lua` files in a handle run together:
+  //    - Globally unique lifecycle hats (`on_start`, `on_stop`, `on_run`, and any singleton hat) across ALL sibling scripts
+  //    - Global callback collision check (`on_timer`, `on_button`, etc.) across ALL sibling scripts
+  //    - Missing sibling script check for `poly_require_script`
   const handleScripts = getActiveHandleScripts();
   const currentScriptId = getActiveHandleScriptId();
   if (handleScripts.length > 0) {
-    const currentScript = handleScripts.find((s) => s.id === currentScriptId);
     const siblings = handleScripts.filter((s) => s.id !== currentScriptId);
     const siblingByName = new Map(siblings.map((s) => [s.name, s]));
 
-    // Map declared eventName -> first top blockId in current workspace
-    const currentEventToBlock = new Map<string, string>();
+    // Map declared eventName -> { blockId, isSingleton } in current workspace
+    const currentEvents = new Map<
+      string,
+      { blockId: string; isSingleton: boolean }
+    >();
     for (const blk of enabledTopBlocks) {
       if (blk.type === 'poly_on_start') {
-        if (!currentEventToBlock.has('on_start')) currentEventToBlock.set('on_start', blk.id);
+        if (!currentEvents.has('on_start')) {
+          currentEvents.set('on_start', { blockId: blk.id, isSingleton: true });
+        }
       } else {
         const hatDef = extensionRegistry.getHatBlockDef(blk.type);
-        if (hatDef && !currentEventToBlock.has(hatDef.hat.eventName)) {
-          currentEventToBlock.set(hatDef.hat.eventName, blk.id);
+        if (hatDef && !currentEvents.has(hatDef.hat.eventName)) {
+          currentEvents.set(hatDef.hat.eventName, {
+            blockId: blk.id,
+            isSingleton: hatDef.hat.mode === 'singleton',
+          });
         }
       }
     }
 
-    const linkedSiblings = new Map<string, (typeof siblings)[number]>();
     for (const blk of workspace.getAllBlocks(false)) {
-      if (blk.isShadow() || !blk.isEnabled() || blk.type !== 'poly_require_script') continue;
+      if (blk.isShadow() || !blk.isEnabled() || blk.type !== 'poly_require_script')
+        continue;
       const targetName = String(blk.getFieldValue('SCRIPT') || '').trim();
       if (!targetName) continue;
-      const found = siblingByName.get(targetName);
-      if (!found) {
+      if (!siblingByName.has(targetName)) {
         diagnostics.push({
           id: `require-missing-${targetName}-${blk.id}`,
           severity: 'warning',
           message: `当前句柄内未找到脚本「${targetName}」，请先在脚本标签栏新建该脚本。`,
           blockId: blk.id,
         });
-      } else {
-        linkedSiblings.set(found.id, found);
       }
     }
 
-    // Also include siblings that explicitly require the current script (reverse direction check)
-    if (currentScript) {
-      for (const sib of siblings) {
-        if (sib.requiredScripts.includes(currentScript.name)) {
-          linkedSiblings.set(sib.id, sib);
-        }
-      }
-    }
-
-    // Flag overlapping global callback definitions between linked scripts in the same handle
-    for (const sib of linkedSiblings.values()) {
+    // Check EVERY sibling script in this handle for duplicate global lifecycle or event callbacks
+    for (const sib of siblings) {
       for (const evName of sib.declaredEvents) {
-        const localBlkId = currentEventToBlock.get(evName);
-        if (localBlkId) {
+        const localEntry = currentEvents.get(evName);
+        if (!localEntry) continue;
+        if (localEntry.isSingleton) {
           diagnostics.push({
-            id: `cross-file-cb-conflict-${evName}-${sib.name}-${localBlkId}`,
+            id: `handle-dup-lifecycle-${evName}-${sib.name}-${localEntry.blockId}`,
             severity: 'error',
-            message: `回调「${evName}」与同句柄联动脚本「${sib.name}」冲突：两者都会写入全局 _G.${evName}，后加载会覆盖前者，请将同类事件合并到同一脚本中。`,
-            blockId: localBlkId,
+            message: `每个句柄全局只允许 1 个「${evName}」：当前脚本与同句柄脚本「${sib.name}」重复定义了 ${evName}，请仅在入口脚本保留一个。`,
+            blockId: localEntry.blockId,
+          });
+        } else {
+          diagnostics.push({
+            id: `cross-file-cb-conflict-${evName}-${sib.name}-${localEntry.blockId}`,
+            severity: 'error',
+            message: `回调「${evName}」与同句柄脚本「${sib.name}」冲突：同句柄内所有脚本共享全局 _G.${evName}，请将同类事件合并到同一脚本中。`,
+            blockId: localEntry.blockId,
           });
         }
       }

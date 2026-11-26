@@ -12,14 +12,6 @@ export const CORE_TOP_HAT_TYPES = new Set<string>([
   'procedures_defreturn',
 ]);
 
-export const TIMER_ID_BLOCK_TYPES = new Set<string>([
-  'poly_on_timer',
-  'poly_start_timer',
-  'poly_stop_timer',
-  'poly_get_timer_value',
-  'poly_is_timer_running',
-]);
-
 /** Returns true if a block type is a valid top-level hat (core entry/require/procedure OR any declarative extension hat). */
 export function isValidTopHatType(blockType: string): boolean {
   return (
@@ -89,36 +81,25 @@ export function inspectWorkspaceScriptMeta(workspaceJson: Record<string, unknown
   };
 }
 
-function getRequiredSiblingScripts(workspace: Blockly.Workspace) {
-  const reqNames = new Set<string>();
-  for (const blk of workspace.getAllBlocks(false)) {
-    if (blk.isShadow() || !blk.isEnabled()) continue;
-    if (blk.type === 'poly_require_script') {
-      const name = String(blk.getFieldValue('SCRIPT') || '').trim();
-      if (name) reqNames.add(name);
-    }
-  }
-  if (reqNames.size === 0) return [];
+function getHandleSiblingScripts() {
   const currentId = getActiveHandleScriptId();
-  return getActiveHandleScripts().filter(
-    (s) => s.id !== currentId && reqNames.has(s.name),
-  );
+  return getActiveHandleScripts().filter((s) => s.id !== currentId);
 }
 
 /**
- * Returns true if the workspace (or any sibling script it loads via `poly_require_script`)
- * uses any declarative event hat or runtime-pack block.
- * Pure sequential scripts (only poly_on_start) remain in clean top-level script mode.
+ * Pure hat-driven event-loop detection across the entire handle:
+ * Returns true whenever ANY script in the active handle (current workspace OR any sibling
+ * script in the same handle) contains a declarative `kind: 'hat'` callback block.
+ * Zero extra `requiresEventLoop` or `hasRtMonitorUi` flags needed!
  */
 export function isEventDrivenWorkspace(workspace: Blockly.Workspace): boolean {
-  for (const blk of workspace.getAllBlocks(false)) {
+  for (const blk of workspace.getTopBlocks(true)) {
     if (blk.isShadow() || !blk.isEnabled()) continue;
-    if (extensionRegistry.isEventDrivenBlock(blk.type)) {
+    if (extensionRegistry.isDeclarativeHatBlock(blk.type)) {
       return true;
     }
   }
-  // If this script loads a sibling script that defines event callbacks, enter event-driven mode too
-  for (const sib of getRequiredSiblingScripts(workspace)) {
+  for (const sib of getHandleSiblingScripts()) {
     if (sib.declaredEvents.some((ev) => ev !== 'on_start')) {
       return true;
     }
@@ -127,8 +108,9 @@ export function isEventDrivenWorkspace(workspace: Blockly.Workspace): boolean {
 }
 
 /**
- * Returns true if the workspace (or a required sibling script) defines any external event hat
- * (e.g. `on_button`, `on_drive_estop`, `on_can_rx`) whose `hat.keepsAlive !== false` and is not `on_run` itself.
+ * Returns true if the workspace (or any sibling script in the same handle) defines an external
+ * event hat (e.g. `on_button`, `on_drive_estop`, `on_can_rx`) whose `hat.keepsAlive !== false`
+ * and is not `on_run` itself.
  */
 export function hasExternalKeepAliveHat(workspace: Blockly.Workspace): boolean {
   for (const blk of workspace.getTopBlocks(true)) {
@@ -144,7 +126,7 @@ export function hasExternalKeepAliveHat(workspace: Blockly.Workspace): boolean {
       return true;
     }
   }
-  for (const sib of getRequiredSiblingScripts(workspace)) {
+  for (const sib of getHandleSiblingScripts()) {
     if (
       sib.declaredEvents.some(
         (ev) =>

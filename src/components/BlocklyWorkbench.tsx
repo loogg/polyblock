@@ -27,6 +27,7 @@ import {
 } from '../core/blocks/catalog';
 import { ChannelIdFieldDropdown } from '../core/blocks/channelField';
 import { registerPolyBlocks } from '../core/blocks/definitions';
+import { OPEN_HANDLE_CHANNEL_CONFIG_CALLBACK } from '../core/extensions/registry';
 import {
   MICRO_ZELOS_RENDERER_NAME,
   registerMicroZelosRenderer,
@@ -428,7 +429,7 @@ export const BlocklyWorkbench = forwardRef<
       );
     });
 
-    ws.registerButtonCallback('OPEN_HANDLE_TIMER_CONFIG', () => {
+    ws.registerButtonCallback(OPEN_HANDLE_CHANNEL_CONFIG_CALLBACK, () => {
       onOpenTimerCfgRef.current();
     });
 

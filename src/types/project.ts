@@ -53,7 +53,7 @@ export interface ScopedVariableItem {
 export interface VariableScopeNode {
   id: string;
   label: string;
-  category: 'shared' | 'lifecycle' | 'timer' | 'button' | 'function' | 'top';
+  category: 'shared' | 'lifecycle' | 'event' | 'function' | 'top';
   blockId?: string;
   variables: ScopedVariableItem[];
 }

@@ -1,4 +1,5 @@
 import {
+  CheckSquare,
   Copy,
   Cpu,
   Download,
@@ -7,6 +8,7 @@ import {
   Puzzle,
   Settings2,
   Sliders,
+  Square,
   Timer,
   Trash2,
   Upload,
@@ -30,12 +32,13 @@ import {
   extensionRegistry,
   formatPackPlacementSummary,
   formatSectionPlacement,
+  getAllPackBlocks,
   getPackEnableState,
   resolvePackSections,
 } from '../core/extensions/registry';
 import type {
-  HandleChannelPoolSpec,
   PolyExtensionPack,
+  ResolvedHandleChannelPoolSpec,
 } from '../core/extensions/types';
 import {
   countProjectScripts,
@@ -174,9 +177,9 @@ export function ProjectSettingsModal({
       <div
         className="pack-sections-bar compact"
         role="group"
-        aria-label={`${pack.name} 可裁剪组件`}
+        aria-label={`${pack.name} 按组件勾选启用`}
       >
-        <span className="pack-sections-title">组件：</span>
+        <span className="pack-sections-title">按组件勾选：</span>
         {sections.map((sec) => {
           const secOn = hasCapability(project.enabledCapabilities, sec.capId);
           const posText = formatSectionPlacement(sec);
@@ -185,23 +188,27 @@ export function ProjectSettingsModal({
               key={sec.capId}
               type="button"
               disabled={disabled}
+              aria-pressed={secOn}
               className={`pack-section-chip ${secOn ? 'active' : ''}`}
               style={
                 secOn
-                  ? { borderColor: `${sec.color}88`, color: sec.color }
+                  ? {
+                      borderColor: `${sec.color}99`,
+                      color: sec.color,
+                      background: `${sec.color}12`,
+                    }
                   : undefined
               }
-              title={`${sec.label}（${posText}）${sec.description ? `：${sec.description}` : ''} · 点击单独${secOn ? '停用' : '启用'}`}
+              title={`${sec.label}（${posText}）${sec.description ? `：${sec.description}` : ''} · 点击单独${secOn ? '取消勾选' : '勾选启用'}`}
               onClick={() =>
                 onToggleCapabilityForProject(project.id, sec.capId)
               }
             >
-              <span
-                className="pack-section-dot"
-                style={{
-                  background: secOn ? sec.color : 'var(--text-muted)',
-                }}
-              />
+              {secOn ? (
+                <CheckSquare size={12} style={{ flexShrink: 0 }} />
+              ) : (
+                <Square size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
+              )}
               <span>{sec.label}</span>
               <span className="pack-section-pos">{posText}</span>
             </button>
@@ -244,7 +251,7 @@ export function ProjectSettingsModal({
     e.target.value = '';
   };
 
-  const readPoolCfg = (pool: HandleChannelPoolSpec): ProjectTimerConfig => {
+  const readPoolCfg = (pool: ResolvedHandleChannelPoolSpec): ProjectTimerConfig => {
     const fallback =
       pool.configKey === CAP_RT_TIMERS ? project.defaultTimerCount : pool.defaultCount;
     return getHandleChannelPoolConfig(
@@ -256,7 +263,7 @@ export function ProjectSettingsModal({
     );
   };
 
-  const handleSetPoolCount = (pool: HandleChannelPoolSpec, nextCount: number) => {
+  const handleSetPoolCount = (pool: ResolvedHandleChannelPoolSpec, nextCount: number) => {
     if (!selectedHandle) return;
     const cur = readPoolCfg(pool);
     const clamped = Math.max(
@@ -273,7 +280,7 @@ export function ProjectSettingsModal({
     });
   };
 
-  const handleSavePoolAlias = (pool: HandleChannelPoolSpec) => {
+  const handleSavePoolAlias = (pool: ResolvedHandleChannelPoolSpec) => {
     if (!selectedHandle) return;
     const cur = readPoolCfg(pool);
     const rawSlot = aliasSlotsByPool[pool.configKey] ?? '0';
@@ -296,7 +303,7 @@ export function ProjectSettingsModal({
     setAliasDraftsByPool((prev) => ({ ...prev, [pool.configKey]: '' }));
   };
 
-  const handleRemovePoolAlias = (pool: HandleChannelPoolSpec, slotKey: string) => {
+  const handleRemovePoolAlias = (pool: ResolvedHandleChannelPoolSpec, slotKey: string) => {
     if (!selectedHandle) return;
     const cur = readPoolCfg(pool);
     const nextAliases = { ...cur.aliases };
@@ -682,7 +689,7 @@ export function ProjectSettingsModal({
                                     flexShrink: 0,
                                   }}
                                 >
-                                  {pack.categoryLabel}
+                                  {pack.iconLabel}
                                 </span>
                                 <div style={{ minWidth: 0 }}>
                                   <div
@@ -710,7 +717,7 @@ export function ProjectSettingsModal({
                                     )}
                                   </div>
                                   <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                    v{pack.packVersion} · {pack.blocks.length} 个积木 · {placementLabel} · ID: {pack.id}
+                                    v{pack.packVersion} · {getAllPackBlocks(pack).length} 个积木 · {placementLabel} · ID: {pack.id}
                                   </div>
                                   {badges.length > 0 && (
                                     <div className="pack-attr-row" style={{ marginTop: 4 }}>
@@ -822,14 +829,14 @@ export function ProjectSettingsModal({
                                   flexShrink: 0,
                                 }}
                               >
-                                {pack.categoryLabel}
+                                {pack.iconLabel}
                               </span>
                               <div style={{ minWidth: 0 }}>
                                 <div style={{ fontWeight: 600, fontSize: 12.5 }}>
                                   {pack.name}
                                 </div>
                                 <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                  {pack.blocks.length} 个积木 · {placementLabel} · ID: {pack.id}
+                                  {getAllPackBlocks(pack).length} 个积木 · {placementLabel} · ID: {pack.id}
                                 </div>
                                 {badges.length > 0 && (
                                   <div className="pack-attr-row" style={{ marginTop: 4 }}>
@@ -941,14 +948,14 @@ export function ProjectSettingsModal({
                                     flexShrink: 0,
                                   }}
                                 >
-                                  {pack.categoryLabel}
+                                  {pack.iconLabel}
                                 </span>
                                 <div style={{ minWidth: 0 }}>
                                   <div style={{ fontWeight: 600, fontSize: 12.5 }}>
                                     {pack.name}
                                   </div>
                                   <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                    v{pack.packVersion} · {pack.blocks.length} 个积木 · {placementLabel}
+                                    v{pack.packVersion} · {getAllPackBlocks(pack).length} 个积木 · {placementLabel}
                                     {overridden ? ' · 已被本项目内嵌包覆盖' : ''}
                                   </div>
                                   {badges.length > 0 && (

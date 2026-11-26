@@ -1,0 +1,350 @@
+import { BookOpen, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { CORE_TOOLBOX_ORDERS } from '../core/blocks/catalog';
+
+interface ExtensionSpecModalProps {
+  onClose: () => void;
+}
+
+type SpecTab = 'pack' | 'sections' | 'blocks' | 'sim';
+
+export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
+  const [tab, setTab] = useState<SpecTab>('pack');
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label="扩展包协议与字段说明"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="modal-shell spec-modal">
+        <div className="modal-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <BookOpen size={16} style={{ color: 'var(--accent)' }} />
+            <span className="modal-title">.polyext.json 扩展包协议与全字段速查</span>
+          </div>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={onClose}
+            aria-label="关闭扩展包规范弹窗"
+            style={{ padding: '4px 6px' }}
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="spec-tab-bar" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'pack'}
+            className={`spec-tab-btn ${tab === 'pack' ? 'active' : ''}`}
+            onClick={() => setTab('pack')}
+          >
+            1. 顶层结构与模块源码
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'sections'}
+            className={`spec-tab-btn ${tab === 'sections' ? 'active' : ''}`}
+            onClick={() => setTab('sections')}
+          >
+            2. 组件 sections 与句柄配置
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'blocks'}
+            className={`spec-tab-btn ${tab === 'blocks' ? 'active' : ''}`}
+            onClick={() => setTab('blocks')}
+          >
+            3. 积木 blocks 与 kind 分类
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'sim'}
+            className={`spec-tab-btn ${tab === 'sim' ? 'active' : ''}`}
+            onClick={() => setTab('sim')}
+          >
+            4. 模拟控件与 VS Code 快捷编写
+          </button>
+        </div>
+
+        <div className="spec-modal-body">
+          {tab === 'pack' && (
+            <div className="spec-section">
+              <p className="spec-lead">
+                采用<strong>一模块一扩展包、单轨 <code>sections[]</code></strong>架构：纯真机导出包只需填基础必填项，模拟控件与沙箱模块均按需选填。
+              </p>
+              <table className="spec-table">
+                <thead>
+                  <tr>
+                    <th>字段名</th>
+                    <th>必填</th>
+                    <th>说明与默认值</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>format</code> / <code>version</code></td>
+                    <td>必填</td>
+                    <td>固定为 <code>"polyblock-extension"</code> 与 <code>1</code>。</td>
+                  </tr>
+                  <tr>
+                    <td><code>id</code> / <code>name</code></td>
+                    <td>必填</td>
+                    <td>唯一包标识（2~48 位字母/数字/<code>-</code>/<code>_</code>）与中文展示名。</td>
+                  </tr>
+                  <tr>
+                    <td><code>iconLabel</code> / <code>color</code></td>
+                    <td>可选</td>
+                    <td>卡片角标缩写（默认取首个 section 的 label）与主题色（默认 <code>#6366f1</code>）。</td>
+                  </tr>
+                  <tr>
+                    <td><code>imports</code></td>
+                    <td>可选</td>
+                    <td>
+                      包级默认顶部导入（<code>{`{ lua: [...], python: [...] }`}</code>），普通/表达式积木自动继承并在文件顶部<strong>按内容全局去重</strong>。纯语法包不填。
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>sections</code></td>
+                    <td>必填</td>
+                    <td>至少 1 个组件；单组件包写 1 项即可，多组件包（如 <code>rt</code>）自动支持按组件细粒度裁剪。</td>
+                  </tr>
+                  <tr>
+                    <td><code>sandboxMock</code></td>
+                    <td>可选</td>
+                    <td>
+                      <strong>仅浏览器沙箱假桩</strong>（模拟真机 C 固件 API，如 <code>board</code>），<strong>导出真机时坚决剥离</strong>。<code>luaSource</code> / <code>pythonSource</code> 按需二选一或全填。
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>bundleModule</code></td>
+                    <td>可选</td>
+                    <td>
+                      <strong>纯脚本真实算法库</strong>（如 <code>crc16.lua</code>）：既在浏览器沙箱直接运行真实现，打包部署到真机时也一并附带输出。
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>simWidgets</code></td>
+                    <td>可选</td>
+                    <td>包内共享模拟控件资产表；仅在配置了 <code>sandboxMock</code> 或 <code>bundleModule</code> 时生效，并按已启用积木的 <code>simWidgetKeys</code> 自动过滤显示。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {tab === 'sections' && (
+            <div className="spec-section">
+              <p className="spec-lead">
+                每个 <code>section</code> 决定侧边栏展示位置、显隐、排序、可选句柄资源配置，并直接内嵌属于该组件的 <code>blocks[]</code>。
+              </p>
+              <table className="spec-table">
+                <thead>
+                  <tr>
+                    <th>字段名</th>
+                    <th>默认值</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>id</code> / <code>label</code></td>
+                    <td>必填</td>
+                    <td>包内唯一组件 ID（多组件时能力 ID 为 <code>&lt;pack.id&gt;.&lt;section.id&gt;</code>）与侧边栏分类名。</td>
+                  </tr>
+                  <tr>
+                    <td><code>visible</code></td>
+                    <td><code>true</code></td>
+                    <td>是否在左侧 Blockly 工具箱显示；设为 <code>false</code> 时积木仍可解析生成，但不占侧边栏位置。</td>
+                  </tr>
+                  <tr>
+                    <td><code>categoryTarget</code></td>
+                    <td><code>"own"</code></td>
+                    <td>
+                      不填默认 <code>"own"</code>（独立侧边栏分类）；也可填任意核心分类 ID 合并注入：
+                      <div className="spec-chip-list" style={{ marginTop: 5 }}>
+                        {CORE_TOOLBOX_ORDERS.map((c) => (
+                          <span key={c.id} className="toolbox-order-chip">
+                            <code>{c.id}</code> ({c.label} #{c.order})
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>toolboxOrder</code></td>
+                    <td><code>100</code></td>
+                    <td>仅 <code>categoryTarget === "own"</code> 时生效：数值越小越靠上（如 <code>15</code> 排在事件 #10 与打印 #20 之间）。</td>
+                  </tr>
+                  <tr>
+                    <td><code>handleConfigs</code></td>
+                    <td>无</td>
+                    <td>
+                      可扩展的每句柄资源配置数组。当前内置 <code>kind: "channel-pool"</code>（<code>label</code> 资源名、<code>prefix</code> 易读前缀如 <code>T</code>/<code>PWM</code>、<code>min</code>/<code>max</code>/<code>defaultCount</code>）：声明后<strong>自动生成抽屉顶部配置按钮、句柄别名面板与越界校验</strong>。未来将平级支持 <code>kind: "fields"</code>（串口波特率、引脚等表单配置）。
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>blocks</code></td>
+                    <td>必填</td>
+                    <td>直接内嵌属于本组件的积木定义数组，无重复 ID 引用。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {tab === 'blocks' && (
+            <div className="spec-section">
+              <p className="spec-lead">
+                积木 <code>kind</code> 只有 <strong>3 种完备形态</strong>（事件循环自动扫描整个句柄是否含 <code>hat</code>，无需额外开关）：
+              </p>
+              <table className="spec-table">
+                <thead>
+                  <tr>
+                    <th><code>kind</code> 取值</th>
+                    <th>积木形态与判别口诀</th>
+                    <th>典型例子</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>"statement"</code></td>
+                    <td><strong>语句块</strong>（上下凹凸拼接）：执行一个动作、不向外层槽位返回值（含给变量赋值）。</td>
+                    <td>点亮 LED、启动定时器、给变量赋值</td>
+                  </tr>
+                  <tr>
+                    <td><code>"value"</code></td>
+                    <td><strong>表达式块</strong>（左侧输出口）：算出一个值并嵌进其他积木参数槽（如插进「设置变量为」）。</td>
+                    <td>读取温度、<code>rt.tick()</code>、<code>crc16(data)</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>"hat"</code></td>
+                    <td><strong>事件回调帽块</strong>（圆顶 + C 型包裹体）：生成顶层零闭包 <code>function on_xxx(...)</code>。</td>
+                    <td><code>on_run</code>、<code>on_timer</code>、<code>on_button</code></td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <h4 className="spec-subhead">积木核心字段与能力标记</h4>
+              <table className="spec-table">
+                <thead>
+                  <tr>
+                    <th>字段名</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>message0</code> / <code>args0</code></td>
+                    <td>积木文案（<code>%1</code>、<code>%2</code> 占位）与参数定义；支持 <code>input_value</code>、<code>field_dropdown</code>、<code>field_number</code>、<code>field_input</code>、<code>field_variable</code>、<code>field_channel_id</code>。</td>
+                  </tr>
+                  <tr>
+                    <td><code>lua</code> / <code>python</code></td>
+                    <td>
+                      代码生成模板 <code>{`{ template, imports? }`}</code>；占位符修饰器支持 <code>:json</code>、<code>:int</code>、<code>:bool_lua</code>、<code>:bool_py</code>、<code>:channel_comment_lua</code>、<code>:channel_comment_py</code>。不写 <code>imports</code> 时自动继承包顶层 <code>imports</code>，写 <code>[]</code> 可显式取消导入。
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>simWidgetKeys</code></td>
+                    <td>可选字符串数组，引用 <code>pack.simWidgets</code> 的 <code>key</code>（如 <code>["oled"]</code>）。启用本组件时，模拟面板自动按已启用积木去重聚合所需控件。</td>
+                  </tr>
+                  <tr>
+                    <td><code>sandboxRunnable</code></td>
+                    <td>默认 <code>true</code>；仅对无沙箱实现的纯真机积木设为 <code>false</code>（导出正常，沙箱运行时给出明确提示）。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {tab === 'sim' && (
+            <div className="spec-section">
+              <p className="spec-lead">
+                右侧「模拟」面板支持 <strong>8 种通用声明式控件</strong>；所有控件的关闭/未激活态均自动跟随明暗主题，无需额外配置熄灭色。
+              </p>
+              <table className="spec-table">
+                <thead>
+                  <tr>
+                    <th><code>kind</code></th>
+                    <th>用途</th>
+                    <th>关键属性</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>led</code></td>
+                    <td>单色指示灯（开/关）</td>
+                    <td><code>color</code>（亮灯色，默认绿）、<code>default</code>（布尔）</td>
+                  </tr>
+                  <tr>
+                    <td><code>tricolor</code></td>
+                    <td>三色离散灯（仅红/绿/蓝 + 灭）</td>
+                    <td><code>default</code>（如 <code>"#1e293b"</code>）</td>
+                  </tr>
+                  <tr>
+                    <td><code>rgb</code></td>
+                    <td>全彩 RGB 灯（任意 HEX 色）</td>
+                    <td><code>default</code>（HEX 颜色）</td>
+                  </tr>
+                  <tr>
+                    <td><code>bar</code></td>
+                    <td>数值进度条（转速/舵机角/电量）</td>
+                    <td><code>min</code>、<code>max</code>、<code>unit</code>、<code>color</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>screen</code></td>
+                    <td>多行文本屏（OLED / 终端）</td>
+                    <td><code>maxLines</code>（支持 <code>key:append</code> / <code>key:clear</code>）</td>
+                  </tr>
+                  <tr>
+                    <td><code>slider</code></td>
+                    <td>交互式模拟传感器滑块</td>
+                    <td><code>min</code>、<code>max</code>、<code>step</code>、<code>unit</code>、<code>marks</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>toggle</code> / <code>button</code></td>
+                    <td>交互开关 / 按键（可发异步中断）</td>
+                    <td><code>emitEvent: {`{ eventName, args, trigger }`}</code></td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <h4 className="spec-subhead">在 VS Code 中快速编写扩展包</h4>
+              <div className="spec-tip-box">
+                <div>
+                  1. 在 <code>.polyext.json</code> 顶部添加{' '}
+                  <code>"$schema": "./schemas/polyext.schema.json"</code>，即可获得全字段中文悬浮提示、枚举下拉补全与实时校验。
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  2. 仓库已内置 <code>.vscode/polyext.code-snippets</code>，在 JSON 文件内直接输入以下前缀回车即可一键生成骨架：
+                  <code>poly-pack</code>（整包）、<code>poly-section</code>（新组件）、<code>poly-block-stmt</code>（语句块）、<code>poly-block-val</code>（表达式块）、<code>poly-block-hat</code>（事件帽块）、<code>poly-pool</code>（通道池）、<code>poly-widget</code>（模拟控件）。
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  3. 完整图文规范同步保存在仓库 <code>docs/extension-pack-spec.md</code>。
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

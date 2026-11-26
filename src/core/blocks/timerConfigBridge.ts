@@ -57,7 +57,7 @@ export function normalizeTimerConfig(
 
 /**
  * Per-configKey isolated channel pool configurations for the currently active RuntimeHandle.
- * Prevents collisions when multiple packs/sections declare `handleChannelPool` (e.g. `rt.timers` vs `pwm-driver`).
+ * Prevents collisions when multiple sections declare `handleConfigs` (`channel-pool`, e.g. `rt.timers` vs `pwm-driver`).
  */
 const activeChannelPools = new Map<string, ProjectTimerConfig>([
   [DEFAULT_TIMER_POOL_KEY, { count: DEFAULT_TIMER_COUNT, aliases: {} }],
@@ -207,7 +207,7 @@ export function formatTimerLabel(
 }
 
 /**
- * Dynamic Blockly FieldDropdown option generator scoped to a specific `handleChannelPool.configKey`.
+ * Dynamic Blockly FieldDropdown option generator scoped to a specific channel-pool `configKey`.
  * Reflects the active handle's channel count (0..count-1) & handle-local aliases,
  * preserves out-of-range IDs cleanly, and appends an inline "edit alias" shortcut item.
  */

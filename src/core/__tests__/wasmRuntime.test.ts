@@ -301,8 +301,9 @@ describe('Real WASM Runtime Integration (Lua 5.4 & MicroPython + Coroutine Schem
 
   it('executes temp_guard in real Wasmoon Lua 5.4 & MicroPython WASM with live mock temperature inputs', async () => {
     const proj = instantiateProjectFromTemplate('virtual_board_demo');
+    const tempHdl = proj.handles.find((h) => h.name === 'temp_guard_vm')!;
     const ws = new Blockly.Workspace();
-    Blockly.serialization.workspaces.load(proj.handles[0].scripts[1].workspace, ws);
+    Blockly.serialization.workspaces.load(tempHdl.scripts[0].workspace, ws);
 
     const luaCode = backendRegistry.get('lua').generate(ws).code;
     const pyCode = backendRegistry.get('python').generate(ws).code;
@@ -395,9 +396,9 @@ sys.modules["board"] = _m
 
   it('executes event-driven 3-shot timer (on_start -> on_timer(0) x3 -> on_stop) in BOTH Wasmoon Lua 5.4 and MicroPython WASM', async () => {
     const proj = instantiateProjectFromTemplate('event_timer_demo');
-    const hdl = proj.handles[0];
+    const hdl = proj.handles.find((h) => h.name === 'oneshot_vm')!;
     setActiveTimerConfig(getHandleTimerConfig(hdl));
-    const oneshotScript = hdl.scripts.find((s) => s.name === 'timer_oneshot')!;
+    const oneshotScript = hdl.scripts[0];
     const ws = new Blockly.Workspace();
     Blockly.serialization.workspaces.load(oneshotScript.workspace, ws);
 

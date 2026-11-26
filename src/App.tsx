@@ -39,6 +39,7 @@ import {
 } from './core/capabilities/registry';
 import {
   extensionRegistry,
+  getAllPackBlocks,
   togglePackOrSectionCapability,
 } from './core/extensions/registry';
 import {
@@ -78,13 +79,14 @@ import {
   setHandleChannelPoolConfig,
   setHandleTimerConfig,
   STORAGE_STORE_V2_KEY,
-  STORAGE_STORE_V4_KEY,
+  STORAGE_STORE_V5_KEY,
   updateHandleById,
   updateProjectById,
 } from './core/projects/store';
 import { runnerManager } from './core/runners/manager';
 import {
   buildHandleScriptModules,
+  compileScriptHeadless,
   multiHandleOrchestrator,
 } from './core/runners/multiHandleManager';
 import type { RunnerStatus } from './core/runners/types';
@@ -302,12 +304,10 @@ export function App() {
 
   const activeSimPacks = useMemo(
     () =>
-      extensionRegistry
-        .getEnabledPacks(
-          activeProject.enabledCapabilities,
-          activeProject.localExtensions,
-        )
-        .filter((p) => (p.simWidgets?.length ?? 0) > 0),
+      extensionRegistry.getActiveSimPacks(
+        activeProject.enabledCapabilities,
+        activeProject.localExtensions,
+      ),
     [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
   );
 
@@ -759,7 +759,7 @@ export function App() {
           })),
         );
         notify(
-          `已导入并启用自定义扩展包「${imported.name}」（${imported.blocks.length} 个积木）`,
+          `已导入并启用自定义扩展包「${imported.name}」（${getAllPackBlocks(imported).length} 个积木）`,
         );
       } catch (err) {
         notify(
@@ -1346,7 +1346,8 @@ export function App() {
 
   const handleResetWorkspace = useCallback(() => {
     stopIfRunning();
-    localStorage.removeItem(STORAGE_STORE_V4_KEY);
+    localStorage.removeItem(STORAGE_STORE_V5_KEY);
+    localStorage.removeItem('polyblock.store.v4');
     localStorage.removeItem('polyblock.store.v3');
     localStorage.removeItem(STORAGE_STORE_V2_KEY);
     const freshStore = createDefaultWorkspaceStore();
@@ -1420,13 +1421,79 @@ export function App() {
       const ws = workbenchRef.current?.getWorkspace();
       const adapter = backendRegistry.get(language);
       const latest = ws ? adapter.generate(ws) : generated;
-      const scriptFileLabel = `${activeHandle.name}/${activeScript.name}.${adapter.extension}`;
       setGenerated(latest);
       setErrorLine(null);
       setExecutingBlockId(null);
       setLiveVariables({});
       setHandleTelemetries({});
       setMultiHandleRunning(false);
+
+      // Whole-handle execution: 1 Handle = 1 program -> ALWAYS launch from entry script (`main.lua`)
+      // while preloading all sibling scripts in the same handle (including unsaved live edits!).
+      const entryScript =
+        activeHandle.scripts.find((s) => s.id === activeHandle.entryScriptId) ??
+        activeHandle.scripts[0];
+      const runningEntryDirectly = activeScript.id === entryScript.id;
+      const liveSnapshot = workbenchRef.current?.saveWorkspaceJson();
+      const handleForRun: RuntimeHandle =
+        liveSnapshot && !runningEntryDirectly
+          ? {
+              ...activeHandle,
+              scripts: activeHandle.scripts.map((s) =>
+                s.id === activeScript.id ? { ...s, workspace: liveSnapshot } : s,
+              ),
+            }
+          : activeHandle;
+
+      let runCode = latest.code;
+      let runDebugCode = latest.debugCode || latest.code;
+      let runIsEventDriven = Boolean(latest.isEventDriven);
+      if (!runningEntryDirectly) {
+        setActiveHandleScripts(buildHandleScriptsMeta(handleForRun), entryScript.id);
+        const compiledEntry = compileScriptHeadless(
+          entryScript.workspace,
+          language,
+          activeChannelPoolConfigs,
+        );
+        runCode = compiledEntry.code;
+        runDebugCode = compiledEntry.debugCode;
+        runIsEventDriven = compiledEntry.isEventDriven;
+        // Restore active-tab script metadata for editor diagnostics
+        setActiveHandleScripts(buildHandleScriptsMeta(handleForRun), activeScript.id);
+      }
+
+      const scriptFileLabel = `${activeHandle.name}/${entryScript.name}.${adapter.extension}`;
+      const siblingNames = handleForRun.scripts
+        .filter((s) => s.id !== entryScript.id)
+        .map((s) => `${s.name}.${adapter.extension}`);
+
+      // Detect any export-only (`sandboxRunnable === false`) blocks in the active handle
+      const exportOnlyBlocks = new Set<string>();
+      const scanWorkspaceForNonRunnable = (node: unknown) => {
+        if (!node || typeof node !== 'object') return;
+        if (Array.isArray(node)) {
+          for (const item of node) scanWorkspaceForNonRunnable(item);
+          return;
+        }
+        const obj = node as Record<string, unknown>;
+        if (obj.enabled === false) return;
+        if (typeof obj.type === 'string') {
+          const def = extensionRegistry.getBlockDef(obj.type);
+          if (def?.block.sandboxRunnable === false) {
+            exportOnlyBlocks.add(def.block.message0.replace(/%\d/g, '▢'));
+          }
+        }
+        if (obj.inputs && typeof obj.inputs === 'object') {
+          for (const v of Object.values(obj.inputs as Record<string, unknown>)) {
+            scanWorkspaceForNonRunnable(v);
+          }
+        }
+        if (obj.next) scanWorkspaceForNonRunnable(obj.next);
+        if (obj.block) scanWorkspaceForNonRunnable(obj.block);
+      };
+      for (const s of handleForRun.scripts) {
+        scanWorkspaceForNonRunnable(s.workspace);
+      }
 
       const runner = runnerManager.getForLanguage(language);
       runnerManager.setActive(runner);
@@ -1436,8 +1503,8 @@ export function App() {
         activeProject.localExtensions,
       );
       const siblingMocks = buildHandleScriptModules(
-        activeHandle,
-        activeScript.id,
+        handleForRun,
+        entryScript.id,
         language,
         activeProject.sharedModules,
         activeProject.defaultTimerCount,
@@ -1445,31 +1512,44 @@ export function App() {
       );
 
       const speedDelay = SPEED_DELAY_MS[settings.executionSpeed];
-      setLogs([
+      const bootLogs: LogEntry[] = [
         {
           id: `start-${Date.now()}`,
           timestamp: formatNowTime(),
           level: 'system',
           message: startInStepMode
-            ? `启动单步调试 [${scriptFileLabel}] · ${runner.shortLabel}`
-            : `运行 [${scriptFileLabel}] · ${runner.shortLabel}（${
-                latest.isEventDriven ? '事件循环 · ' : ''
+            ? `启动整句柄单步调试 [${scriptFileLabel}] · ${runner.shortLabel}`
+            : `运行整句柄 [${scriptFileLabel}] · ${runner.shortLabel}（${
+                runIsEventDriven ? '事件循环 · ' : ''
+              }${
+                siblingNames.length > 0
+                  ? `同句柄模块: ${siblingNames.join(', ')} · `
+                  : ''
               }步进 ${speedDelay}ms${
-                breakpointsRef.current.length > 0
+                runningEntryDirectly && breakpointsRef.current.length > 0
                   ? ` · ${breakpointsRef.current.length} 断点`
                   : ''
               }）...`,
         },
-      ]);
+      ];
+      if (exportOnlyBlocks.size > 0) {
+        bootLogs.push({
+          id: `warn-export-only-${Date.now()}`,
+          timestamp: formatNowTime(),
+          level: 'warn',
+          message: `检测到仅真机可用积木（${Array.from(exportOnlyBlocks).join('、')}），浏览器沙箱不含其固件实现，运行到此积木时可能报错；导出给真机则完全正常。`,
+        });
+      }
+      setLogs(bootLogs);
 
       const result = await runner.run(
         {
           language,
-          code: latest.code,
-          debugCode: latest.debugCode || latest.code,
+          code: runCode,
+          debugCode: runDebugCode,
           timeoutMs: settings.timeoutMs,
           timeSliceMs: settings.timeSliceMs,
-          breakpoints: breakpointsRef.current,
+          breakpoints: runningEntryDirectly ? breakpointsRef.current : [],
           stepDelayMs: speedDelay,
           startInStepMode,
           timerCount: activeTimerConfig.count,
@@ -1479,17 +1559,18 @@ export function App() {
         {
           onClear: () => setLogs([]),
           onLog: (level, message, line) => {
-            const mappedBlock = line ? latest.lineToBlock[line] : undefined;
+            const mappedBlock =
+              runningEntryDirectly && line ? latest.lineToBlock[line] : undefined;
             appendLog(level, message, line, mappedBlock);
           },
           onStep: (blockId, vars) => {
-            setExecutingBlockId(blockId);
+            if (runningEntryDirectly) setExecutingBlockId(blockId);
             setLiveVariables(vars);
           },
           onPaused: (blockId, vars, reason) => {
-            setExecutingBlockId(blockId);
+            if (runningEntryDirectly) setExecutingBlockId(blockId);
             setLiveVariables(vars);
-            const range = latest.sourceMap[blockId];
+            const range = runningEntryDirectly ? latest.sourceMap[blockId] : undefined;
             if (reason === 'breakpoint') {
               appendLog(
                 'warn',
@@ -1497,7 +1578,7 @@ export function App() {
                   range ? `（第 ${range.startLine} 行）` : ''
                 }，可查看变量或点击「继续 / 单步」。`,
                 range?.startLine,
-                blockId,
+                runningEntryDirectly ? blockId : undefined,
               );
             }
           },
