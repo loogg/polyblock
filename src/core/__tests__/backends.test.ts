@@ -26,6 +26,8 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     expect(res.code).not.toContain('__PB_S:');
     expect(res.code).not.toContain('__PB_E:');
     expect(res.code).toContain('Target: Lua 5.4');
+    expect(res.code).toContain('function on_start()');
+    expect(res.debugCode).toContain('if type(on_start) == "function" then');
     expect(res.code).toContain('print("[INFO] " .. tostring(');
     expect(res.code).toContain('for i = 1, 3 do');
     expect(res.code).toContain('print("最终 total" .. " = " .. tostring(total))');
@@ -52,6 +54,8 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     expect(res.code).not.toContain('from numbers import Number');
     expect(res.code).toContain('isinstance(total, (int, float))');
     expect(res.code).toContain('Target: Python 3');
+    expect(res.code).toContain('def on_start():');
+    expect(res.debugCode).toContain('await on_start()');
     expect(res.code).toContain('print("[INFO] " + str(');
     expect(res.code).toContain('for i in range(int(1), 4):');
     expect(res.code).toContain('print("最终 total =", total)');

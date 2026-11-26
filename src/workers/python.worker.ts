@@ -16,6 +16,15 @@ let cachedWasmUrl: string | null = null;
 let stderrLines: string[] = [];
 let currentMockInputs: Record<string, unknown> = {};
 let mountedModuleNames: string[] = [];
+let mountedVfsFiles: string[] = [];
+
+type MicroPythonWithFs = MicroPythonInstance & {
+  FS?: {
+    writeFile: (path: string, data: string) => void;
+    unlink: (path: string) => void;
+    mkdir: (path: string) => void;
+  };
+};
 
 async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> {
   if (mpInstance && cachedWasmUrl === wasmUrl) {
@@ -322,7 +331,18 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     const mp = await ensureMicroPython(wasmUrl);
     mp.runPython(RESET_GLOBALS_SNIPPET);
 
-    // Clear previously mounted virtual extension modules & register fresh ones
+    // Clear previously mounted virtual extension modules & lazy VFS sibling scripts
+    const mpFs = (mp as MicroPythonWithFs).FS;
+    if (mpFs && mountedVfsFiles.length > 0) {
+      for (const vfsPath of mountedVfsFiles) {
+        try {
+          mpFs.unlink(vfsPath);
+        } catch {
+          // ignore already-removed files
+        }
+      }
+      mountedVfsFiles = [];
+    }
     if (mountedModuleNames.length > 0) {
       mp.runPython(`
 import sys
@@ -337,6 +357,38 @@ for _mn in ${JSON.stringify(mountedModuleNames)}:
     const mountOnePyModule = (mod: NonNullable<typeof mockModules>[number]) => {
       if (!mod.pythonSource || !mod.moduleName) return;
       const parts = mod.moduleName.split('.').filter(Boolean);
+      for (let pi = 0; pi < parts.length; pi++) {
+        const prefix = parts.slice(0, pi + 1).join('.');
+        if (!mountedModuleNames.includes(prefix)) {
+          mountedModuleNames.push(prefix);
+        }
+      }
+
+      // Tier 1 handle sibling scripts (`!mod.packId`) are written lazily into MicroPython's VFS
+      // so conditional `if cond: import timers` truly executes on-demand (matching Lua `package.preload`!).
+      if (!mod.packId && mpFs) {
+        let dir = '';
+        for (let pi = 0; pi < parts.length - 1; pi++) {
+          dir += `/${parts[pi]}`;
+          try {
+            mpFs.mkdir(dir);
+          } catch {
+            // directory may already exist
+          }
+          const initPath = `${dir}/__init__.py`;
+          try {
+            mpFs.writeFile(initPath, '');
+            if (!mountedVfsFiles.includes(initPath)) mountedVfsFiles.push(initPath);
+          } catch {
+            // ignore
+          }
+        }
+        const filePath = `/${parts.join('/')}.py`;
+        mpFs.writeFile(filePath, mod.pythonSource);
+        if (!mountedVfsFiles.includes(filePath)) mountedVfsFiles.push(filePath);
+        return;
+      }
+
       const attachDottedPy = `
 _poly_parts = ${JSON.stringify(parts)}
 sys.modules[${JSON.stringify(mod.moduleName)}] = _poly_m
@@ -350,12 +402,6 @@ if len(_poly_parts) > 1:
         setattr(sys.modules[".".join(_poly_parts[:_pi])], _poly_parts[_pi], _pkg)
   setattr(sys.modules[".".join(_poly_parts[:-1])], _poly_parts[-1], _poly_m)
 `;
-      for (let pi = 0; pi < parts.length; pi++) {
-        const prefix = parts.slice(0, pi + 1).join('.');
-        if (!mountedModuleNames.includes(prefix)) {
-          mountedModuleNames.push(prefix);
-        }
-      }
       if (mod.packId) {
         const proxyModName = `_poly__${mod.packId.replace(/[^A-Za-z0-9_]/g, '_')}`;
         if (!mountedModuleNames.includes(proxyModName)) {

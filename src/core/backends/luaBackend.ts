@@ -5,6 +5,7 @@ import {
   resetCodegenPassContext,
 } from './codegenContext';
 import {
+  buildEntryDispatchRouters,
   hasExternalKeepAliveHat,
   isEventDrivenWorkspace,
 } from './eventMode';
@@ -32,27 +33,14 @@ function registerLuaBlockGenerators(): void {
 
   luaGenerator.forBlock['poly_on_start'] = (block, generator) => {
     const body = generator.statementToCode(block, 'BODY');
-    if (codegenContext.eventDrivenMode) {
-      if (codegenContext.debugPass) {
-        return `function on_start()\n${body}end\n`;
-      }
-      return (
-        `${SENTINEL_START_PREFIX}'${block.id}'__\n` +
-        `function on_start()\n` +
-        `${body}` +
-        `end\n` +
-        `${SENTINEL_END_PREFIX}'${block.id}'__\n`
-      );
-    }
-
-    const dedented = body.replace(/^  /gm, '');
     if (codegenContext.debugPass) {
-      return `-- 当程序启动\n${dedented}`;
+      return `function on_start()\n${body}end\n`;
     }
     return (
       `${SENTINEL_START_PREFIX}'${block.id}'__\n` +
-      `-- 当程序启动\n` +
-      `${dedented}` +
+      `function on_start()\n` +
+      `${body}` +
+      `end\n` +
       `${SENTINEL_END_PREFIX}'${block.id}'__\n`
     );
   };
@@ -194,6 +182,9 @@ local function __poly_call_cb(cbName, fn, ...)
   if type(fn) ~= "function" then return end
   __poly_cb_enter(cbName)
   debug.sethook(function()
+    if __poly_is_stop_requested() and cbName ~= "on_stop" then
+      error("__POLY_STOP_CB__", 0)
+    end
     if __poly_cb_expired() then
       error("事件回调 " .. cbName .. " 执行超时（疑似死循环），已按单次回调超时保护中断。", 2)
     end
@@ -201,7 +192,7 @@ local function __poly_call_cb(cbName, fn, ...)
   local _ok, _err = pcall(fn, ...)
   debug.sethook()
   __poly_cb_exit()
-  if not _ok then
+  if not _ok and _err ~= "__POLY_STOP_CB__" then
     error(_err, 0)
   end
 end
@@ -346,11 +337,23 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
       varIdToIdent,
     );
 
+    const cleanRouter = buildEntryDispatchRouters(workspace, 'lua', false);
+    const cleanPrepend = cleanRouter.autoImports
+      .filter((imp) => !rawClean.includes(imp))
+      .join('\n');
+    const mergedCleanBody = [
+      cleanPrepend,
+      rawClean.trim(),
+      cleanRouter.routerCode.trim(),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
     const header = eventDriven
       ? `-- 由 PolyBlock 自动生成 (Target: Lua 5.4 · Event-Driven ABI)\n`
       : `-- 由 PolyBlock 自动生成 (Target: Lua 5.4)\n`;
-    const combinedClean = rawClean.trim()
-      ? `${header}${rawClean}`
+    const combinedClean = mergedCleanBody
+      ? `${header}${mergedCleanBody}\n`
       : `${header}-- 请从左侧拖入积木开始编排`;
     const { code, sourceMap, lineToBlock } = extractSourceMap(combinedClean);
 
@@ -377,9 +380,23 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
       luaGenerator.STATEMENT_SUFFIX = prevSuffix;
     }
 
-    const driver = eventDriven ? buildLuaEventLoopDriver(keepAliveExternal) : '';
-    const debugCode = debugBody.trim()
-      ? `${debugBody}\n${driver}\n__poly_final_snap(__poly_snap(${snapExpr}))\n`
+    const debugRouter = buildEntryDispatchRouters(workspace, 'lua', true);
+    const debugPrepend = debugRouter.autoImports
+      .filter((imp) => !debugBody.includes(imp))
+      .join('\n');
+    const fullDebugBody = [
+      debugPrepend,
+      debugBody.trim(),
+      debugRouter.routerCode.trim(),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    const driver = eventDriven
+      ? buildLuaEventLoopDriver(keepAliveExternal)
+      : `if type(on_start) == "function" then\n  on_start()\nend\n`;
+    const debugCode = fullDebugBody
+      ? `${fullDebugBody}\n${driver}\n__poly_final_snap(__poly_snap(${snapExpr}))\n`
       : '';
 
     return {

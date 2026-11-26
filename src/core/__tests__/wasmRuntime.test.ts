@@ -3,7 +3,7 @@ import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { LuaFactory } from 'wasmoon';
 import { loadMicroPython } from '@micropython/micropython-webassembly-pyscript';
-import { inspectWorkspaceScriptMeta } from '../backends/eventMode';
+import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
 import {
@@ -30,6 +30,8 @@ interface HarnessOptions {
     name: string;
     luaSource?: string;
     pythonSource?: string;
+    /** When true, mount Python module lazily into MicroPython VFS (`/name.py`) just like Tier 1 handle scripts in python.worker.ts. */
+    lazyVfs?: boolean;
   }>;
   onReady?: (sched: WorkerRuntimeScheduler) => void;
 }
@@ -241,6 +243,10 @@ async function runPyDebugInMicroPython(
       return session.onSleep(ms);
     },
     final_snap: (vars: string) => session.setFinalVars(vars),
+    emit_device: () => {},
+    sim_set: () => {},
+    get_input: (k: unknown) => (k === 'temp' ? 28 : false),
+    sim_get: (k: unknown) => (k === 'temp' ? 28 : false),
     now_ms: () => performance.now(),
     logic_now_ms: () => scheduler.now(),
     rt_set_run_period: (ms: unknown) => scheduler.setRunPeriod(ms),
@@ -288,6 +294,28 @@ class _Rt:
   def is_expired(self, s, t): return _poly.rt_is_expired(s, t)
 sys.modules["rt"] = _Rt()
 `);
+  const mpFs = (
+    mp as unknown as {
+      FS?: { writeFile: (path: string, data: string) => void; unlink: (path: string) => void };
+    }
+  ).FS;
+  for (const mod of opts.preloadModules ?? []) {
+    if (!mod.pythonSource) continue;
+    if (mod.lazyVfs && mpFs) {
+      mpFs.writeFile(`/${mod.name}.py`, mod.pythonSource);
+    } else {
+      mp.runPython(`
+import sys
+_ns = {}
+exec(${JSON.stringify(mod.pythonSource)}, _ns)
+class _M: pass
+_m = _M()
+for _k, _v in _ns.items():
+  if not _k.startswith("__"): setattr(_m, _k, _v)
+sys.modules[${JSON.stringify(mod.name)}] = _m
+`);
+    }
+  }
   opts.onReady?.(scheduler);
   await mp.runPythonAsync(pyDebug);
   return { logs, scheduler };
@@ -334,7 +362,9 @@ describe('Real WASM Runtime Integration (Lua 5.4 & MicroPython + Coroutine Schem
           return chunk()
         end
       `);
-      await lua.doString(luaCode);
+      // Scheme B unified ABI: clean code defines `function on_start()`; C host invokes `on_start()`.
+      expect(luaCode).toContain('function on_start()');
+      await lua.doString(`${luaCode}\nif type(on_start) == "function" then on_start() end`);
     } finally {
       lua.global.close();
     }
@@ -375,7 +405,8 @@ for _k, _v in _ns.items():
 sys.modules["board"] = _m
 `);
 
-    await mp.runPythonAsync(pyCode);
+    expect(pyCode).toContain('def on_start():');
+    await mp.runPythonAsync(`${pyCode}\nif 'on_start' in globals(): on_start()\n`);
     expect(pyEvents).toContainEqual({ kind: 'led', value: false });
     expect(pyEvents).toContainEqual({ kind: 'rgb', value: '#10b981' });
     expect(pyEvents).toContainEqual({
@@ -385,7 +416,7 @@ sys.modules["board"] = _m
 
     pyEvents.length = 0;
     mockTemp = 48;
-    await mp.runPythonAsync(pyCode);
+    await mp.runPythonAsync(`${pyCode}\nif 'on_start' in globals(): on_start()\n`);
     expect(pyEvents).toContainEqual({ kind: 'led', value: true });
     expect(pyEvents).toContainEqual({ kind: 'rgb', value: '#ef4444' });
     expect(pyEvents).toContainEqual({
@@ -885,16 +916,7 @@ sys.modules["board"] = _m
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles[0];
     setActiveTimerConfig(getHandleTimerConfig(hdl));
-    const metas = hdl.scripts.map((s) => {
-      const m = inspectWorkspaceScriptMeta(s.workspace);
-      return {
-        id: s.id,
-        name: s.name,
-        isEntry: s.id === hdl.entryScriptId,
-        declaredEvents: m.declaredEvents,
-        requiredScripts: m.requiredScripts,
-      };
-    });
+    const metas = buildHandleScriptsMeta(hdl);
 
     const mainScript = hdl.scripts.find((s) => s.name === 'main')!;
     const timersScript = hdl.scripts.find((s) => s.name === 'timers')!;
@@ -903,16 +925,19 @@ sys.modules["board"] = _m
     const timersWs = new Blockly.Workspace();
     Blockly.serialization.workspaces.load(timersScript.workspace, timersWs);
     const timersCleanLua = backendRegistry.get('lua').generate(timersWs).code;
+    const timersCleanPy = backendRegistry.get('python').generate(timersWs).code;
     timersWs.dispose();
 
     setActiveHandleScripts(metas, mainScript.id);
     const mainWs = new Blockly.Workspace();
     Blockly.serialization.workspaces.load(mainScript.workspace, mainWs);
     const mainDebugLua = backendRegistry.get('lua').generate(mainWs).debugCode;
+    const mainDebugPy = backendRegistry.get('python').generate(mainWs).debugCode;
     mainWs.dispose();
     setActiveHandleScripts([], null);
     setActiveTimerConfig({ count: 8, aliases: {} });
 
+    // 1. Real Wasmoon Lua 5.4: main.lua central router dispatches on_timer_0/1 from timers.lua!
     const { logs } = await runLuaDebugInWasmoon(mainDebugLua, {
       preloadModules: [
         { name: 'board', luaSource: VIRTUAL_BOARD_PACK.sandboxMock!.luaSource },
@@ -929,6 +954,197 @@ sys.modules["board"] = _m
     expect(logs.some((l) => l.includes('按键 A 按下'))).toBe(true);
     expect(logs.some((l) => l.includes('T1 告警触发次数 = 1'))).toBe(true);
     expect(logs.some((l) => l.includes('on_stop 已安全关闭 LED 与三色灯'))).toBe(true);
+
+    // 2. Real MicroPython WASM: main.py central router dispatches timers.py lazily imported inside on_start()!
+    const { logs: pyLogs } = await runPyDebugInMicroPython(mainDebugPy, {
+      preloadModules: [
+        { name: 'board', pythonSource: VIRTUAL_BOARD_PACK.sandboxMock!.pythonSource },
+        { name: 'timers', pythonSource: timersCleanPy, lazyVfs: true },
+      ],
+      onReady: (sched) => {
+        setTimeout(() => sched.onMockInputsDelta({ btnA: false }, { btnA: true }), 80);
+        setTimeout(() => sched.requestGracefulStop(), 650);
+      },
+    });
+    expect(pyLogs.some((l) => l.includes('按键 A 按下'))).toBe(true);
+    expect(pyLogs.some((l) => l.includes('T1 告警触发次数 = 1'))).toBe(true);
+    expect(pyLogs.some((l) => l.includes('on_stop 已安全关闭 LED 与三色灯'))).toBe(true);
+  });
+
+  it('executes top-level floating blocks before on_start() and keeps conditional sibling import lazy in Lua 5.4 & MicroPython', async () => {
+    // 1. Top-level floating print executes BEFORE on_start() in both Lua & Python debugCode
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_print',
+              id: 'top_p',
+              inputs: {
+                VALUE: { block: { type: 'text', id: 'top_t', fields: { TEXT: '1_TOP_LEVEL' } } },
+              },
+            },
+            {
+              type: 'poly_on_start',
+              id: 's_b',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'poly_print',
+                    id: 'st_p',
+                    inputs: {
+                      VALUE: { block: { type: 'text', id: 'st_t', fields: { TEXT: '2_ON_START' } } },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      ws,
+    );
+    const luaDebugOrder = backendRegistry.get('lua').generate(ws).debugCode;
+    const pyDebugOrder = backendRegistry.get('python').generate(ws).debugCode;
+    ws.dispose();
+
+    const { logs: luaOrder } = await runLuaDebugInWasmoon(luaDebugOrder);
+    expect(luaOrder).toEqual(['1_TOP_LEVEL', '2_ON_START']);
+    const { logs: pyOrder } = await runPyDebugInMicroPython(pyDebugOrder);
+    expect(pyOrder).toEqual(['1_TOP_LEVEL', '2_ON_START']);
+
+    // 2. Conditional lazy import: when `if False:` prevents `require("timers")` / `import timers`,
+    //    timers module top-level NEVER executes and `on_timer(0)` skips cleanly without error!
+    const timersWsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_print',
+            id: 'sib_load_p',
+            inputs: {
+              VALUE: {
+                block: { type: 'text', id: 'sib_load_t', fields: { TEXT: 'SHOULD_NOT_LOAD' } },
+              },
+            },
+          },
+          {
+            type: 'poly_on_timer',
+            id: 'sib_t0',
+            fields: { TIMER_ID: '0' },
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_print',
+                  id: 'sib_t0_p',
+                  inputs: {
+                    VALUE: {
+                      block: { type: 'text', id: 'sib_t0_t', fields: { TEXT: 'SHOULD_NOT_FIRE' } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const mainWsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'cond_s',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'controls_if',
+                  id: 'cond_if',
+                  inputs: {
+                    IF0: { block: { type: 'logic_boolean', id: 'cond_f', fields: { BOOL: 'FALSE' } } },
+                    DO0: {
+                      block: {
+                        type: 'poly_require_script',
+                        id: 'cond_req',
+                        fields: { SCRIPT: 'timers' },
+                      },
+                    },
+                  },
+                  next: {
+                    block: {
+                      type: 'poly_start_timer',
+                      id: 'cond_st',
+                      fields: { TIMER_ID: '0' },
+                      inputs: {
+                        PERIOD_MS: { shadow: { type: 'math_number', id: 'c_ms', fields: { NUM: 30 } } },
+                        REPEAT: { shadow: { type: 'math_number', id: 'c_rep', fields: { NUM: 1 } } },
+                      },
+                      next: {
+                        block: {
+                          type: 'poly_print',
+                          id: 'cond_done',
+                          inputs: {
+                            VALUE: { block: { type: 'text', id: 'c_d', fields: { TEXT: 'COND_OK' } } },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const fakeHdl = {
+      id: 'h_cond',
+      name: 'cond_vm',
+      color: '#4f46e5',
+      autoStart: true,
+      capabilityConfigs: {},
+      entryScriptId: 's_main',
+      activeScriptId: 's_main',
+      updatedAt: '',
+      scripts: [
+        { id: 's_main', name: 'main', workspace: mainWsJson, breakpoints: [], updatedAt: '' },
+        { id: 's_timers', name: 'timers', workspace: timersWsJson, breakpoints: [], updatedAt: '' },
+      ],
+    };
+    setActiveTimerConfig({ count: 4, aliases: {} });
+    const metas = buildHandleScriptsMeta(fakeHdl);
+    setActiveHandleScripts(metas, 's_timers');
+    const tWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(timersWsJson, tWs);
+    const tLua = backendRegistry.get('lua').generate(tWs).code;
+    const tPy = backendRegistry.get('python').generate(tWs).code;
+    tWs.dispose();
+
+    setActiveHandleScripts(metas, 's_main');
+    const mWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(mainWsJson, mWs);
+    const mLuaDebug = backendRegistry.get('lua').generate(mWs).debugCode;
+    const mPyDebug = backendRegistry.get('python').generate(mWs).debugCode;
+    mWs.dispose();
+    setActiveHandleScripts([], null);
+    setActiveTimerConfig({ count: 8, aliases: {} });
+
+    const { logs: cLuaLogs } = await runLuaDebugInWasmoon(mLuaDebug, {
+      preloadModules: [{ name: 'timers', luaSource: tLua }],
+    });
+    expect(cLuaLogs).toContain('COND_OK');
+    expect(cLuaLogs).not.toContain('SHOULD_NOT_LOAD');
+    expect(cLuaLogs).not.toContain('SHOULD_NOT_FIRE');
+
+    const { logs: cPyLogs } = await runPyDebugInMicroPython(mPyDebug, {
+      preloadModules: [{ name: 'timers', pythonSource: tPy, lazyVfs: true }],
+    });
+    expect(cPyLogs).toContain('COND_OK');
+    expect(cPyLogs).not.toContain('SHOULD_NOT_LOAD');
+    expect(cPyLogs).not.toContain('SHOULD_NOT_FIRE');
   });
 
   it('executes rt.tick(), rt.ms_to_tick(), and rt.is_expired(start, timeout) in BOTH Wasmoon Lua 5.4 and MicroPython WASM', async () => {

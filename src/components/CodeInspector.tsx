@@ -293,7 +293,11 @@ export function CodeInspector({
             <span>校验</span>
             <span
               className={`count-badge ${
-                generated.diagnostics.length === 0 ? 'ok' : 'warn'
+                generated.diagnostics.length === 0
+                  ? 'ok'
+                  : generated.diagnostics.some((d) => d.severity === 'error')
+                    ? 'err'
+                    : 'warn'
               }`}
             >
               {generated.diagnostics.length === 0

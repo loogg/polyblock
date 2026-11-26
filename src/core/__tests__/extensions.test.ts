@@ -1,6 +1,6 @@
 import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { inspectWorkspaceScriptMeta } from '../backends/eventMode';
+import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { backendRegistry } from '../backends/registry';
 import {
   CORE_TOOLBOX_ORDERS,
@@ -1232,16 +1232,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
           proj.defaultTimerCount,
         );
         setActiveChannelPoolConfigs(poolCfgs);
-        const hdlScriptMetas = hdl.scripts.map((s) => {
-          const m = inspectWorkspaceScriptMeta(s.workspace);
-          return {
-            id: s.id,
-            name: s.name,
-            isEntry: s.id === hdl.entryScriptId,
-            declaredEvents: m.declaredEvents,
-            requiredScripts: m.requiredScripts,
-          };
-        });
+        const hdlScriptMetas = buildHandleScriptsMeta(hdl);
 
         for (const scr of hdl.scripts) {
           setActiveHandleScripts(hdlScriptMetas, scr.id);

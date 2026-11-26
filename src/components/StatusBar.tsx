@@ -13,6 +13,7 @@ interface StatusBarProps {
   multiHandleRunning?: boolean;
   blockCount: number;
   diagnosticCount: number;
+  diagnosticErrorCount?: number;
   breakpointCount: number;
   selectedBlockId: string | null;
 }
@@ -27,6 +28,7 @@ export function StatusBar({
   multiHandleRunning = false,
   blockCount,
   diagnosticCount,
+  diagnosticErrorCount = 0,
   breakpointCount,
   selectedBlockId,
 }: StatusBarProps) {
@@ -73,9 +75,15 @@ export function StatusBar({
             断点: {breakpointCount}
           </span>
         )}
-        <span>
-          {diagnosticCount === 0 ? '校验通过' : `${diagnosticCount} 条提醒`}
-        </span>
+        {diagnosticErrorCount > 0 ? (
+          <span style={{ color: 'var(--danger)', fontWeight: 600 }}>
+            {diagnosticErrorCount} 处错误
+          </span>
+        ) : (
+          <span>
+            {diagnosticCount === 0 ? '校验通过' : `${diagnosticCount} 条提醒`}
+          </span>
+        )}
       </div>
 
       <div className="status-group">

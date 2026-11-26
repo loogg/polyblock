@@ -1,7 +1,10 @@
 import type { ProjectModel, RuntimeHandle } from '../../types/project';
-import { inspectWorkspaceScriptMeta } from '../backends/eventMode';
+import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { backendRegistry } from '../backends/registry';
-import { setActiveHandleScripts } from '../blocks/timerConfigBridge';
+import {
+  setActiveChannelPoolConfigs,
+  setActiveHandleScripts,
+} from '../blocks/timerConfigBridge';
 import {
   resolveProjectModules,
   type ModuleConflictItem,
@@ -54,16 +57,8 @@ function compileHandleAllScripts(
     pools,
     project.defaultTimerCount,
   );
-  const scriptMetas = handle.scripts.map((s) => {
-    const meta = inspectWorkspaceScriptMeta(s.workspace);
-    return {
-      id: s.id,
-      name: s.name,
-      isEntry: s.id === handle.entryScriptId,
-      declaredEvents: meta.declaredEvents,
-      requiredScripts: meta.requiredScripts,
-    };
-  });
+  setActiveChannelPoolConfigs(poolCfgs);
+  const scriptMetas = buildHandleScriptsMeta(handle);
 
   const compiled: Array<{ scriptId: string; scriptName: string; code: string }> = [];
   for (const scr of handle.scripts) {

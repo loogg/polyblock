@@ -14,6 +14,21 @@ export interface ChannelAliasPromptRequest {
   label: string;
 }
 
+export interface DispatchBranchMeta {
+  blockType: string;
+  eventName: string;
+  fnPrefix: string;
+  fnName: string;
+  dupKey: string;
+  params: string[];
+  conditionLua: string;
+  conditionPython: string;
+  commentLua: string;
+  commentPython: string;
+  scriptId: string;
+  scriptName: string;
+}
+
 export interface ActiveHandleScriptMeta {
   id: string;
   name: string;
@@ -22,6 +37,8 @@ export interface ActiveHandleScriptMeta {
   declaredEvents: string[];
   /** Sibling script names explicitly loaded via `poly_require_script` inside this script. */
   requiredScripts: string[];
+  /** Extracted dispatch branches (e.g. `on_timer_0`, `on_timer_1`) routed centrally by the entry script. */
+  dispatchBranches?: DispatchBranchMeta[];
 }
 
 export function normalizeTimerConfig(
@@ -93,6 +110,9 @@ export function setActiveHandleScripts(
     ...s,
     declaredEvents: [...s.declaredEvents],
     requiredScripts: [...s.requiredScripts],
+    dispatchBranches: s.dispatchBranches
+      ? s.dispatchBranches.map((b) => ({ ...b, params: [...b.params] }))
+      : [],
   }));
   activeHandleScriptId = currentScriptId;
 }
@@ -103,6 +123,13 @@ export function getActiveHandleScripts(): ActiveHandleScriptMeta[] {
 
 export function getActiveHandleScriptId(): string | null {
   return activeHandleScriptId;
+}
+
+/** Returns true when compiling the handle's entry script (or standalone without handle metadata). */
+export function isCurrentHandleScriptEntry(): boolean {
+  if (activeHandleScripts.length === 0 || !activeHandleScriptId) return true;
+  const cur = activeHandleScripts.find((s) => s.id === activeHandleScriptId);
+  return cur ? cur.isEntry : true;
 }
 
 /** Dynamic Blockly dropdown options listing sibling scripts in the active handle. */

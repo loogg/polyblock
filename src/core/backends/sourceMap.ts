@@ -306,23 +306,50 @@ export function analyzeWorkspaceDiagnostics(
     const siblings = handleScripts.filter((s) => s.id !== currentScriptId);
     const siblingByName = new Map(siblings.map((s) => [s.name, s]));
 
-    // Map declared eventName -> { blockId, isSingleton } in current workspace
+    // Map declared eventName -> { blockId, isSingleton, isExtractedDispatch } in current workspace
     const currentEvents = new Map<
       string,
-      { blockId: string; isSingleton: boolean }
+      { blockId: string; isSingleton: boolean; isExtractedDispatch: boolean }
     >();
+    const currentExtractedBranches: Array<{
+      blockId: string;
+      eventName: string;
+      dupKey: string;
+      blockType: string;
+    }> = [];
     for (const blk of enabledTopBlocks) {
       if (blk.type === 'poly_on_start') {
         if (!currentEvents.has('on_start')) {
-          currentEvents.set('on_start', { blockId: blk.id, isSingleton: true });
+          currentEvents.set('on_start', {
+            blockId: blk.id,
+            isSingleton: true,
+            isExtractedDispatch: false,
+          });
         }
       } else {
         const hatDef = extensionRegistry.getHatBlockDef(blk.type);
-        if (hatDef && !currentEvents.has(hatDef.hat.eventName)) {
-          currentEvents.set(hatDef.hat.eventName, {
-            blockId: blk.id,
-            isSingleton: hatDef.hat.mode === 'singleton',
-          });
+        if (hatDef) {
+          const isExtractedDispatch = Boolean(
+            hatDef.hat.mode === 'dispatch' && hatDef.hat.extractBranchFnPrefix,
+          );
+          if (!currentEvents.has(hatDef.hat.eventName)) {
+            currentEvents.set(hatDef.hat.eventName, {
+              blockId: blk.id,
+              isSingleton: hatDef.hat.mode === 'singleton',
+              isExtractedDispatch,
+            });
+          }
+          if (isExtractedDispatch) {
+            const dupKey = extensionRegistry.renderHatDuplicateKey(blk);
+            if (dupKey !== null) {
+              currentExtractedBranches.push({
+                blockId: blk.id,
+                eventName: hatDef.hat.eventName,
+                dupKey,
+                blockType: blk.type,
+              });
+            }
+          }
         }
       }
     }
@@ -342,7 +369,11 @@ export function analyzeWorkspaceDiagnostics(
       }
     }
 
-    // Check EVERY sibling script in this handle for duplicate global lifecycle or event callbacks
+    // Check EVERY sibling script in this handle for:
+    // - Duplicate singleton lifecycle callbacks (`on_start`, `on_stop`, `on_run`) -> Error
+    // - Extracted dispatch hats (`on_timer` with `extractBranchFnPrefix`): ALLOWED across multiple files!
+    //   ONLY flag Error when two scripts bind the EXACT SAME channel/dupKey (e.g. both bind T0)!
+    // - Non-extracted dispatch hats -> Error (would overwrite global callback)
     for (const sib of siblings) {
       for (const evName of sib.declaredEvents) {
         const localEntry = currentEvents.get(evName);
@@ -354,12 +385,29 @@ export function analyzeWorkspaceDiagnostics(
             message: `每个句柄全局只允许 1 个「${evName}」：当前脚本与同句柄脚本「${sib.name}」重复定义了 ${evName}，请仅在入口脚本保留一个。`,
             blockId: localEntry.blockId,
           });
-        } else {
+        } else if (!localEntry.isExtractedDispatch) {
           diagnostics.push({
             id: `cross-file-cb-conflict-${evName}-${sib.name}-${localEntry.blockId}`,
             severity: 'error',
             message: `回调「${evName}」与同句柄脚本「${sib.name}」冲突：同句柄内所有脚本共享全局 _G.${evName}，请将同类事件合并到同一脚本中。`,
             blockId: localEntry.blockId,
+          });
+        }
+      }
+
+      for (const localBr of currentExtractedBranches) {
+        const colliding = (sib.dispatchBranches ?? []).find(
+          (sb) => sb.eventName === localBr.eventName && sb.dupKey === localBr.dupKey,
+        );
+        if (colliding) {
+          const isTimer = localBr.blockType === 'poly_on_timer';
+          diagnostics.push({
+            id: `cross-file-branch-dup-${localBr.eventName}-${localBr.dupKey}-${sib.name}-${localBr.blockId}`,
+            severity: 'error',
+            message: isTimer
+              ? `定时器通道 T${localBr.dupKey} 与同句柄脚本「${sib.name}」重复绑定，请更换通道号或合并到同一脚本。`
+              : `事件回调 ${localBr.eventName}（条件 ${localBr.dupKey}）与同句柄脚本「${sib.name}」重复绑定，请修改条件或合并。`,
+            blockId: localBr.blockId,
           });
         }
       }

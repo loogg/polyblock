@@ -1,5 +1,6 @@
 import * as Blockly from 'blockly';
 import type {
+  DiagnosticItem,
   LogLevel,
   ProjectModel,
   ProjectScript,
@@ -8,7 +9,7 @@ import type {
   ScriptLanguageId,
 } from '../../types/project';
 import { backendRegistry } from '../backends/registry';
-import { inspectWorkspaceScriptMeta } from '../backends/eventMode';
+import { buildHandleScriptsMeta } from '../backends/eventMode';
 import {
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
@@ -29,7 +30,12 @@ export function compileScriptHeadless(
   workspaceJson: Record<string, unknown>,
   language: ScriptLanguageId,
   channelPoolConfigs: Record<string, ReturnType<typeof getHandleTimerConfig>>,
-): { code: string; debugCode: string; isEventDriven: boolean } {
+): {
+  code: string;
+  debugCode: string;
+  isEventDriven: boolean;
+  diagnostics: DiagnosticItem[];
+} {
   setActiveChannelPoolConfigs(channelPoolConfigs);
   const ws = new Blockly.Workspace();
   try {
@@ -39,6 +45,7 @@ export function compileScriptHeadless(
       code: res.code,
       debugCode: res.debugCode || res.code,
       isEventDriven: Boolean(res.isEventDriven),
+      diagnostics: res.diagnostics,
     };
   } finally {
     ws.dispose();
@@ -74,6 +81,7 @@ export function buildHandleScriptModules(
         liveScriptOverride && liveScriptOverride.scriptId === script.id
           ? liveScriptOverride.workspace
           : script.workspace;
+      setActiveHandleScripts(buildHandleScriptsMeta(handle), script.id);
       const compiled = compileScriptHeadless(wsJson, language, poolCfgs);
       modules.push({
         moduleName: script.name,
@@ -162,19 +170,9 @@ export class MultiHandleRunnerOrchestrator {
         channelPools,
         project.defaultTimerCount,
       );
-      setActiveHandleScripts(
-        handle.scripts.map((s) => {
-          const meta = inspectWorkspaceScriptMeta(s.workspace);
-          return {
-            id: s.id,
-            name: s.name,
-            isEntry: s.id === handle.entryScriptId,
-            declaredEvents: meta.declaredEvents,
-            requiredScripts: meta.requiredScripts,
-          };
-        }),
-        entryScript.id,
-      );
+      setActiveChannelPoolConfigs(poolCfgs);
+      const scriptMetas = buildHandleScriptsMeta(handle);
+      setActiveHandleScripts(scriptMetas, entryScript.id);
       const compiled = compileScriptHeadless(
         entryScript.workspace,
         project.language,
@@ -188,6 +186,7 @@ export class MultiHandleRunnerOrchestrator {
         project.defaultTimerCount,
         poolCfgs,
       );
+      setActiveHandleScripts(scriptMetas, entryScript.id);
 
       const resolution = resolveProjectModules({
         enabledCapabilities: project.enabledCapabilities,

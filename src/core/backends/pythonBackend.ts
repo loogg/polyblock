@@ -1,10 +1,12 @@
 import * as Blockly from 'blockly';
 import { Order, pythonGenerator } from 'blockly/python';
 import {
+  buildPythonGlobalLineForBlocks,
   codegenContext,
   resetCodegenPassContext,
 } from './codegenContext';
 import {
+  buildEntryDispatchRouters,
   hasExternalKeepAliveHat,
   isEventDrivenWorkspace,
 } from './eventMode';
@@ -22,39 +24,21 @@ import type { GeneratedCodeResult, ScriptBackendAdapter } from './types';
 
 let pythonGeneratorsRegistered = false;
 
-function getPythonGlobalLine(): string {
-  if (codegenContext.pythonGlobalVarIdents.length === 0) return '';
-  return `  global ${codegenContext.pythonGlobalVarIdents.join(', ')}\n`;
-}
-
 function registerPythonBlockGenerators(): void {
   if (pythonGeneratorsRegistered) return;
 
   pythonGenerator.forBlock['poly_on_start'] = (block, generator) => {
     const body = generator.statementToCode(block, 'BODY');
-    if (codegenContext.eventDrivenMode) {
-      const defKw = codegenContext.debugPass ? 'async def' : 'def';
-      const globalLine = getPythonGlobalLine();
-      const safeBody = body.trim() ? body : '  pass\n';
-      if (codegenContext.debugPass) {
-        return `${defKw} on_start():\n${globalLine}${safeBody}\n`;
-      }
-      return (
-        `${SENTINEL_START_PREFIX}'${block.id}'__\n` +
-        `${defKw} on_start():\n` +
-        `${globalLine}${safeBody}` +
-        `${SENTINEL_END_PREFIX}'${block.id}'__\n`
-      );
-    }
-
-    const dedented = body.replace(/^  /gm, '');
+    const defKw = codegenContext.debugPass ? 'async def' : 'def';
+    const globalLine = buildPythonGlobalLineForBlocks([block], generator);
+    const safeBody = body.trim() ? body : '  pass\n';
     if (codegenContext.debugPass) {
-      return `# 当程序启动\n${dedented}`;
+      return `${defKw} on_start():\n${globalLine}${safeBody}\n`;
     }
     return (
       `${SENTINEL_START_PREFIX}'${block.id}'__\n` +
-      `# 当程序启动\n` +
-      `${dedented}` +
+      `${defKw} on_start():\n` +
+      `${globalLine}${safeBody}` +
       `${SENTINEL_END_PREFIX}'${block.id}'__\n`
     );
   };
@@ -152,7 +136,7 @@ function registerPythonBlockGenerators(): void {
   pythonGenerator.forBlock['poly_require_script'] = (block) => {
     const raw = String(block.getFieldValue('SCRIPT') || 'timers').trim() || 'timers';
     const ident = sanitizeLocalIdent(raw);
-    return `from ${ident} import *\n`;
+    return `import ${ident}\n`;
   };
 
   pythonGenerator.forBlock['poly_local_set'] = (block, generator) => {
@@ -266,14 +250,19 @@ async def _poly_start_runner():
     _poly.co_done()
 
 async def _poly_call_cb(_cname, _fn, *_args):
+  global _POLY_ACTIVE_CB
   if not callable(_fn):
     return
+  _POLY_ACTIVE_CB = _cname
   _poly.cb_enter(_cname)
   try:
     _ret = _fn(*_args)
     if hasattr(_ret, 'send'):
       await _ret
+  except _PolyStopCb:
+    pass
   finally:
+    _POLY_ACTIVE_CB = ''
     _poly.cb_exit()
 
 def _poly_refresh_handlers():
@@ -374,11 +363,23 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       varIdToIdent,
     );
 
+    const cleanRouter = buildEntryDispatchRouters(workspace, 'python', false);
+    const cleanPrepend = cleanRouter.autoImports
+      .filter((imp) => !rawClean.includes(imp))
+      .join('\n');
+    const mergedCleanBody = [
+      cleanPrepend,
+      rawClean.trim(),
+      cleanRouter.routerCode.trim(),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
     const header = eventDriven
       ? `# 由 PolyBlock 自动生成 (Target: Python 3 · Event-Driven ABI)\n`
       : `# 由 PolyBlock 自动生成 (Target: Python 3)\n`;
-    const combinedClean = rawClean.trim()
-      ? `${header}${rawClean}`
+    const combinedClean = mergedCleanBody
+      ? `${header}${mergedCleanBody}\n`
       : `${header}# 请从左侧拖入积木开始编排`;
     const { code, sourceMap, lineToBlock } = extractSourceMap(combinedClean);
 
@@ -417,9 +418,12 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       `_POLY_VAR_MAP = ${JSON.stringify(snapVarEntries)}`,
       `_POLY_EVENT_MODE = False`,
       `_POLY_IN_START = False`,
+      `_POLY_ACTIVE_CB = ''`,
       `_POLY_SLICE_START = 0.0`,
       `_POLY_START_ERR = None`,
       `class _PolyStopStart(Exception):`,
+      `  pass`,
+      `class _PolyStopCb(Exception):`,
       `  pass`,
       `async def _poly_sleep_ms(_ms):`,
       `  global _POLY_IN_START, _POLY_SLICE_START`,
@@ -451,8 +455,11 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       `      _POLY_SLICE_START = _poly.now_ms()`,
       `    return`,
       `  await _poly.step(_bid, _snap)`,
-      `  if _poly.is_in_callback() and _poly.cb_expired():`,
-      `    raise RuntimeError("事件回调执行超时（疑似死循环），已按单次回调超时保护中断。")`,
+      `  if _poly.is_in_callback():`,
+      `    if _poly.is_stop_requested() and _POLY_ACTIVE_CB != 'on_stop':`,
+      `      raise _PolyStopCb()`,
+      `    if _poly.cb_expired():`,
+      `      raise RuntimeError("事件回调执行超时（疑似死循环），已按单次回调超时保护中断。")`,
       `async def _poly_yield_check():`,
       `  global _POLY_IN_START, _POLY_SLICE_START`,
       `  if _POLY_EVENT_MODE and _POLY_IN_START and not _poly.is_in_callback():`,
@@ -466,8 +473,11 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       `        raise _PolyStopStart()`,
       `      _POLY_IN_START = True`,
       `      _POLY_SLICE_START = _poly.now_ms()`,
-      `  elif _poly.is_in_callback() and _poly.cb_expired():`,
-      `    raise RuntimeError("事件回调执行超时（疑似死循环），已按单次回调超时保护中断。")`,
+      `  elif _poly.is_in_callback():`,
+      `    if _poly.is_stop_requested() and _POLY_ACTIVE_CB != 'on_stop':`,
+      `      raise _PolyStopCb()`,
+      `    if _poly.cb_expired():`,
+      `      raise RuntimeError("事件回调执行超时（疑似死循环），已按单次回调超时保护中断。")`,
       `def _poly_snap(_loc, _glb):`,
       `  _out = {}`,
       `  for _label, _ident in _POLY_VAR_MAP:`,
@@ -485,9 +495,23 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       ``,
     ].join('\n');
 
-    const driver = eventDriven ? buildPythonEventLoopDriver(keepAliveExternal) : '';
-    const debugCode = debugBody.trim()
-      ? `${debugPrelude}${debugBody}\n${driver}\n_poly.final_snap(_poly_snap(locals(), globals()))\n`
+    const debugRouter = buildEntryDispatchRouters(workspace, 'python', true);
+    const debugPrepend = debugRouter.autoImports
+      .filter((imp) => !debugBody.includes(imp))
+      .join('\n');
+    const fullDebugBody = [
+      debugPrepend,
+      debugBody.trim(),
+      debugRouter.routerCode.trim(),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    const driver = eventDriven
+      ? buildPythonEventLoopDriver(keepAliveExternal)
+      : `if 'on_start' in globals() and callable(on_start):\n  await on_start()\n`;
+    const debugCode = fullDebugBody
+      ? `${debugPrelude}${fullDebugBody}\n${driver}\n_poly.final_snap(_poly_snap(locals(), globals()))\n`
       : '';
 
     return {

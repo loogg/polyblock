@@ -21,7 +21,7 @@ import { ScriptTabBar } from './components/ScriptTabBar';
 import { StatusBar } from './components/StatusBar';
 import { TimerAliasModal } from './components/TimerAliasModal';
 import { TopBar } from './components/TopBar';
-import { inspectWorkspaceScriptMeta } from './core/backends/eventMode';
+import { buildHandleScriptsMeta } from './core/backends/eventMode';
 import { backendRegistry } from './core/backends/registry';
 import type { GeneratedCodeResult } from './core/backends/types';
 import {
@@ -31,7 +31,6 @@ import {
   setActiveHandleScripts,
   setActiveModuleConflicts,
   setActiveProjectCapabilities,
-  type ActiveHandleScriptMeta,
   type ChannelAliasPromptRequest,
 } from './core/blocks/timerConfigBridge';
 import {
@@ -132,19 +131,6 @@ const VALID_PAGES: PageId[] = [
   'extensions',
   'settings',
 ];
-
-function buildHandleScriptsMeta(handle: RuntimeHandle): ActiveHandleScriptMeta[] {
-  return handle.scripts.map((s) => {
-    const meta = inspectWorkspaceScriptMeta(s.workspace);
-    return {
-      id: s.id,
-      name: s.name,
-      isEntry: s.id === handle.entryScriptId,
-      declaredEvents: meta.declaredEvents,
-      requiredScripts: meta.requiredScripts,
-    };
-  });
-}
 
 function readPageFromHash(): PageId {
   const raw = window.location.hash.replace(/^#\/?/, '').trim() as PageId;
@@ -1613,21 +1599,84 @@ export function App() {
         activeHandle.scripts[0];
       const runningEntryDirectly = activeScript.id === entryScript.id;
       const liveSnapshot = workbenchRef.current?.saveWorkspaceJson();
-      const handleForRun: RuntimeHandle =
-        liveSnapshot && !runningEntryDirectly
-          ? {
-              ...activeHandle,
-              scripts: activeHandle.scripts.map((s) =>
-                s.id === activeScript.id ? { ...s, workspace: liveSnapshot } : s,
-              ),
+      const handleForRun: RuntimeHandle = liveSnapshot
+        ? {
+            ...activeHandle,
+            scripts: activeHandle.scripts.map((s) =>
+              s.id === activeScript.id ? { ...s, workspace: liveSnapshot } : s,
+            ),
+          }
+        : activeHandle;
+
+      // Pre-Run Static Error Gate: collect blocking `severity === 'error'` diagnostics across ALL scripts in the handle!
+      const handleMetasForRun = buildHandleScriptsMeta(handleForRun);
+      const blockingErrors: Array<{
+        scriptName: string;
+        message: string;
+        blockId?: string;
+        isActiveScript: boolean;
+      }> = [];
+      for (const scr of handleForRun.scripts) {
+        if (scr.id === activeScript.id) {
+          for (const d of latest.diagnostics) {
+            if (d.severity === 'error') {
+              blockingErrors.push({
+                scriptName: scr.name,
+                message: d.message,
+                blockId: d.blockId,
+                isActiveScript: true,
+              });
             }
-          : activeHandle;
+          }
+        } else {
+          setActiveHandleScripts(handleMetasForRun, scr.id);
+          const sibCompiled = compileScriptHeadless(
+            scr.workspace,
+            language,
+            activeChannelPoolConfigs,
+          );
+          for (const d of sibCompiled.diagnostics) {
+            if (d.severity === 'error') {
+              blockingErrors.push({
+                scriptName: scr.name,
+                message: d.message,
+                blockId: d.blockId,
+                isActiveScript: false,
+              });
+            }
+          }
+        }
+      }
+      setActiveHandleScripts(handleMetasForRun, activeScript.id);
+
+      if (blockingErrors.length > 0) {
+        setShowConsole(true);
+        setLogs(
+          blockingErrors.map((err, idx) => ({
+            id: `static-err-${Date.now()}-${idx}`,
+            timestamp: formatNowTime(),
+            level: 'error' as const,
+            message: `[${err.scriptName}.${adapter.extension}] ${err.message}`,
+            blockId: err.isActiveScript ? err.blockId : undefined,
+          })),
+        );
+        const firstActiveErr = blockingErrors.find(
+          (e) => e.isActiveScript && e.blockId,
+        );
+        if (firstActiveErr?.blockId) {
+          workbenchRef.current?.focusBlock(firstActiveErr.blockId);
+        }
+        notify(
+          `检测到 ${blockingErrors.length} 处静态校验错误，已阻止运行（请查看日志与校验面板）`,
+        );
+        return;
+      }
 
       let runCode = latest.code;
       let runDebugCode = latest.debugCode || latest.code;
       let runIsEventDriven = Boolean(latest.isEventDriven);
       if (!runningEntryDirectly) {
-        setActiveHandleScripts(buildHandleScriptsMeta(handleForRun), entryScript.id);
+        setActiveHandleScripts(handleMetasForRun, entryScript.id);
         const compiledEntry = compileScriptHeadless(
           entryScript.workspace,
           language,
@@ -1637,7 +1686,7 @@ export function App() {
         runDebugCode = compiledEntry.debugCode;
         runIsEventDriven = compiledEntry.isEventDriven;
         // Restore active-tab script metadata for editor diagnostics
-        setActiveHandleScripts(buildHandleScriptsMeta(handleForRun), activeScript.id);
+        setActiveHandleScripts(handleMetasForRun, activeScript.id);
       }
 
       const scriptFileLabel = `${activeHandle.name}/${entryScript.name}.${adapter.extension}`;
@@ -1684,6 +1733,7 @@ export function App() {
         activeProject.defaultTimerCount,
         activeChannelPoolConfigs,
       );
+      setActiveHandleScripts(handleMetasForRun, activeScript.id);
 
       const modResolution = resolveProjectModules({
         enabledCapabilities: activeProject.enabledCapabilities,
@@ -1870,6 +1920,62 @@ export function App() {
         })),
       );
       notify(`存在 ${projectModRes.conflicts.length} 处同层级模块名冲突，已阻止并发仿真`);
+      return;
+    }
+
+    // Pre-Run Static Error Gate across all target autoStart handles
+    const poolsForMulti = extensionRegistry
+      .getChannelPools(proj.enabledCapabilities, proj.localExtensions)
+      .map((entry) => entry.pool);
+    const multiBlockingErrors: Array<{
+      handleName: string;
+      handleColor: string;
+      scriptName: string;
+      message: string;
+    }> = [];
+    for (const hdl of runList) {
+      const hdlPools = getAllHandleChannelPoolConfigs(
+        hdl,
+        poolsForMulti,
+        proj.defaultTimerCount,
+      );
+      setActiveChannelPoolConfigs(hdlPools);
+      const hdlMetas = buildHandleScriptsMeta(hdl);
+      for (const scr of hdl.scripts) {
+        setActiveHandleScripts(hdlMetas, scr.id);
+        const res = compileScriptHeadless(scr.workspace, proj.language, hdlPools);
+        for (const d of res.diagnostics) {
+          if (d.severity === 'error') {
+            multiBlockingErrors.push({
+              handleName: hdl.name,
+              handleColor: hdl.color,
+              scriptName: scr.name,
+              message: d.message,
+            });
+          }
+        }
+      }
+    }
+    // Restore active handle bridge context
+    setActiveChannelPoolConfigs(activeChannelPoolConfigs);
+    setActiveHandleScripts(buildHandleScriptsMeta(activeHandle), activeScript.id);
+
+    if (multiBlockingErrors.length > 0) {
+      const ext = backendRegistry.get(proj.language).extension;
+      setShowConsole(true);
+      setLogs(
+        multiBlockingErrors.map((e, idx) => ({
+          id: `mstatic-err-${Date.now()}-${idx}`,
+          timestamp: formatNowTime(),
+          level: 'error' as const,
+          message: `[${e.scriptName}.${ext}] ${e.message}`,
+          handleName: e.handleName,
+          handleColor: e.handleColor,
+        })),
+      );
+      notify(
+        `检测到 ${multiBlockingErrors.length} 处静态校验错误，已阻止并发仿真（请查看日志）`,
+      );
       return;
     }
 
@@ -2333,6 +2439,9 @@ export function App() {
         multiHandleRunning={multiHandleRunning}
         blockCount={generated.blockCount}
         diagnosticCount={generated.diagnostics.length}
+        diagnosticErrorCount={
+          generated.diagnostics.filter((d) => d.severity === 'error').length
+        }
         breakpointCount={breakpoints.length}
         selectedBlockId={selectedBlockId}
       />

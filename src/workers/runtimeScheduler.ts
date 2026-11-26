@@ -229,9 +229,6 @@ export class WorkerRuntimeScheduler {
 
   isCallbackTimedOut(): boolean {
     if (this.activeCallbackName === null) return false;
-    if (this.stopRequested && this.activeCallbackName !== 'on_stop') {
-      return true;
-    }
     return this.now() - this.callbackStartedAt >= this.callbackTimeoutMs;
   }
 

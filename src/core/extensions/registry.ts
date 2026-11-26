@@ -1,7 +1,10 @@
 import * as Blockly from 'blockly';
 import { luaGenerator, Order as LuaOrder } from 'blockly/lua';
 import { Order as PyOrder, pythonGenerator } from 'blockly/python';
-import { codegenContext } from '../backends/codegenContext';
+import {
+  buildPythonGlobalLineForBlocks,
+  codegenContext,
+} from '../backends/codegenContext';
 import type { BlockCategorySpec, ToolboxBlockSpec } from '../blocks/catalog';
 import { createChannelIdField } from '../blocks/channelField';
 import {
@@ -519,6 +522,81 @@ function renderTemplate(
 }
 
 /**
+ * Renders a hat template string directly from serialized `fields` (without requiring a live Blockly.Block).
+ * Used to inspect sibling scripts' extracted dispatch branches (`on_timer_0`, etc.) for entry-script routing.
+ */
+function renderTemplateFromRawFields(
+  template: string,
+  fields: Record<string, unknown>,
+  section: ResolvedPackSection,
+): string {
+  const pool = section.channelPool;
+  const poolKey = pool?.configKey ?? DEFAULT_TIMER_POOL_KEY;
+  const poolPrefix = pool?.prefix ?? 'T';
+  const poolDefault = pool?.defaultCount ?? 8;
+
+  return template.replace(
+    PLACEHOLDER_RE,
+    (_full, argName: string, mod?: string, modParam?: string) => {
+      const rawValue = String(fields[argName] ?? '');
+      if (mod === 'json') return JSON.stringify(rawValue);
+      if (mod === 'int') {
+        const n = Number(rawValue);
+        return String(Number.isFinite(n) ? Math.trunc(n) : 0);
+      }
+      if (mod === 'min10_int') {
+        const n = Number(rawValue);
+        return String(Number.isFinite(n) ? Math.max(10, Math.round(n)) : 100);
+      }
+      if (mod === 'bool_lua') {
+        return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'
+          ? 'true'
+          : 'false';
+      }
+      if (mod === 'bool_py') {
+        return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'
+          ? 'True'
+          : 'False';
+      }
+      if (mod === 'edge_lua' || mod === 'edge_py') {
+        const param = modParam || 'pressed';
+        return rawValue === 'press' || rawValue === 'true' || rawValue === '1'
+          ? param
+          : `not ${param}`;
+      }
+      if (mod === 'edge_zh') {
+        return rawValue === 'press' || rawValue === 'true' || rawValue === '1'
+          ? '按下'
+          : '释放';
+      }
+      if (mod === 'channel_comment_lua') {
+        const tid = Math.trunc(Number(rawValue || 0));
+        const alias = getActiveChannelPoolConfig(poolKey, poolDefault).aliases[
+          String(tid)
+        ];
+        return alias ? ` -- ${poolPrefix}${tid}: ${alias}` : '';
+      }
+      if (mod === 'channel_comment_py') {
+        const tid = Math.trunc(Number(rawValue || 0));
+        const alias = getActiveChannelPoolConfig(poolKey, poolDefault).aliases[
+          String(tid)
+        ];
+        return alias ? `  # ${poolPrefix}${tid}: ${alias}` : '';
+      }
+      if (mod === 'channel_label') {
+        const tid = Math.trunc(Number(rawValue || 0));
+        return formatChannelLabel(
+          tid,
+          getActiveChannelPoolConfig(poolKey, poolDefault),
+          poolPrefix,
+        );
+      }
+      return rawValue;
+    },
+  );
+}
+
+/**
  * Registers a single declarative block (including dynamic `field_channel_id` dropdowns
  * and top-level `hat` event callbacks) into Blockly.
  */
@@ -656,11 +734,6 @@ function registerSingleBlockInBlockly(
   };
 }
 
-function getPythonGlobalLine(): string {
-  if (codegenContext.pythonGlobalVarIdents.length === 0) return '';
-  return `  global ${codegenContext.pythonGlobalVarIdents.join(', ')}\n`;
-}
-
 /**
  * Pure content-based import hoisting & deduplication across ALL packs and sections.
  * Zero hardcoded module names: identical trimmed import lines collapse to one hoisted line.
@@ -712,16 +785,13 @@ function registerHatGenerators(
     if (matchingHats.length === 0) return '';
 
     if (hatSpec.extractBranchFnPrefix) {
+      // Scheme A centralized routing: emit ONLY the extracted global branch functions (`on_timer_0`, etc.).
+      // The handle's entry script (`main.lua`) aggregates all branches across the handle into ONE `on_timer(id)`!
       const fnPrefix = hatSpec.extractBranchFnPrefix;
       const usedFnNames = new Set<string>();
       const fnDefs: string[] = [];
-      const dispatchBranches: string[] = [];
 
       matchingHats.forEach((hatBlk, idx) => {
-        const kw = idx === 0 ? 'if' : 'elseif';
-        const cond = hatSpec.conditionLua
-          ? renderTemplate(hatSpec.conditionLua, b, hatBlk, 'lua', pack, section)
-          : 'true';
         const comment = hatSpec.branchCommentLua
           ? renderTemplate(
               hatSpec.branchCommentLua,
@@ -765,14 +835,9 @@ function registerHatGenerators(
               `${SENTINEL_END}'${hatBlk.id}'__\n`,
           );
         }
-        dispatchBranches.push(`  ${kw} ${cond} then${comment}\n    ${fnName}()\n`);
       });
 
-      return (
-        `${fnDefs.join('\n')}\n` +
-        `function ${hatSpec.eventName}(${paramsStr})\n` +
-        `${dispatchBranches.join('')}  end\nend\n`
-      );
+      return `${fnDefs.join('\n')}`;
     }
 
     const branches: string[] = [];
@@ -805,10 +870,15 @@ function registerHatGenerators(
   pythonGenerator.forBlock[b.type] = (block, generator) => {
     hoistImports(generator, hatSpec.imports?.python);
     const defKw = codegenContext.debugPass ? 'async def' : 'def';
-    const globalLine = getPythonGlobalLine();
+    const formalParams = hatSpec.params ?? [];
 
     if (hatSpec.mode === 'singleton') {
       const body = generator.statementToCode(block, 'BODY');
+      const globalLine = buildPythonGlobalLineForBlocks(
+        [block],
+        generator,
+        formalParams,
+      );
       const safeBody = body.trim() ? body : '  pass\n';
       if (codegenContext.debugPass) {
         return `${defKw} ${hatSpec.eventName}(${paramsStr}):\n${globalLine}${safeBody}\n`;
@@ -831,24 +901,13 @@ function registerHatGenerators(
     if (matchingHats.length === 0) return '';
 
     if (hatSpec.extractBranchFnPrefix) {
+      // Scheme A centralized routing: emit ONLY the extracted branch functions (`def on_timer_0():`).
+      // The handle's entry script (`main.py`) aggregates all branches across the handle into ONE `on_timer(id)`!
       const fnPrefix = hatSpec.extractBranchFnPrefix;
       const usedFnNames = new Set<string>();
       const fnDefs: string[] = [];
-      const dispatchBranches: string[] = [];
-      const callPrefix = codegenContext.debugPass ? 'await ' : '';
 
       matchingHats.forEach((hatBlk, idx) => {
-        const kw = idx === 0 ? 'if' : 'elif';
-        const cond = hatSpec.conditionPython
-          ? renderTemplate(
-              hatSpec.conditionPython,
-              b,
-              hatBlk,
-              'python',
-              pack,
-              section,
-            )
-          : 'True';
         const comment = hatSpec.branchCommentPython
           ? renderTemplate(
               hatSpec.branchCommentPython,
@@ -879,31 +938,30 @@ function registerHatGenerators(
         usedFnNames.add(fnName);
 
         const rawBody = generator.statementToCode(hatBlk, 'BODY');
+        const branchGlobalLine = buildPythonGlobalLineForBlocks([hatBlk], generator);
         const safeBody = rawBody.trim() ? rawBody : '  pass\n';
         const headerComment = comment.trim() ? `${comment.trim()}\n` : '';
         if (codegenContext.debugPass) {
-          fnDefs.push(`${defKw} ${fnName}():\n${globalLine}${safeBody}\n`);
+          fnDefs.push(`${defKw} ${fnName}():\n${branchGlobalLine}${safeBody}\n`);
         } else {
           fnDefs.push(
             `${SENTINEL_START}'${hatBlk.id}'__\n` +
               `${headerComment}` +
               `${defKw} ${fnName}():\n` +
-              `${globalLine}${safeBody}` +
+              `${branchGlobalLine}${safeBody}` +
               `${SENTINEL_END}'${hatBlk.id}'__\n`,
           );
         }
-        dispatchBranches.push(
-          `  ${kw} ${cond}:${comment}\n    ${callPrefix}${fnName}()\n`,
-        );
       });
 
-      return (
-        `${fnDefs.join('\n')}\n` +
-        `${defKw} ${hatSpec.eventName}(${paramsStr}):\n` +
-        `${dispatchBranches.join('')}\n`
-      );
+      return `${fnDefs.join('\n')}`;
     }
 
+    const dispatchGlobalLine = buildPythonGlobalLineForBlocks(
+      matchingHats,
+      generator,
+      formalParams,
+    );
     const branches: string[] = [];
     matchingHats.forEach((hatBlk, idx) => {
       const kw = idx === 0 ? 'if' : 'elif';
@@ -936,7 +994,7 @@ function registerHatGenerators(
       }
     });
 
-    return `${defKw} ${hatSpec.eventName}(${paramsStr}):\n${globalLine}${branches.join('')}\n`;
+    return `${defKw} ${hatSpec.eventName}(${paramsStr}):\n${dispatchGlobalLine}${branches.join('')}\n`;
   };
 }
 
@@ -1664,6 +1722,78 @@ class ExtensionRegistry {
       'lua',
       found.pack,
       found.section,
+    );
+  }
+
+  /**
+   * Renders extracted dispatch branch metadata from either serialized JSON fields or a live Blockly block.
+   * Returns null for hats that do not declare `extractBranchFnPrefix`.
+   */
+  renderExtractedDispatchBranchFromFields(
+    blockType: string,
+    fields: Record<string, unknown>,
+    fallbackIndex = 0,
+  ): {
+    blockType: string;
+    eventName: string;
+    fnPrefix: string;
+    baseFnName: string;
+    dupKey: string;
+    params: string[];
+    conditionLua: string;
+    conditionPython: string;
+    commentLua: string;
+    commentPython: string;
+  } | null {
+    const found = this.getHatBlockDef(blockType);
+    const fnPrefix = found?.hat.extractBranchFnPrefix;
+    if (!found || found.hat.mode !== 'dispatch' || !fnPrefix) {
+      return null;
+    }
+    const { section, hat } = found;
+    const rawKey = hat.duplicateKeyTemplate
+      ? renderTemplateFromRawFields(hat.duplicateKeyTemplate, fields, section)
+      : String(fallbackIndex);
+    const safeSuffix = rawKey.replace(/[^A-Za-z0-9_]+/g, '_') || String(fallbackIndex);
+    return {
+      blockType,
+      eventName: hat.eventName,
+      fnPrefix,
+      baseFnName: `${fnPrefix}${safeSuffix}`,
+      dupKey: rawKey,
+      params: [...(hat.params ?? [])],
+      conditionLua: hat.conditionLua
+        ? renderTemplateFromRawFields(hat.conditionLua, fields, section)
+        : 'true',
+      conditionPython: hat.conditionPython
+        ? renderTemplateFromRawFields(hat.conditionPython, fields, section)
+        : 'True',
+      commentLua: hat.branchCommentLua
+        ? renderTemplateFromRawFields(hat.branchCommentLua, fields, section)
+        : '',
+      commentPython: hat.branchCommentPython
+        ? renderTemplateFromRawFields(hat.branchCommentPython, fields, section)
+        : '',
+    };
+  }
+
+  /** Renders extracted dispatch branch metadata directly from a live Blockly hat block. */
+  renderExtractedDispatchBranchFromBlock(
+    block: Blockly.Block,
+    fallbackIndex = 0,
+  ) {
+    const fields: Record<string, unknown> = {};
+    for (const input of block.inputList) {
+      for (const field of input.fieldRow) {
+        if (field.name) {
+          fields[field.name] = field.getValue();
+        }
+      }
+    }
+    return this.renderExtractedDispatchBranchFromFields(
+      block.type,
+      fields,
+      fallbackIndex,
     );
   }
 

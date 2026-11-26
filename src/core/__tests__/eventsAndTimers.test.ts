@@ -1,6 +1,6 @@
 import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { inspectWorkspaceScriptMeta } from '../backends/eventMode';
+import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
 import {
@@ -27,22 +27,13 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     extensionRegistry.ensureInitialized();
   });
 
-  it('generates clean zero-closure Lua 5.4 & Python 3 Event-Driven ABI with Scheme A on_timer_N functions and multi-file require("timers")', () => {
+  it('generates centralized entry-script on_timer(id) router, clean companion branch functions, import timers (no import *), and precise Python global declarations', () => {
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles[0];
     setActiveTimerConfig(getHandleTimerConfig(hdl));
-    const scriptMetas = hdl.scripts.map((s) => {
-      const m = inspectWorkspaceScriptMeta(s.workspace);
-      return {
-        id: s.id,
-        name: s.name,
-        isEntry: s.id === hdl.entryScriptId,
-        declaredEvents: m.declaredEvents,
-        requiredScripts: m.requiredScripts,
-      };
-    });
+    const scriptMetas = buildHandleScriptsMeta(hdl);
 
-    // 1. Entry script `main` (on_start with require("timers") + rt.set_run_period(100), on_run, on_button, on_stop)
+    // 1. Entry script `main` (on_start with require("timers") + central on_timer(id) router, on_run, on_button, on_stop)
     const mainScript = hdl.scripts[0];
     const timersScript = hdl.scripts[1];
     expect(mainScript.name).toBe('main');
@@ -65,6 +56,10 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(luaMain.code).toContain('function on_stop()');
     expect(luaMain.code).toContain('rt.start_timer(0, 500, 0) -- T0: 心跳灯');
     expect(luaMain.code).toContain('rt.start_timer(1, 400, 3) -- T1: 告警倒计时');
+    // Central router lives in main.lua and guards conditional require safely!
+    expect(luaMain.code).toContain('function on_timer(id)');
+    expect(luaMain.code).toContain('if on_timer_0 then on_timer_0() end');
+    expect(luaMain.code).toContain('if on_timer_1 then on_timer_1() end');
     expect(luaMain.code).not.toContain('rt.on_timer(');
     expect(luaMain.debugCode).toContain('__poly_init_scheduler');
     expect(luaMain.debugCode).toContain('__poly_sync_handlers');
@@ -85,20 +80,26 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(pyMain.diagnostics).toHaveLength(0);
     expect(pyMain.code).toContain('import rt');
     expect(pyMain.code).toContain('import board');
-    expect(pyMain.code).toContain('from timers import *');
+    expect(pyMain.code).toContain('import sys');
+    // Must use legal `import timers` inside def on_start() — NEVER `from timers import *`!
+    expect(pyMain.code).toContain('import timers');
+    expect(pyMain.code).not.toContain('from timers import *');
     expect(pyMain.code).toContain('def on_start():');
     expect(pyMain.code).toContain('global led_on, ticks');
     expect(pyMain.code).not.toContain('global cur_temp');
-    expect(pyMain.code).toContain('cur_temp = board.read_temp()');
-    expect(pyMain.code).toContain('rt.set_run_period(100)');
-    expect(pyMain.code).toContain('def on_run():');
-    expect(pyMain.code).toContain('def on_button(key, pressed):');
-    expect(pyMain.code).toContain('if key == "A" and pressed:');
-    expect(pyMain.code).toContain('def on_stop():');
+    // Precise Python `global`: callbacks that don't mutate led_on/ticks emit ZERO `global` line!
+    expect(pyMain.code).toMatch(/def on_run\(\):\n  cur_temp = board\.read_temp\(\)/);
+    expect(pyMain.code).toMatch(/def on_button\(key, pressed\):\n  if key == "A" and pressed:/);
+    expect(pyMain.code).toMatch(/def on_stop\(\):\n  board\.led\(False\)/);
+    // Central router in main.py dispatches via sys.modules.get("timers") safely!
+    expect(pyMain.code).toContain('def on_timer(id):');
+    expect(pyMain.code).toContain('_m = sys.modules.get("timers")');
+    expect(pyMain.code).toContain('_m.on_timer_0()');
+    expect(pyMain.code).toContain('_m.on_timer_1()');
     expect(pyMain.debugCode).toContain('await _poly.next_event()');
     mainWs.dispose();
 
-    // 2. Companion script `timers` (Scheme A: global function on_timer_0/1 + clean on_timer(id) router)
+    // 2. Companion script `timers` emits ONLY branch functions `on_timer_0` / `on_timer_1` (ZERO duplicate `on_timer(id)`!)
     setActiveHandleScripts(scriptMetas, timersScript.id);
     const timersWs = loadWs(timersScript.workspace);
     const luaTimers = backendRegistry.get('lua').generate(timersWs);
@@ -106,22 +107,17 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(luaTimers.code).toContain('function on_timer_0()');
     expect(luaTimers.code).toContain('function on_timer_1()');
     expect(luaTimers.code).not.toContain('local function on_timer_0');
-    expect(luaTimers.code).toContain('function on_timer(id)');
-    expect(luaTimers.code).toContain('if id == 0 then -- T0: 心跳灯\n    on_timer_0()');
-    expect(luaTimers.code).toContain('elseif id == 1 then -- T1: 告警倒计时\n    on_timer_1()');
+    expect(luaTimers.code).not.toContain('function on_timer(id)');
     expect(luaTimers.sourceMap['ev_print_t1']).toBeDefined();
 
     const pyTimers = backendRegistry.get('python').generate(timersWs);
     expect(pyTimers.diagnostics).toHaveLength(0);
     expect(pyTimers.code).toContain('def on_timer_0():');
     expect(pyTimers.code).toContain('def on_timer_1():');
-    expect(pyTimers.code).toContain('def on_timer(id):');
-    expect(pyTimers.code).toContain('if id == 0:');
-    expect(pyTimers.code).toContain('on_timer_0()');
-    expect(pyTimers.code).toContain('elif id == 1:');
-    expect(pyTimers.code).toContain('on_timer_1()');
-    expect(pyTimers.debugCode).toContain('async def on_timer(id):');
-    expect(pyTimers.debugCode).toContain('await on_timer_0()');
+    expect(pyTimers.code).not.toContain('def on_timer(id):');
+    // Precise per-branch global: on_timer_0 only mutates led_on; on_timer_1 only mutates ticks!
+    expect(pyTimers.code).toMatch(/def on_timer_0\(\):\n  global led_on\n/);
+    expect(pyTimers.code).toMatch(/def on_timer_1\(\):\n  global ticks\n/);
 
     timersWs.dispose();
     setActiveHandleScripts([], null);
@@ -321,7 +317,8 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(dispatched).toContain('run');
   });
 
-  it('enforces handle-wide unique on_start/on_stop and cross-file callback conflict across ALL scripts in a handle, detects event-loop purely from sibling hats, and re-arms setRunPeriod immediately', async () => {
+  it('allows multi-file split timers on distinct channels with central main router + auto-require, flags same-channel cross-file collisions, and prevents Python param/global SyntaxError', async () => {
+    // 1. Cross-file collision when BOTH `main` and `timers` bind the SAME channel T0 + duplicate `on_start`
     setActiveHandleScripts(
       [
         {
@@ -330,6 +327,22 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
           isEntry: true,
           declaredEvents: ['on_start', 'on_timer'],
           requiredScripts: ['timers'],
+          dispatchBranches: [
+            {
+              blockType: 'poly_on_timer',
+              eventName: 'on_timer',
+              fnPrefix: 'on_timer_',
+              fnName: 'on_timer_0',
+              dupKey: '0',
+              params: ['id'],
+              conditionLua: 'id == 0',
+              conditionPython: 'id == 0',
+              commentLua: '',
+              commentPython: '',
+              scriptId: 's_main',
+              scriptName: 'main',
+            },
+          ],
         },
         {
           id: 's_timers',
@@ -337,6 +350,22 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
           isEntry: false,
           declaredEvents: ['on_start', 'on_timer'],
           requiredScripts: [],
+          dispatchBranches: [
+            {
+              blockType: 'poly_on_timer',
+              eventName: 'on_timer',
+              fnPrefix: 'on_timer_',
+              fnName: 'on_timer_0',
+              dupKey: '0',
+              params: ['id'],
+              conditionLua: 'id == 0',
+              conditionPython: 'id == 0',
+              commentLua: '',
+              commentPython: '',
+              scriptId: 's_timers',
+              scriptName: 'timers',
+            },
+          ],
         },
       ],
       's_main',
@@ -367,7 +396,6 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
       },
     });
     const res = backendRegistry.get('lua').generate(conflictWs);
-    // Handle-wide singleton uniqueness: duplicate `on_start` in sibling script is flagged!
     expect(
       res.diagnostics.some(
         (d) =>
@@ -375,19 +403,151 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
           d.id.startsWith('handle-dup-lifecycle-on_start-timers'),
       ),
     ).toBe(true);
-    // Duplicate dispatch callback `on_timer` across sibling script is also flagged!
     expect(
       res.diagnostics.some(
         (d) =>
           d.severity === 'error' &&
-          d.id.startsWith('cross-file-cb-conflict-on_timer-timers'),
+          d.id.startsWith('cross-file-branch-dup-on_timer-0-timers'),
       ),
     ).toBe(true);
     conflictWs.dispose();
 
-    // Pure hat-driven event-loop detection across the whole handle (ZERO requiresEventLoop flag needed!):
-    // `main.lua` has ONLY `on_start` calling `require("timers")` + `rt.start_timer(...)`,
-    // while `timers.lua` holds `on_timer`. `isEventDriven` MUST be true!
+    // 2. Multi-file split on DISTINCT channels (T0 in timers_a, T1 in timers_b, T2 in main):
+    //    ZERO diagnostics, auto-hoists require("timers_a") & require("timers_b") when not manually required,
+    //    and routes all 3 channels inside ONE sorted `on_timer(id)` in `main`!
+    setActiveHandleScripts(
+      [
+        {
+          id: 's_split_main',
+          name: 'main',
+          isEntry: true,
+          declaredEvents: ['on_start', 'on_timer'],
+          requiredScripts: [],
+          dispatchBranches: [],
+        },
+        {
+          id: 's_split_a',
+          name: 'timers_a',
+          isEntry: false,
+          declaredEvents: ['on_timer'],
+          requiredScripts: [],
+          dispatchBranches: [
+            {
+              blockType: 'poly_on_timer',
+              eventName: 'on_timer',
+              fnPrefix: 'on_timer_',
+              fnName: 'on_timer_0',
+              dupKey: '0',
+              params: ['id'],
+              conditionLua: 'id == 0',
+              conditionPython: 'id == 0',
+              commentLua: '',
+              commentPython: '',
+              scriptId: 's_split_a',
+              scriptName: 'timers_a',
+            },
+          ],
+        },
+        {
+          id: 's_split_b',
+          name: 'timers_b',
+          isEntry: false,
+          declaredEvents: ['on_timer'],
+          requiredScripts: [],
+          dispatchBranches: [
+            {
+              blockType: 'poly_on_timer',
+              eventName: 'on_timer',
+              fnPrefix: 'on_timer_',
+              fnName: 'on_timer_1',
+              dupKey: '1',
+              params: ['id'],
+              conditionLua: 'id == 1',
+              conditionPython: 'id == 1',
+              commentLua: '',
+              commentPython: '',
+              scriptId: 's_split_b',
+              scriptName: 'timers_b',
+            },
+          ],
+        },
+      ],
+      's_split_main',
+    );
+    const splitMainWs = loadWs({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'sp_start',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_print',
+                  id: 'sp_pr',
+                  inputs: { VALUE: { block: { type: 'text', id: 'sp_txt', fields: { TEXT: 'boot' } } } },
+                },
+              },
+            },
+          },
+          {
+            type: 'poly_on_timer',
+            id: 'sp_t2',
+            fields: { TIMER_ID: '2' },
+          },
+        ],
+      },
+    });
+    const splitLua = backendRegistry.get('lua').generate(splitMainWs);
+    expect(splitLua.diagnostics).toHaveLength(0);
+    expect(splitLua.code).toContain('require("timers_a")');
+    expect(splitLua.code).toContain('require("timers_b")');
+    expect(splitLua.code).toContain('function on_timer(id)');
+    expect(splitLua.code).toContain('if on_timer_0 then on_timer_0() end');
+    expect(splitLua.code).toContain('if on_timer_1 then on_timer_1() end');
+    expect(splitLua.code).toContain('on_timer_2()');
+
+    const splitPy = backendRegistry.get('python').generate(splitMainWs);
+    expect(splitPy.diagnostics).toHaveLength(0);
+    expect(splitPy.code).toContain('import timers_a');
+    expect(splitPy.code).toContain('import timers_b');
+    expect(splitPy.code).toContain('import sys');
+    expect(splitPy.code).toContain('_m = sys.modules.get("timers_a")');
+    expect(splitPy.code).toContain('_m = sys.modules.get("timers_b")');
+    expect(splitPy.code).toContain('on_timer_2()');
+    splitMainWs.dispose();
+
+    // 3. Python param/global SyntaxError regression check: global var named `key` inside `on_button(key, pressed)`
+    setActiveHandleScripts([], null);
+    const paramShadowWs = loadWs({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_button',
+            id: 'pb_shadow',
+            fields: { KEY: 'A', EDGE: 'press' },
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'variables_set',
+                  id: 'vs_key',
+                  fields: { VAR: { id: 'v_key' } },
+                  inputs: { VALUE: { block: { type: 'text', id: 't_k', fields: { TEXT: 'X' } } } },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [{ name: 'key', id: 'v_key' }],
+    });
+    const shadowPy = backendRegistry.get('python').generate(paramShadowWs);
+    expect(shadowPy.code).not.toContain('global key');
+    paramShadowWs.dispose();
+
+    // 4. Pure hat-driven event-loop detection across the whole handle:
     setActiveHandleScripts(
       [
         {
@@ -396,6 +556,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
           isEntry: true,
           declaredEvents: ['on_start'],
           requiredScripts: ['timers'],
+          dispatchBranches: [],
         },
         {
           id: 's_timers_hat',
@@ -403,6 +564,22 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
           isEntry: false,
           declaredEvents: ['on_timer'],
           requiredScripts: [],
+          dispatchBranches: [
+            {
+              blockType: 'poly_on_timer',
+              eventName: 'on_timer',
+              fnPrefix: 'on_timer_',
+              fnName: 'on_timer_0',
+              dupKey: '0',
+              params: ['id'],
+              conditionLua: 'id == 0',
+              conditionPython: 'id == 0',
+              commentLua: '',
+              commentPython: '',
+              scriptId: 's_timers_hat',
+              scriptName: 'timers',
+            },
+          ],
         },
       ],
       's_main_only',
