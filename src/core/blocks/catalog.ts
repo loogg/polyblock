@@ -1,7 +1,13 @@
 import * as Blockly from 'blockly';
+import { collectHandleSharedFunctionEntries } from '../backends/eventMode';
 import { extensionRegistry } from '../extensions/registry';
 import type { CoreCategoryTarget } from '../extensions/types';
-import { getActiveHandleSharedVariables } from './timerConfigBridge';
+import {
+  getActiveHandleScriptId,
+  getActiveHandleScripts,
+  getActiveHandleSharedFunctions,
+  getActiveHandleSharedVariables,
+} from './timerConfigBridge';
 
 export interface ToolboxBlockSpec {
   kind: 'block';
@@ -560,9 +566,56 @@ export function buildFlyoutToolbox(
   }
 
   if (category.custom === 'PROCEDURE' && workspace) {
+    const sharedFnNames = getActiveHandleSharedFunctions() ?? [];
+    const sharedFnSet = new Set(sharedFnNames);
+    const currentScriptId = getActiveHandleScriptId();
+    const allSharedEntries = collectHandleSharedFunctionEntries(
+      getActiveHandleScripts(),
+      sharedFnNames,
+      workspace,
+      currentScriptId,
+    );
+
     const items: Blockly.utils.toolbox.FlyoutItemInfoArray = [
       topSpacer,
-      { kind: 'label', text: '自定义函数' },
+      { kind: 'label', text: '跨文件公共函数 (同句柄共享)' },
+      {
+        kind: 'button',
+        text: '+ 新建跨文件函数',
+        callbackkey: 'CREATE_SHARED_FUNCTION',
+      },
+    ];
+
+    const seenSharedKeys = new Set<string>();
+    for (const fn of allSharedEntries) {
+      const key = `${fn.scriptId}::${fn.name}`;
+      if (seenSharedKeys.has(key)) continue;
+      seenSharedKeys.add(key);
+
+      if (!currentScriptId || fn.scriptId === currentScriptId) {
+        items.push({
+          kind: 'block',
+          type: fn.hasReturn ? 'procedures_callreturn' : 'procedures_callnoreturn',
+          extraState: { name: fn.name, params: fn.params },
+        } as unknown as Blockly.utils.toolbox.BlockInfo);
+      } else {
+        items.push({
+          kind: 'block',
+          type: fn.hasReturn
+            ? 'poly_call_shared_return'
+            : 'poly_call_shared_noreturn',
+          extraState: {
+            scriptName: fn.scriptName,
+            fnName: fn.name,
+            params: fn.params,
+          },
+        } as unknown as Blockly.utils.toolbox.BlockInfo);
+      }
+    }
+
+    items.push(
+      { kind: 'sep', gap: '16' },
+      { kind: 'label', text: '本文件私有函数 (仅本脚本)' },
       {
         kind: 'block',
         type: 'procedures_defnoreturn',
@@ -577,10 +630,11 @@ export function buildFlyoutToolbox(
         kind: 'block',
         type: 'procedures_ifreturn',
       } as unknown as Blockly.utils.toolbox.BlockInfo,
-    ];
+    );
 
     const [noReturnProcs, returnProcs] = Blockly.Procedures.allProcedures(workspace);
     for (const [name, params] of noReturnProcs) {
+      if (sharedFnSet.has(name)) continue;
       items.push({
         kind: 'block',
         type: 'procedures_callnoreturn',
@@ -588,6 +642,7 @@ export function buildFlyoutToolbox(
       } as unknown as Blockly.utils.toolbox.BlockInfo);
     }
     for (const [name, params] of returnProcs) {
+      if (sharedFnSet.has(name)) continue;
       items.push({
         kind: 'block',
         type: 'procedures_callreturn',

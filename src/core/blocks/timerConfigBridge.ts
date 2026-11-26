@@ -21,10 +21,22 @@ export interface DispatchBranchMeta {
   fnName: string;
   dupKey: string;
   params: string[];
+  /** True when the branch function accepts the dispatch event's formal parameters (e.g. `on_button(key, pressed)`). */
+  passParams?: boolean;
+  /** True when this hat declares an explicit `extractBranchFnPrefix` (always routes via branch fns, e.g. `on_timer`). */
+  alwaysExtract?: boolean;
   conditionLua: string;
   conditionPython: string;
   commentLua: string;
   commentPython: string;
+  scriptId: string;
+  scriptName: string;
+}
+
+export interface DeclaredFunctionMeta {
+  name: string;
+  params: string[];
+  hasReturn: boolean;
   scriptId: string;
   scriptName: string;
 }
@@ -37,10 +49,12 @@ export interface ActiveHandleScriptMeta {
   declaredEvents: string[];
   /** Sibling script names explicitly loaded via `poly_require_script` inside this script. */
   requiredScripts: string[];
-  /** Extracted dispatch branches (e.g. `on_timer_0`, `on_timer_1`) routed centrally by the entry script. */
+  /** Extracted dispatch branches (e.g. `on_timer_0`, `on_button_A_press`) routed centrally by the entry script. */
   dispatchBranches?: DispatchBranchMeta[];
   /** Non-parameter workspace variable names actively referenced by enabled blocks in this script. */
   declaredVariables?: string[];
+  /** Top-level custom procedures (`procedures_defnoreturn` / `procedures_defreturn`) defined in this script. */
+  declaredFunctions?: DeclaredFunctionMeta[];
 }
 
 export function normalizeTimerConfig(
@@ -87,6 +101,7 @@ let activeCapabilities: string[] | null = null;
 let activeHandleScripts: ActiveHandleScriptMeta[] = [];
 let activeHandleScriptId: string | null = null;
 let activeHandleSharedVariables: string[] | null = null;
+let activeHandleSharedFunctions: string[] | null = null;
 let activeModuleConflicts: ModuleConflictItem[] = [];
 
 export function setActiveHandleSharedVariables(names: string[] | null): void {
@@ -95,6 +110,14 @@ export function setActiveHandleSharedVariables(names: string[] | null): void {
 
 export function getActiveHandleSharedVariables(): string[] | null {
   return activeHandleSharedVariables;
+}
+
+export function setActiveHandleSharedFunctions(names: string[] | null): void {
+  activeHandleSharedFunctions = names ? [...names] : null;
+}
+
+export function getActiveHandleSharedFunctions(): string[] | null {
+  return activeHandleSharedFunctions;
 }
 
 export function setActiveModuleConflicts(conflicts: ModuleConflictItem[]): void {
@@ -125,6 +148,9 @@ export function setActiveHandleScripts(
       ? s.dispatchBranches.map((b) => ({ ...b, params: [...b.params] }))
       : [],
     declaredVariables: s.declaredVariables ? [...s.declaredVariables] : [],
+    declaredFunctions: s.declaredFunctions
+      ? s.declaredFunctions.map((f) => ({ ...f, params: [...f.params] }))
+      : [],
   }));
   activeHandleScriptId = currentScriptId;
 }

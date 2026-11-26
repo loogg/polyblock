@@ -3,9 +3,11 @@ import type { RuntimeHandle, ScriptLanguageId } from '../../types/project';
 import {
   getActiveHandleScriptId,
   getActiveHandleScripts,
+  getActiveHandleSharedFunctions,
   getActiveHandleSharedVariables,
   isCurrentHandleScriptEntry,
   type ActiveHandleScriptMeta,
+  type DeclaredFunctionMeta,
   type DispatchBranchMeta,
 } from '../blocks/timerConfigBridge';
 import { extensionRegistry } from '../extensions/registry';
@@ -41,10 +43,12 @@ export function inspectWorkspaceScriptMeta(
   requiredScripts: string[];
   dispatchBranches: DispatchBranchMeta[];
   declaredVariables: string[];
+  declaredFunctions: DeclaredFunctionMeta[];
 } {
   const declared = new Set<string>();
   const required = new Set<string>();
   const dispatchBranches: DispatchBranchMeta[] = [];
+  const declaredFunctions: DeclaredFunctionMeta[] = [];
   const usedFnNames = new Set<string>();
   const declaredVariables = new Set<string>();
 
@@ -76,11 +80,36 @@ export function inspectWorkspaceScriptMeta(
       declared.add('on_start');
       return;
     }
+    if (t === 'procedures_defnoreturn' || t === 'procedures_defreturn') {
+      const fields =
+        top.fields && typeof top.fields === 'object'
+          ? (top.fields as Record<string, unknown>)
+          : {};
+      const fnName = String(fields.NAME ?? '').trim();
+      if (fnName) {
+        const extra = top.extraState as
+          | { params?: Array<{ name?: string }> }
+          | undefined;
+        const params = Array.isArray(extra?.params)
+          ? extra.params
+              .map((p) => (typeof p?.name === 'string' ? p.name.trim() : ''))
+              .filter(Boolean)
+          : [];
+        declaredFunctions.push({
+          name: fnName,
+          params,
+          hasReturn: t === 'procedures_defreturn',
+          scriptId,
+          scriptName,
+        });
+      }
+      return;
+    }
     const hatDef = extensionRegistry.getHatBlockDef(t);
     if (!hatDef) return;
     declared.add(hatDef.hat.eventName);
 
-    if (hatDef.hat.mode === 'dispatch' && hatDef.hat.extractBranchFnPrefix) {
+    if (hatDef.hat.mode === 'dispatch') {
       const fields =
         top.fields && typeof top.fields === 'object'
           ? (top.fields as Record<string, unknown>)
@@ -105,6 +134,8 @@ export function inspectWorkspaceScriptMeta(
           fnName,
           dupKey: info.dupKey,
           params: info.params,
+          passParams: info.passParams,
+          alwaysExtract: info.alwaysExtract,
           conditionLua: info.conditionLua,
           conditionPython: info.conditionPython,
           commentLua: info.commentLua,
@@ -188,6 +219,7 @@ export function inspectWorkspaceScriptMeta(
     requiredScripts: Array.from(required),
     dispatchBranches,
     declaredVariables: Array.from(declaredVariables),
+    declaredFunctions,
   };
 }
 
@@ -205,8 +237,64 @@ export function buildHandleScriptsMeta(
       requiredScripts: meta.requiredScripts,
       dispatchBranches: meta.dispatchBranches,
       declaredVariables: meta.declaredVariables,
+      declaredFunctions: meta.declaredFunctions,
     };
   });
+}
+
+/**
+ * Resolves all cross-file shared custom functions defined across every script in the active handle
+ * (merging live procedures from `liveWorkspace` for the current script).
+ */
+export function collectHandleSharedFunctionEntries(
+  scriptsMeta: ActiveHandleScriptMeta[],
+  explicitSharedFnNames?: string[] | null,
+  liveWorkspace?: Blockly.Workspace,
+  liveScriptId?: string | null,
+): DeclaredFunctionMeta[] {
+  const sharedNames =
+    explicitSharedFnNames !== undefined
+      ? explicitSharedFnNames
+      : getActiveHandleSharedFunctions();
+  if (!sharedNames || sharedNames.length === 0) return [];
+  const sharedSet = new Set(sharedNames);
+  const currentId = liveScriptId ?? getActiveHandleScriptId();
+  const out: DeclaredFunctionMeta[] = [];
+
+  for (const scr of scriptsMeta) {
+    if (liveWorkspace && currentId && scr.id === currentId) {
+      for (const top of liveWorkspace.getTopBlocks(true)) {
+        if (top.isShadow() || !top.isEnabled()) continue;
+        if (
+          top.type !== 'procedures_defnoreturn' &&
+          top.type !== 'procedures_defreturn'
+        ) {
+          continue;
+        }
+        const proc = top as Blockly.Block & {
+          getProcedureDef?: () => [string, string[], boolean];
+        };
+        const def = proc.getProcedureDef?.();
+        const name = (def?.[0] ?? String(top.getFieldValue('NAME') || '')).trim();
+        if (name && sharedSet.has(name)) {
+          out.push({
+            name,
+            params: Array.isArray(def?.[1]) ? [...def[1]] : [],
+            hasReturn: top.type === 'procedures_defreturn',
+            scriptId: scr.id,
+            scriptName: scr.name,
+          });
+        }
+      }
+    } else {
+      for (const fn of scr.declaredFunctions ?? []) {
+        if (sharedSet.has(fn.name)) {
+          out.push(fn);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /** Collects non-parameter workspace variable names actively used by enabled blocks in a live workspace. */
@@ -460,6 +548,8 @@ export function buildEntryDispatchRouters(
       fnName,
       dupKey: info.dupKey,
       params: info.params,
+      passParams: info.passParams,
+      alwaysExtract: info.alwaysExtract,
       conditionLua: info.conditionLua,
       conditionPython: info.conditionPython,
       commentLua: info.commentLua,
@@ -486,12 +576,25 @@ export function buildEntryDispatchRouters(
     return { autoImports: [], routerCode: '' };
   }
 
-  // Group branches by `eventName` (e.g. 'on_timer')
+  // Group branches by `eventName` (e.g. 'on_timer', 'on_button', custom dispatch hats)
   const byEvent = new Map<string, AggregatedBranch[]>();
   for (const br of allBranches) {
     const list = byEvent.get(br.eventName) ?? [];
     list.push(br);
     byEvent.set(br.eventName, list);
+  }
+
+  // Keep ONLY event groups that route centrally via extracted branch functions:
+  // either `alwaysExtract` (e.g. `on_timer`) OR at least one branch lives in a sibling script!
+  const routedEvents = new Map<string, AggregatedBranch[]>();
+  for (const [evName, list] of byEvent.entries()) {
+    if (list.some((b) => b.alwaysExtract || !b.isLocal)) {
+      routedEvents.set(evName, list);
+    }
+  }
+
+  if (routedEvents.size === 0) {
+    return { autoImports: [], routerCode: '' };
   }
 
   const manuallyRequired = collectLiveRequiredScripts(workspace);
@@ -505,14 +608,16 @@ export function buildEntryDispatchRouters(
   };
 
   let hasAnySiblingBranch = false;
-  for (const br of allBranches) {
-    if (!br.isLocal) {
-      hasAnySiblingBranch = true;
-      if (!manuallyRequired.has(br.scriptName)) {
-        if (language === 'lua') {
-          addImport(`require(${JSON.stringify(br.scriptName)})`);
-        } else {
-          addImport(`import ${sanitizePyIdent(br.scriptName)}`);
+  for (const list of routedEvents.values()) {
+    for (const br of list) {
+      if (!br.isLocal) {
+        hasAnySiblingBranch = true;
+        if (!manuallyRequired.has(br.scriptName)) {
+          if (language === 'lua') {
+            addImport(`require(${JSON.stringify(br.scriptName)})`);
+          } else {
+            addImport(`import ${sanitizePyIdent(br.scriptName)}`);
+          }
         }
       }
     }
@@ -522,7 +627,7 @@ export function buildEntryDispatchRouters(
   }
 
   const routerBlocks: string[] = [];
-  for (const [eventName, rawBranches] of byEvent.entries()) {
+  for (const [eventName, rawBranches] of routedEvents.entries()) {
     // Sort deterministically by numeric dupKey when possible (T0, T1, T2...)
     const sorted = [...rawBranches].sort((a, b) => {
       const na = Number(a.dupKey);
@@ -536,14 +641,15 @@ export function buildEntryDispatchRouters(
       const lines: string[] = [];
       sorted.forEach((br, idx) => {
         const kw = idx === 0 ? 'if' : 'elseif';
+        const callArgs = br.passParams ? paramsStr : '';
         const srcTag = br.isLocal
           ? ''
           : br.commentLua
             ? ` (${br.scriptName}.lua)`
             : ` -- ${br.scriptName}.lua`;
         const callLine = br.isLocal
-          ? `    ${br.fnName}()`
-          : `    if ${br.fnName} then ${br.fnName}() end`;
+          ? `    ${br.fnName}(${callArgs})`
+          : `    if ${br.fnName} then ${br.fnName}(${callArgs}) end`;
         lines.push(`  ${kw} ${br.conditionLua} then${br.commentLua}${srcTag}\n${callLine}`);
       });
       routerBlocks.push(
@@ -554,13 +660,16 @@ export function buildEntryDispatchRouters(
       const lines: string[] = [];
       sorted.forEach((br, idx) => {
         const kw = idx === 0 ? 'if' : 'elif';
+        const callArgs = br.passParams ? paramsStr : '';
         const srcTag = br.isLocal
           ? ''
           : br.commentPython
             ? ` (${br.scriptName}.py)`
             : `  # ${br.scriptName}.py`;
         if (br.isLocal) {
-          const callExpr = debugPass ? `await ${br.fnName}()` : `${br.fnName}()`;
+          const callExpr = debugPass
+            ? `await ${br.fnName}(${callArgs})`
+            : `${br.fnName}(${callArgs})`;
           lines.push(`  ${kw} ${br.conditionPython}:${br.commentPython}${srcTag}\n    ${callExpr}`);
         } else {
           const modKey = JSON.stringify(sanitizePyIdent(br.scriptName));
@@ -569,7 +678,7 @@ export function buildEntryDispatchRouters(
               `  ${kw} ${br.conditionPython}:${br.commentPython}${srcTag}\n` +
                 `    _m = sys.modules.get(${modKey})\n` +
                 `    if _m and hasattr(_m, ${JSON.stringify(br.fnName)}):\n` +
-                `      _ret = getattr(_m, ${JSON.stringify(br.fnName)})()\n` +
+                `      _ret = getattr(_m, ${JSON.stringify(br.fnName)})(${callArgs})\n` +
                 `      if hasattr(_ret, 'send'):\n` +
                 `        await _ret`,
             );
@@ -578,7 +687,7 @@ export function buildEntryDispatchRouters(
               `  ${kw} ${br.conditionPython}:${br.commentPython}${srcTag}\n` +
                 `    _m = sys.modules.get(${modKey})\n` +
                 `    if _m and hasattr(_m, ${JSON.stringify(br.fnName)}):\n` +
-                `      _m.${br.fnName}()`,
+                `      _m.${br.fnName}(${callArgs})`,
             );
           }
         }

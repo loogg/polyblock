@@ -1,4 +1,5 @@
 import type * as Blockly from 'blockly';
+import { sanitizeLocalIdent } from './scopeAnalysis';
 
 /**
  * Shared transient codegen pass context read by both core generators and
@@ -18,6 +19,8 @@ export interface CodegenPassContext {
   pythonSharedVarIdents: Set<string>;
   /** Sanitized identifiers of variables actively referenced by enabled blocks in the current workspace. */
   pythonUsedVarIdents: Set<string> | null;
+  /** Per-root-block Lua `poly_local_set` idents hoisted to function top (nested in if/for/while). */
+  luaHoistedLocalsByRoot: Map<string, Set<string>>;
 }
 
 export const codegenContext: CodegenPassContext = {
@@ -29,6 +32,7 @@ export const codegenContext: CodegenPassContext = {
   pythonSharedVarIdToAttr: new Map<string, string>(),
   pythonSharedVarIdents: new Set<string>(),
   pythonUsedVarIdents: null,
+  luaHoistedLocalsByRoot: new Map<string, Set<string>>(),
 };
 
 export function resetCodegenPassContext(opts: {
@@ -53,6 +57,76 @@ export function resetCodegenPassContext(opts: {
   );
   codegenContext.pythonUsedVarIdents =
     opts.pythonUsedVarIdents !== undefined ? opts.pythonUsedVarIdents : null;
+  codegenContext.luaHoistedLocalsByRoot = new Map<string, Set<string>>();
+}
+
+/**
+ * Computes Lua function-top `local a, b\n` hoisting ONLY for `poly_local_set` variables
+ * whose assignments occur inside nested control blocks (`if`/`for`/`while`) rather than
+ * directly in the function's top statement chain. Prevents Lua block-scoping from leaking
+ * variables into `_G` across `if/else` branches while keeping flat top-level `local x = ...` idiomatic.
+ */
+export function buildLuaHoistedLocalsLine(
+  rootBlocks: Blockly.Block[],
+  bodyInputName = 'BODY',
+  indent = '  ',
+): string {
+  const hoisted: string[] = [];
+  const seen = new Set<string>();
+
+  for (const root of rootBlocks) {
+    const bodyRoot = root.getInputTargetBlock(bodyInputName);
+    if (!bodyRoot) continue;
+
+    // Collect direct top-level chain statement IDs (blocks whose surround parent IS `root`)
+    const directAssignedBeforeNested = new Set<string>();
+    const needsHoist = new Set<string>();
+
+    const walkChain = (blk: Blockly.Block | null, nested: boolean) => {
+      let cur = blk;
+      while (cur) {
+        if (!cur.isShadow() && cur.isEnabled()) {
+          if (cur.type === 'poly_local_set') {
+            const ident = sanitizeLocalIdent(
+              String(cur.getFieldValue('NAME') || 'tmp'),
+            );
+            if (!nested && !needsHoist.has(ident)) {
+              directAssignedBeforeNested.add(ident);
+            } else if (nested && !directAssignedBeforeNested.has(ident)) {
+              needsHoist.add(ident);
+            }
+          }
+          // Traverse nested statement inputs (DO, DO0, ELSE, STACK, etc.)
+          for (const inp of cur.inputList) {
+            if (inp.connection?.type === 3 /* NEXT_STATEMENT */) {
+              const target = inp.connection.targetBlock();
+              if (target) walkChain(target, true);
+            }
+          }
+        }
+        cur = cur.getNextBlock();
+      }
+    };
+    walkChain(bodyRoot, false);
+
+    if (needsHoist.size > 0) {
+      let rootSet = codegenContext.luaHoistedLocalsByRoot.get(root.id);
+      if (!rootSet) {
+        rootSet = new Set<string>();
+        codegenContext.luaHoistedLocalsByRoot.set(root.id, rootSet);
+      }
+      for (const ident of needsHoist) {
+        rootSet.add(ident);
+        if (!seen.has(ident)) {
+          seen.add(ident);
+          hoisted.push(ident);
+        }
+      }
+    }
+  }
+
+  if (hoisted.length === 0) return '';
+  return `${indent}local ${hoisted.join(', ')}\n`;
 }
 
 /**

@@ -346,11 +346,17 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     if (mountedModuleNames.length > 0) {
       mp.runPython(`
 import sys
-for _mn in ${JSON.stringify(mountedModuleNames)}:
+for _mn in ${JSON.stringify([...mountedModuleNames, '_poly_rt'])}:
   if _mn in sys.modules:
     del sys.modules[_mn]
 `);
       mountedModuleNames = [];
+    } else {
+      mp.runPython(`
+import sys
+if '_poly_rt' in sys.modules:
+  del sys.modules['_poly_rt']
+`);
     }
 
     // Helper to register dotted module paths (`utils.crc16`) cleanly in sys.modules

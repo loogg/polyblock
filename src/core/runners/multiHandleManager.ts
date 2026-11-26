@@ -3,7 +3,6 @@ import type {
   DiagnosticItem,
   LogLevel,
   ProjectModel,
-  ProjectScript,
   RuntimeHandle,
   RuntimeTelemetry,
   ScriptLanguageId,
@@ -16,6 +15,7 @@ import {
 import {
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
+  setActiveHandleSharedFunctions,
   setActiveHandleSharedVariables,
 } from '../blocks/timerConfigBridge';
 import { collectHandleSharedVariableNames } from '../projects/handleVariables';
@@ -38,6 +38,7 @@ export function compileScriptHeadless(
 ): {
   code: string;
   debugCode: string;
+  moduleDebugCode: string;
   isEventDriven: boolean;
   diagnostics: DiagnosticItem[];
 } {
@@ -49,6 +50,7 @@ export function compileScriptHeadless(
     return {
       code: res.code,
       debugCode: res.debugCode || res.code,
+      moduleDebugCode: res.moduleDebugCode || res.code,
       isEventDriven: Boolean(res.isEventDriven),
       diagnostics: res.diagnostics,
     };
@@ -58,24 +60,22 @@ export function compileScriptHeadless(
 }
 
 /**
- * Compiles sibling scripts within the SAME handle (plus optional project sharedModules)
- * into isolated per-handle preload modules so `require("helper")` / `import helper`
- * works strictly within that handle without leaking across handles.
+ * Compiles sibling scripts within the SAME handle into isolated per-handle preload modules
+ * so `require("helper")` / `import helper` works strictly within that handle without leaking across handles.
+ * When `useDebugCompanion` is true (default for sandbox), companion scripts use `moduleDebugCode` so
+ * breakpoints, live highlighting, and Python callback watchdog protection work across companion files!
  */
 export function buildHandleScriptModules(
   handle: RuntimeHandle,
   excludeScriptId: string,
   language: ScriptLanguageId,
-  sharedModules: ProjectScript[] = [],
   defaultTimerCount = 8,
   channelPoolConfigs?: Record<string, ReturnType<typeof getHandleTimerConfig>>,
   liveScriptOverride?: { scriptId: string; workspace: Record<string, unknown> },
+  useDebugCompanion = true,
 ): ExtensionModuleSource[] {
   const modules: ExtensionModuleSource[] = [];
-  const candidates = [
-    ...sharedModules,
-    ...handle.scripts.filter((s) => s.id !== excludeScriptId),
-  ];
+  const candidates = handle.scripts.filter((s) => s.id !== excludeScriptId);
   const poolCfgs = channelPoolConfigs ?? {
     [CAP_RT_TIMERS]: getHandleTimerConfig(handle, defaultTimerCount),
   };
@@ -92,6 +92,7 @@ export function buildHandleScriptModules(
   const handleMetas = buildHandleScriptsMeta(effectiveHandle);
   const sharedVars = collectHandleSharedVariableNames(effectiveHandle);
   setActiveHandleSharedVariables(sharedVars);
+  setActiveHandleSharedFunctions(effectiveHandle.sharedFunctions ?? []);
 
   if (language === 'python') {
     const sharedMod = buildHandlePythonSharedModule(effectiveHandle);
@@ -111,10 +112,11 @@ export function buildHandleScriptModules(
           : script.workspace;
       setActiveHandleScripts(handleMetas, script.id);
       const compiled = compileScriptHeadless(wsJson, language, poolCfgs);
+      const src = useDebugCompanion ? compiled.moduleDebugCode : compiled.code;
       modules.push({
         moduleName: script.name,
-        luaSource: language === 'lua' ? compiled.code : undefined,
-        pythonSource: language === 'python' ? compiled.code : undefined,
+        luaSource: language === 'lua' ? src : undefined,
+        pythonSource: language === 'python' ? src : undefined,
       });
     } catch {
       // skip uncompilable auxiliary module gracefully
@@ -200,6 +202,7 @@ export class MultiHandleRunnerOrchestrator {
       );
       setActiveChannelPoolConfigs(poolCfgs);
       setActiveHandleSharedVariables(collectHandleSharedVariableNames(handle));
+      setActiveHandleSharedFunctions(handle.sharedFunctions ?? []);
       const scriptMetas = buildHandleScriptsMeta(handle);
       setActiveHandleScripts(scriptMetas, entryScript.id);
       const compiled = compileScriptHeadless(
@@ -211,7 +214,6 @@ export class MultiHandleRunnerOrchestrator {
         handle,
         entryScript.id,
         project.language,
-        project.sharedModules,
         project.defaultTimerCount,
         poolCfgs,
       );

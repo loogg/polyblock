@@ -222,10 +222,109 @@ export function registerPolyBlocks(): void {
       this.setInputsInline(true);
       this.setStyle('event_stmt_blocks');
       this.setTooltip(
-        '加载同句柄内的其他脚本（Lua 导出 require("名称")），将其中的全局事件回调或函数注册到本句柄 _G（零闭包，兼容无文件系统与有文件系统后端）。可放在「当程序启动」中或画布顶层。',
+        '加载同句柄内的其他脚本（Lua 导出 require("名称")，Python 导出 import 名称）。可放在「当程序启动」或条件分支内实现按需加载。',
       );
     },
   };
+
+  // Cross-file shared function call blocks (statement & return-value variants).
+  // Unlike Blockly's built-in `procedures_call*`, these NEVER auto-spawn ghost `procedures_def*`
+  // blocks in the calling script and explicitly record `{ scriptName, fnName, params }`.
+  interface SharedFnCallBlock extends Blockly.Block {
+    sharedFnMeta_?: { scriptName: string; fnName: string; params: string[] };
+    rebuildSharedCallShape_?: () => void;
+  }
+
+  const registerSharedFnCallBlock = (blockType: string, hasReturn: boolean) => {
+    Blockly.Blocks[blockType] = {
+      init(this: SharedFnCallBlock) {
+        this.sharedFnMeta_ = {
+          scriptName: 'utils',
+          fnName: 'my_func',
+          params: [],
+        };
+        this.setInputsInline(true);
+        this.setStyle('procedure_blocks');
+        if (hasReturn) {
+          this.setOutput(true, null);
+        } else {
+          this.setPreviousStatement(true, null);
+          this.setNextStatement(true, null);
+        }
+        this.rebuildSharedCallShape_ = () => {
+          const meta = this.sharedFnMeta_ ?? {
+            scriptName: 'utils',
+            fnName: 'my_func',
+            params: [],
+          };
+          const existingNames = this.inputList.map((inp) => inp.name);
+          for (const name of existingNames) {
+            if (name === 'HEADER') {
+              this.removeInput(name, true);
+            }
+          }
+          // Keep/update header at top
+          const header = this.appendDummyInput('HEADER');
+          header.appendField('跨文件调用');
+          header.appendField(`${meta.scriptName}.${meta.fnName}`);
+
+          // Remove stale ARG inputs beyond params.length
+          for (const inp of [...this.inputList]) {
+            if (inp.name.startsWith('ARG')) {
+              const idx = Number(inp.name.slice(3));
+              if (!Number.isInteger(idx) || idx < 0 || idx >= meta.params.length) {
+                this.removeInput(inp.name, true);
+              }
+            }
+          }
+
+          meta.params.forEach((pName, idx) => {
+            const argInputName = `ARG${idx}`;
+            let inp = this.getInput(argInputName);
+            if (!inp) {
+              inp = this.appendValueInput(argInputName);
+              inp.appendField(`${pName}:`);
+            } else if (inp.fieldRow[0]) {
+              inp.fieldRow[0].setValue(`${pName}:`);
+            }
+            this.moveInputBefore(argInputName, null);
+          });
+
+          if (meta.params.length > 0) {
+            this.moveInputBefore('HEADER', 'ARG0');
+          }
+
+          this.setTooltip(
+            `调用同句柄跨文件公共函数 ${meta.scriptName}.${meta.fnName}(${meta.params.join(', ')})；Lua 直接调用全局函数并按需 require("${meta.scriptName}")，Python 调用 ${meta.scriptName}.${meta.fnName}(...) 并按需 import ${meta.scriptName}。`,
+          );
+        };
+        this.rebuildSharedCallShape_();
+      },
+      saveExtraState(this: SharedFnCallBlock) {
+        return {
+          scriptName: this.sharedFnMeta_?.scriptName ?? 'utils',
+          fnName: this.sharedFnMeta_?.fnName ?? 'my_func',
+          params: [...(this.sharedFnMeta_?.params ?? [])],
+        };
+      },
+      loadExtraState(
+        this: SharedFnCallBlock,
+        state: { scriptName?: string; fnName?: string; params?: string[] },
+      ) {
+        this.sharedFnMeta_ = {
+          scriptName: String(state?.scriptName ?? 'utils').trim() || 'utils',
+          fnName: String(state?.fnName ?? 'my_func').trim() || 'my_func',
+          params: Array.isArray(state?.params)
+            ? state.params.map((p) => String(p))
+            : [],
+        };
+        this.rebuildSharedCallShape_?.();
+      },
+    };
+  };
+
+  registerSharedFnCallBlock('poly_call_shared_noreturn', false);
+  registerSharedFnCallBlock('poly_call_shared_return', true);
 
   // Align selected built-in block styles with our MicroBlocks palette
   const styleOverrides: Record<string, string> = {

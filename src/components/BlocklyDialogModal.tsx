@@ -1,4 +1,12 @@
-import { AlertTriangle, FileCode2, Globe, Info, Variable, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Code2,
+  FileCode2,
+  Globe,
+  Info,
+  Variable,
+  X,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   validateSharedVariableName,
@@ -10,6 +18,10 @@ export type BlocklyDialogRequest =
       kind: 'create-variable';
       initialScope: VariableScopeKind;
       onConfirm: (name: string, scope: VariableScopeKind) => void;
+    }
+  | {
+      kind: 'create-function';
+      onConfirm: (name: string, hasReturn: boolean) => void;
     }
   | {
       kind: 'prompt';
@@ -36,6 +48,7 @@ interface BlocklyDialogModalProps {
   handleSharedVars: string[];
   currentScriptVars: string[];
   allHandleVars: string[];
+  allHandleFunctions?: string[];
   onClose: () => void;
 }
 
@@ -47,6 +60,7 @@ export function BlocklyDialogModal({
   handleSharedVars,
   currentScriptVars,
   allHandleVars,
+  allHandleFunctions = [],
   onClose,
 }: BlocklyDialogModalProps) {
   const [draft, setDraft] = useState(
@@ -55,6 +69,7 @@ export function BlocklyDialogModal({
   const [scope, setScope] = useState<VariableScopeKind>(
     request.kind === 'create-variable' ? request.initialScope : 'file',
   );
+  const [fnHasReturn, setFnHasReturn] = useState<boolean>(false);
   const [touched, setTouched] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -63,8 +78,15 @@ export function BlocklyDialogModal({
     if (request.kind === 'create-variable') {
       setScope(request.initialScope);
     }
+    if (request.kind === 'create-function') {
+      setFnHasReturn(false);
+    }
     setTouched(false);
-    if (request.kind === 'create-variable' || request.kind === 'prompt') {
+    if (
+      request.kind === 'create-variable' ||
+      request.kind === 'create-function' ||
+      request.kind === 'prompt'
+    ) {
       requestAnimationFrame(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -73,6 +95,7 @@ export function BlocklyDialogModal({
   }, [request]);
 
   const isCreateVar = request.kind === 'create-variable';
+  const isCreateFn = request.kind === 'create-function';
   const isPrompt = request.kind === 'prompt';
   const isVariablePrompt =
     isCreateVar ||
@@ -95,8 +118,16 @@ export function BlocklyDialogModal({
       : 'file';
 
   const validation = useMemo(() => {
-    if (!isCreateVar && !isPrompt) {
+    if (!isCreateVar && !isCreateFn && !isPrompt) {
       return { valid: true, trimmed: '' } as const;
+    }
+    if (isCreateFn) {
+      return validateSharedVariableName(
+        draft,
+        allHandleFunctions,
+        undefined,
+        '跨文件公共函数',
+      );
     }
     if (!isVariablePrompt) {
       return draft.trim()
@@ -116,11 +147,13 @@ export function BlocklyDialogModal({
       scopeLabel,
     );
   }, [
+    allHandleFunctions,
     allHandleVars,
     currentScriptVars,
     draft,
     effectiveScope,
     handleSharedVars,
+    isCreateFn,
     isCreateVar,
     isPrompt,
     isRenamePrompt,
@@ -143,6 +176,16 @@ export function BlocklyDialogModal({
         return;
       }
       request.onConfirm(validation.trimmed, scope);
+      onClose();
+      return;
+    }
+    if (request.kind === 'create-function') {
+      setTouched(true);
+      if (!validation.valid) {
+        inputRef.current?.focus();
+        return;
+      }
+      request.onConfirm(validation.trimmed, fnHasReturn);
       onClose();
       return;
     }
@@ -173,7 +216,8 @@ export function BlocklyDialogModal({
       } else if (
         e.key === 'Enter' &&
         request.kind !== 'prompt' &&
-        request.kind !== 'create-variable'
+        request.kind !== 'create-variable' &&
+        request.kind !== 'create-function'
       ) {
         e.preventDefault();
         confirm();
@@ -183,21 +227,23 @@ export function BlocklyDialogModal({
     return () => window.removeEventListener('keydown', onKeyDown);
   });
 
-  const modalTitle = isCreateVar
-    ? scope === 'shared'
-      ? '新建跨文件全局变量'
-      : '新建单文件全局变量'
-    : isPrompt
-      ? isRenamePrompt
-        ? renamingIsShared
-          ? '重命名跨文件全局变量'
-          : '重命名单文件全局变量'
-        : isVariablePrompt
-          ? '新建变量'
-          : request.message
-      : request.kind === 'confirm'
-        ? '请确认操作'
-        : '提示';
+  const modalTitle = isCreateFn
+    ? '新建跨文件公共函数'
+    : isCreateVar
+      ? scope === 'shared'
+        ? '新建跨文件全局变量'
+        : '新建单文件全局变量'
+      : isPrompt
+        ? isRenamePrompt
+          ? renamingIsShared
+            ? '重命名跨文件全局变量'
+            : '重命名单文件全局变量'
+          : isVariablePrompt
+            ? '新建变量'
+            : request.message
+        : request.kind === 'confirm'
+          ? '请确认操作'
+          : '提示';
 
   const isDeleteConfirm =
     request.kind === 'confirm' &&
@@ -217,7 +263,9 @@ export function BlocklyDialogModal({
       <div className="modal-shell alias-modal" style={{ maxWidth: 440 }}>
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-            {isCreateVar || isPrompt ? (
+            {isCreateFn ? (
+              <Code2 size={15} style={{ color: '#4f46e5' }} />
+            ) : isCreateVar || isPrompt ? (
               <Variable size={15} style={{ color: '#db2777' }} />
             ) : request.kind === 'confirm' ? (
               <AlertTriangle size={15} style={{ color: 'var(--warn)' }} />
@@ -245,7 +293,7 @@ export function BlocklyDialogModal({
             gap: 11,
           }}
         >
-          {isCreateVar || isPrompt ? (
+          {isCreateVar || isCreateFn || isPrompt ? (
             <>
               {isCreateVar && (
                 <div className="var-scope-switcher" role="radiogroup" aria-label="选择变量作用域">
@@ -274,7 +322,34 @@ export function BlocklyDialogModal({
                 </div>
               )}
 
-              {isVariablePrompt && (
+              {isCreateFn && (
+                <div className="var-scope-switcher" role="radiogroup" aria-label="选择函数返回类型">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={!fnHasReturn}
+                    className={`var-scope-option ${!fnHasReturn ? 'active' : ''}`}
+                    onClick={() => setFnHasReturn(false)}
+                  >
+                    <Code2 size={13} />
+                    <span>无返回值</span>
+                    <small>语句调用</small>
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={fnHasReturn}
+                    className={`var-scope-option ${fnHasReturn ? 'active' : ''}`}
+                    onClick={() => setFnHasReturn(true)}
+                  >
+                    <Globe size={13} />
+                    <span>带返回值</span>
+                    <small>表达式返回</small>
+                  </button>
+                </div>
+              )}
+
+              {(isVariablePrompt || isCreateFn) && (
                 <div
                   style={{
                     display: 'flex',
@@ -292,15 +367,17 @@ export function BlocklyDialogModal({
                       style={{ background: handleColor }}
                     />
                     <strong>
-                      {effectiveScope === 'shared'
+                      {isCreateFn || effectiveScope === 'shared'
                         ? handleName
                         : `${handleName}/${activeScriptLabel}`}
                     </strong>
                   </span>
                   <span className="count-badge">
-                    {effectiveScope === 'shared'
-                      ? '跨文件全局 · 同句柄共享'
-                      : '单文件全局 · 仅本脚本'}
+                    {isCreateFn
+                      ? '跨文件公共函数 · 同句柄共享'
+                      : effectiveScope === 'shared'
+                        ? '跨文件全局 · 同句柄共享'
+                        : '单文件全局 · 仅本脚本'}
                   </span>
                 </div>
               )}
@@ -315,7 +392,11 @@ export function BlocklyDialogModal({
                 }}
               >
                 <span>
-                  {isPrompt ? request.message : '新变量的名称：'}
+                  {isCreateFn
+                    ? '新函数的名称：'
+                    : isPrompt
+                      ? request.message
+                      : '新变量的名称：'}
                 </span>
                 <input
                   ref={inputRef}
@@ -331,11 +412,13 @@ export function BlocklyDialogModal({
                       touched && !validation.valid ? 'var(--danger)' : undefined,
                   }}
                   placeholder={
-                    isVariablePrompt
-                      ? effectiveScope === 'shared'
-                        ? '输入跨文件变量名（如 led_on、ticks、状态）'
-                        : '输入单文件变量名（如 total、step、计数）'
-                      : '请输入内容'
+                    isCreateFn
+                      ? '输入跨文件函数名（如 clamp、format_msg、calc_crc）'
+                      : isVariablePrompt
+                        ? effectiveScope === 'shared'
+                          ? '输入跨文件变量名（如 led_on、ticks、状态）'
+                          : '输入单文件变量名（如 total、step、计数）'
+                        : '请输入内容'
                   }
                   maxLength={32}
                   value={draft}
@@ -363,6 +446,10 @@ export function BlocklyDialogModal({
                 >
                   {validation.error}
                 </div>
+              ) : isCreateFn ? (
+                <p className="settings-hint" style={{ margin: 0 }}>
+                  将在当前脚本「{activeScriptLabel}」中创建并向句柄「{handleName}」内所有脚本共享：Lua 导出全局 <code>function</code>，Python 导出模块函数并自动以 <code>模块名.函数名()</code> 跨文件调用。右键函数定义块可随时在私有/公共间切换。
+                </p>
               ) : isVariablePrompt ? (
                 <p className="settings-hint" style={{ margin: 0 }}>
                   {effectiveScope === 'shared' ? (

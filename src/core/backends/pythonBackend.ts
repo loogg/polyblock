@@ -12,7 +12,10 @@ import {
   isEventDrivenWorkspace,
   resolveHandleSharedPythonVars,
 } from './eventMode';
-import { getActiveHandleScripts } from '../blocks/timerConfigBridge';
+import {
+  getActiveHandleScriptId,
+  getActiveHandleScripts,
+} from '../blocks/timerConfigBridge';
 import {
   analyzeWorkspaceScopes,
   sanitizeLocalIdent,
@@ -26,6 +29,25 @@ import {
 import type { GeneratedCodeResult, ScriptBackendAdapter } from './types';
 
 let pythonGeneratorsRegistered = false;
+let pySharedFnRequiredScripts = new Set<string>();
+
+function getCurrentPyScriptName(): string {
+  const curId = getActiveHandleScriptId();
+  if (!curId) return '';
+  return getActiveHandleScripts().find((s) => s.id === curId)?.name ?? '';
+}
+
+function collectManualPyRequireScripts(workspace: Blockly.Workspace): Set<string> {
+  const out = new Set<string>();
+  for (const blk of workspace.getAllBlocks(false)) {
+    if (blk.isShadow() || !blk.isEnabled()) continue;
+    if (blk.type === 'poly_require_script') {
+      const name = String(blk.getFieldValue('SCRIPT') || '').trim();
+      if (name) out.add(name);
+    }
+  }
+  return out;
+}
 
 function registerPythonBlockGenerators(): void {
   if (pythonGeneratorsRegistered) return;
@@ -163,7 +185,10 @@ function registerPythonBlockGenerators(): void {
   };
 
   pythonGenerator.forBlock['poly_clear_log'] = () => {
-    return `print("__POLYBLOCK_CLEAR__")\n`;
+    if (codegenContext.debugPass) {
+      return `print("__POLYBLOCK_CLEAR__")\n`;
+    }
+    return `# 清空控制台（仅 PolyBlock 沙箱调试生效）\n`;
   };
 
   pythonGenerator.forBlock['poly_repeat_times'] = (block, generator) => {
@@ -208,14 +233,8 @@ function registerPythonBlockGenerators(): void {
     if (codegenContext.debugPass) {
       return `await _poly_sleep_ms(${ms})\n`;
     }
-    (generator as unknown as { definitions_: Record<string, string> }).definitions_['import_time'] =
-      'import time';
-    const msNum = Number(ms.trim());
-    if (!Number.isNaN(msNum) && Number.isFinite(msNum)) {
-      const secs = Number((msNum / 1000).toFixed(4));
-      return `time.sleep(${secs})\n`;
-    }
-    return `time.sleep((${ms}) / 1000)\n`;
+    // Unified coroutine ABI with Lua: `sleep_ms(ms)` is provided by the host runtime inside `on_start`
+    return `sleep_ms(${ms})\n`;
   };
 
   const origPyWhileUntil = pythonGenerator.forBlock['controls_whileUntil'];
@@ -349,6 +368,54 @@ function registerPythonBlockGenerators(): void {
     };
   }
 
+  const emitPySharedFnCall = (
+    block: Blockly.Block,
+    generator: typeof pythonGenerator,
+    asExpr: boolean,
+  ): string => {
+    const meta = (
+      block as Blockly.Block & {
+        sharedFnMeta_?: { scriptName: string; fnName: string; params: string[] };
+      }
+    ).sharedFnMeta_ ?? { scriptName: 'utils', fnName: 'my_func', params: [] };
+    const curScriptName = getCurrentPyScriptName();
+    const fnIdent = generator.getProcedureName(meta.fnName);
+    const args = meta.params.map(
+      (_p, idx) => generator.valueToCode(block, `ARG${idx}`, Order.NONE) || 'None',
+    );
+    const argsStr = args.join(', ');
+    if (!meta.scriptName || meta.scriptName === curScriptName) {
+      if (codegenContext.debugPass) {
+        return asExpr
+          ? `(await ${fnIdent}(${argsStr}))`
+          : `await ${fnIdent}(${argsStr})`;
+      }
+      return `${fnIdent}(${argsStr})`;
+    }
+    pySharedFnRequiredScripts.add(meta.scriptName);
+    const pyMod = sanitizeLocalIdent(meta.scriptName);
+    if (codegenContext.debugPass) {
+      const callArgs = argsStr
+        ? `${JSON.stringify(pyMod)}, ${JSON.stringify(fnIdent)}, ${argsStr}`
+        : `${JSON.stringify(pyMod)}, ${JSON.stringify(fnIdent)}`;
+      return asExpr
+        ? `(await _poly_call_mod(${callArgs}))`
+        : `await _poly_call_mod(${callArgs})`;
+    }
+    return `${pyMod}.${fnIdent}(${argsStr})`;
+  };
+
+  pythonGenerator.forBlock['poly_call_shared_noreturn'] = (block, generator) => {
+    return `${emitPySharedFnCall(block, generator, false)}\n`;
+  };
+
+  pythonGenerator.forBlock['poly_call_shared_return'] = (block, generator) => {
+    return [
+      emitPySharedFnCall(block, generator, true),
+      codegenContext.debugPass ? Order.ATOMIC : Order.FUNCTION_CALL,
+    ];
+  };
+
   pythonGeneratorsRegistered = true;
 }
 
@@ -481,11 +548,13 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
     const nonSharedVarIdents: string[] = [];
     const usedVarIdents = new Set<string>();
 
+    const manualRequires = collectManualPyRequireScripts(workspace);
     try {
       resetCodegenPassContext({
         debugPass: false,
         eventDrivenMode: eventDriven,
       });
+      pySharedFnRequiredScripts = new Set();
       pythonGenerator.init(workspace);
       const usedVarIds = new Set<string>();
       for (const blk of workspace.getAllBlocks(false)) {
@@ -494,6 +563,14 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
           if (!blk.getField(fName)) continue;
           const vId = blk.getFieldValue(fName);
           if (vId) usedVarIds.add(String(vId));
+        }
+        for (const inp of blk.inputList) {
+          for (const field of inp.fieldRow) {
+            if (field instanceof Blockly.FieldVariable) {
+              const vId = field.getValue();
+              if (vId) usedVarIds.add(String(vId));
+            }
+          }
         }
       }
       for (const v of workspace.getVariableMap().getAllVariables()) {
@@ -535,7 +612,13 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
     );
 
     const cleanRouter = buildEntryDispatchRouters(workspace, 'python', false);
-    const cleanPrepend = cleanRouter.autoImports
+    const cleanAutoImports = [...cleanRouter.autoImports];
+    for (const sName of pySharedFnRequiredScripts) {
+      if (manualRequires.has(sName)) continue;
+      const imp = `import ${sanitizeLocalIdent(sName)}`;
+      if (!cleanAutoImports.includes(imp)) cleanAutoImports.push(imp);
+    }
+    const cleanPrepend = cleanAutoImports
       .filter((imp) => !rawClean.includes(imp))
       .join('\n');
     const mergedCleanBody = [
@@ -568,6 +651,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
         pythonSharedVarIdents: sharedVarIdents,
         pythonUsedVarIdents: usedVarIdents,
       });
+      pySharedFnRequiredScripts = new Set();
       pythonGenerator.STATEMENT_PREFIX = `await _poly_tick(%1, _poly_snap(locals(), globals()))\n`;
       pythonGenerator.STATEMENT_SUFFIX = null;
       debugBody = pythonGenerator.workspaceToCode(workspace);
@@ -598,6 +682,33 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
         snapVarEntries.push([loc.label, loc.ident]);
       }
     }
+
+    const snapHelperLines = [
+      `def _poly_snap(_loc, _glb):`,
+      `  _out = {}`,
+      `  for _label, _ident in _POLY_VAR_MAP:`,
+      `    if _ident in _loc:`,
+      `      _v = _loc[_ident]`,
+      `    elif _ident in _glb:`,
+      `      _v = _glb[_ident]`,
+      `    else:`,
+      `      continue`,
+      `    try:`,
+      `      _out[_label] = repr(_v)`,
+      `    except Exception:`,
+      `      _out[_label] = str(_v)`,
+      `  if _POLY_SHARED_MOD and _POLY_SHARED_MAP:`,
+      `    _sm = sys.modules.get(_POLY_SHARED_MOD)`,
+      `    if _sm is not None:`,
+      `      for _label, _attr in _POLY_SHARED_MAP:`,
+      `        if hasattr(_sm, _attr):`,
+      `          _v = getattr(_sm, _attr)`,
+      `          try:`,
+      `            _out[_label] = repr(_v)`,
+      `          except Exception:`,
+      `            _out[_label] = str(_v)`,
+      `  return json.dumps(_out)`,
+    ];
 
     const debugPrelude = [
       `import sys, _poly, json, asyncio`,
@@ -666,35 +777,47 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       `      raise _PolyStopCb()`,
       `    if _poly.cb_expired():`,
       `      raise RuntimeError("事件回调执行超时（疑似死循环），已按单次回调超时保护中断。")`,
-      `def _poly_snap(_loc, _glb):`,
-      `  _out = {}`,
-      `  for _label, _ident in _POLY_VAR_MAP:`,
-      `    if _ident in _loc:`,
-      `      _v = _loc[_ident]`,
-      `    elif _ident in _glb:`,
-      `      _v = _glb[_ident]`,
-      `    else:`,
-      `      continue`,
-      `    try:`,
-      `      _out[_label] = repr(_v)`,
-      `    except Exception:`,
-      `      _out[_label] = str(_v)`,
-      `  if _POLY_SHARED_MOD and _POLY_SHARED_MAP:`,
-      `    _sm = sys.modules.get(_POLY_SHARED_MOD)`,
-      `    if _sm is not None:`,
-      `      for _label, _attr in _POLY_SHARED_MAP:`,
-      `        if hasattr(_sm, _attr):`,
-      `          _v = getattr(_sm, _attr)`,
-      `          try:`,
-      `            _out[_label] = repr(_v)`,
-      `          except Exception:`,
-      `            _out[_label] = str(_v)`,
-      `  return json.dumps(_out)`,
+      `async def _poly_call_mod(_mname, _fname, *_args):`,
+      `  _m = sys.modules.get(_mname)`,
+      `  if _m is None:`,
+      `    _m = __import__(_mname)`,
+      `  _fn = getattr(_m, _fname)`,
+      `  _ret = _fn(*_args)`,
+      `  if hasattr(_ret, 'send'):`,
+      `    return await _ret`,
+      `  return _ret`,
+      `class _PolyRtMod:`,
+      `  pass`,
+      `_poly_rt_mod = _PolyRtMod()`,
+      `_poly_rt_mod._poly_tick = _poly_tick`,
+      `_poly_rt_mod._poly_yield_check = _poly_yield_check`,
+      `_poly_rt_mod._poly_sleep_ms = _poly_sleep_ms`,
+      `_poly_rt_mod._poly_call_mod = _poly_call_mod`,
+      `_poly_rt_mod._PolyStopStart = _PolyStopStart`,
+      `_poly_rt_mod._PolyStopCb = _PolyStopCb`,
+      `sys.modules['_poly_rt'] = _poly_rt_mod`,
+      ...snapHelperLines,
+      ``,
+    ].join('\n');
+
+    const companionDebugPrelude = [
+      `import sys, json`,
+      `from _poly_rt import _poly_tick, _poly_yield_check, _poly_sleep_ms, _poly_call_mod`,
+      `_POLY_VAR_MAP = ${JSON.stringify(snapVarEntries)}`,
+      `_POLY_SHARED_MOD = ${JSON.stringify(activeSharedModName)}`,
+      `_POLY_SHARED_MAP = ${JSON.stringify(sharedSnapEntries)}`,
+      ...snapHelperLines,
       ``,
     ].join('\n');
 
     const debugRouter = buildEntryDispatchRouters(workspace, 'python', true);
-    const debugPrepend = debugRouter.autoImports
+    const debugAutoImports = [...debugRouter.autoImports];
+    for (const sName of pySharedFnRequiredScripts) {
+      if (manualRequires.has(sName)) continue;
+      const imp = `import ${sanitizeLocalIdent(sName)}`;
+      if (!debugAutoImports.includes(imp)) debugAutoImports.push(imp);
+    }
+    const debugPrepend = debugAutoImports
       .filter((imp) => !debugBody.includes(imp))
       .join('\n');
     const fullDebugBody = [
@@ -705,17 +828,29 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       .filter(Boolean)
       .join('\n\n');
 
+    // Companion Python modules are loaded via synchronous `import <mod>`, where module-level
+    // (column-0) `await` is a SyntaxError; strip column-0 `_poly_tick` lines while preserving
+    // all indented `await` instrumentation inside `async def` callbacks and functions!
+    const companionDebugBody = fullDebugBody
+      .split('\n')
+      .filter((line) => !/^await _poly_tick\(/.test(line))
+      .join('\n');
+
     const driver = eventDriven
       ? buildPythonEventLoopDriver(keepAliveExternal)
       : `if 'on_start' in globals() and callable(on_start):\n  await on_start()\n`;
     const debugCode = fullDebugBody
       ? `${debugPrelude}${fullDebugBody}\n${driver}\n_poly.final_snap(_poly_snap(locals(), globals()))\n`
       : '';
+    const moduleDebugCode = companionDebugBody.trim()
+      ? `${companionDebugPrelude}${companionDebugBody}\n`
+      : '';
 
     return {
       language: this.id,
       code,
       debugCode,
+      moduleDebugCode,
       sourceMap,
       lineToBlock,
       diagnostics: analyzeWorkspaceDiagnostics(workspace, 'python'),

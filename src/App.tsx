@@ -8,6 +8,7 @@ import {
 import {
   BlocklyWorkbench,
   type BlocklyWorkbenchHandle,
+  type HandleFunctionMutation,
 } from './components/BlocklyWorkbench';
 import { CodeInspector } from './components/CodeInspector';
 import { LogConsole } from './components/LogConsole';
@@ -37,6 +38,7 @@ import {
   setActiveChannelPoolConfig,
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
+  setActiveHandleSharedFunctions,
   setActiveHandleSharedVariables,
   setActiveModuleConflicts,
   setActiveProjectCapabilities,
@@ -199,6 +201,46 @@ function loadSavedSettings(): AppSettings {
   };
 }
 
+function collectHandleAllBreakpoints(handle: RuntimeHandle): string[] {
+  const seen = new Set<string>();
+  for (const s of handle.scripts) {
+    for (const bp of s.breakpoints) {
+      if (bp) seen.add(bp);
+    }
+  }
+  return Array.from(seen);
+}
+
+function workspaceJsonContainsBlockId(node: unknown, targetId: string): boolean {
+  if (!node || typeof node !== 'object') return false;
+  if (Array.isArray(node)) {
+    return node.some((item) => workspaceJsonContainsBlockId(item, targetId));
+  }
+  const obj = node as Record<string, unknown>;
+  if (obj.id === targetId) return true;
+  if (obj.blocks && workspaceJsonContainsBlockId(obj.blocks, targetId)) return true;
+  if (obj.inputs && typeof obj.inputs === 'object') {
+    for (const v of Object.values(obj.inputs as Record<string, unknown>)) {
+      if (workspaceJsonContainsBlockId(v, targetId)) return true;
+    }
+  }
+  if (obj.next && workspaceJsonContainsBlockId(obj.next, targetId)) return true;
+  if (obj.block && workspaceJsonContainsBlockId(obj.block, targetId)) return true;
+  return false;
+}
+
+function findScriptNameOwningBlockId(
+  handle: RuntimeHandle,
+  blockId: string,
+): string | null {
+  for (const s of handle.scripts) {
+    if (workspaceJsonContainsBlockId(s.workspace, blockId)) {
+      return s.name;
+    }
+  }
+  return null;
+}
+
 function triggerFileDownload(filename: string, content: string, mime: string) {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -332,6 +374,7 @@ export function App() {
   setActiveChannelPoolConfigs(activeChannelPoolConfigs);
   setActiveProjectCapabilities(activeProject.enabledCapabilities);
   setActiveHandleSharedVariables(collectHandleSharedVariableNames(activeHandle));
+  setActiveHandleSharedFunctions(activeHandle.sharedFunctions ?? []);
   setActiveHandleScripts(buildHandleScriptsMeta(activeHandle), activeScript.id);
   setActiveModuleConflicts(activeModuleResolution.conflicts);
   extensionRegistry.setActiveProjectLocalPacks(activeProject.localExtensions ?? []);
@@ -591,6 +634,7 @@ export function App() {
       setActiveProjectCapabilities(nextProj.enabledCapabilities);
       const sharedVarNames = collectHandleSharedVariableNames(nextHandle);
       setActiveHandleSharedVariables(sharedVarNames);
+      setActiveHandleSharedFunctions(nextHandle.sharedFunctions ?? []);
       setActiveHandleScripts(buildHandleScriptsMeta(nextHandle), nextScript.id);
       const nextModRes = resolveProjectModules({
         enabledCapabilities: nextProj.enabledCapabilities,
@@ -703,6 +747,127 @@ export function App() {
     [handleHandleVariableEvent, regenerateFromWorkspace],
   );
 
+  const handleToggleSharedFunction = useCallback(
+    (fnName: string) => {
+      const trimmed = fnName.trim();
+      if (!trimmed) return;
+      const projId = activeProjectIdRef.current;
+      const hdlId = activeHandleIdRef.current;
+      const now = new Date().toISOString();
+      const curProj = storeRef.current.projects.find((p) => p.id === projId);
+      const curHdl = curProj?.handles.find((h) => h.id === hdlId);
+      const prevFns = curHdl?.sharedFunctions ?? [];
+      const wasShared = prevFns.includes(trimmed);
+      const nextFns = wasShared
+        ? prevFns.filter((n) => n !== trimmed)
+        : [...prevFns, trimmed];
+
+      setActiveHandleSharedFunctions(nextFns);
+      setStore((prev) =>
+        updateProjectById(prev, projId, (proj) =>
+          updateHandleById(proj, hdlId, (hdl) => ({
+            ...hdl,
+            sharedFunctions: nextFns,
+            updatedAt: now,
+          })),
+        ),
+      );
+      const ws = workbenchRef.current?.getWorkspace();
+      if (ws) regenerateFromWorkspace(ws, languageRef.current);
+      workbenchRef.current?.refreshToolbox();
+      notify(
+        wasShared
+          ? `已将函数「${trimmed}」转为本文件私有函数（Lua 导出 local function）`
+          : `已将函数「${trimmed}」设为跨文件公共函数（同句柄全部脚本可直接调用）`,
+      );
+    },
+    [notify, regenerateFromWorkspace],
+  );
+
+  const handleRequestCreateSharedFunction = useCallback(() => {
+    setBlocklyDialogReq({
+      kind: 'create-function',
+      onConfirm: (name, hasReturn) => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        const projId = activeProjectIdRef.current;
+        const hdlId = activeHandleIdRef.current;
+        const now = new Date().toISOString();
+        const curProj = storeRef.current.projects.find((p) => p.id === projId);
+        const curHdl = curProj?.handles.find((h) => h.id === hdlId);
+        const prevFns = curHdl?.sharedFunctions ?? [];
+        const nextFns = prevFns.includes(trimmed)
+          ? prevFns
+          : [...prevFns, trimmed];
+
+        setActiveHandleSharedFunctions(nextFns);
+        setStore((prev) =>
+          updateProjectById(prev, projId, (proj) =>
+            updateHandleById(proj, hdlId, (hdl) => ({
+              ...hdl,
+              sharedFunctions: nextFns,
+              updatedAt: now,
+            })),
+          ),
+        );
+        workbenchRef.current?.createProcedure(trimmed, hasReturn);
+        const ws = workbenchRef.current?.getWorkspace();
+        if (ws) regenerateFromWorkspace(ws, languageRef.current);
+        notify(`已创建跨文件公共函数「${trimmed}」，同句柄其他脚本可在「函数」分类直接调用`);
+      },
+    });
+  }, [notify, regenerateFromWorkspace]);
+
+  const handleHandleFunctionEvent = useCallback(
+    (mutation: HandleFunctionMutation) => {
+      const projId = activeProjectIdRef.current;
+      const hdlId = activeHandleIdRef.current;
+      const now = new Date().toISOString();
+      const curProj = storeRef.current.projects.find((p) => p.id === projId);
+      const curHdl = curProj?.handles.find((h) => h.id === hdlId);
+      if (!curHdl) return;
+      const prevFns = curHdl.sharedFunctions ?? [];
+      if (prevFns.length === 0) return;
+
+      let nextFns = prevFns;
+      if (mutation.kind === 'rename') {
+        if (!prevFns.includes(mutation.oldName)) return;
+        nextFns = Array.from(
+          new Set(
+            prevFns.map((n) => (n === mutation.oldName ? mutation.newName : n)),
+          ),
+        );
+      } else if (mutation.kind === 'delete') {
+        if (!prevFns.includes(mutation.name)) return;
+        const scrId = activeScriptIdRef.current;
+        const stillInOtherScript = curHdl.scripts.some(
+          (s) =>
+            s.id !== scrId &&
+            (buildHandleScriptsMeta({ ...curHdl, scripts: [s] })[0]
+              ?.declaredFunctions ?? []
+            ).some((f) => f.name === mutation.name),
+        );
+        if (stillInOtherScript) return;
+        nextFns = prevFns.filter((n) => n !== mutation.name);
+      }
+
+      setActiveHandleSharedFunctions(nextFns);
+      setStore((prev) =>
+        updateProjectById(prev, projId, (proj) =>
+          updateHandleById(proj, hdlId, (hdl) => ({
+            ...hdl,
+            sharedFunctions: nextFns,
+            updatedAt: now,
+          })),
+        ),
+      );
+      const ws = workbenchRef.current?.getWorkspace();
+      if (ws) regenerateFromWorkspace(ws, languageRef.current);
+      workbenchRef.current?.refreshToolbox();
+    },
+    [regenerateFromWorkspace],
+  );
+
   const handleWorkspaceChange = useCallback(
     (ws: Blockly.WorkspaceSvg) => {
       regenerateFromWorkspace(ws, languageRef.current);
@@ -717,15 +882,15 @@ export function App() {
 
       setStore((prev) =>
         updateProjectById(prev, projId, (proj) =>
-          updateHandleById(proj, hdlId, (hdl) => ({
-            ...hdl,
-            scripts: hdl.scripts.map((s) => {
+          updateHandleById(proj, hdlId, (hdl) => {
+            let prunedAny = false;
+            const nextScripts = hdl.scripts.map((s) => {
               if (s.id !== scrId) return s;
               const pruned = s.breakpoints.filter((bid) =>
                 Boolean(ws.getBlockById(bid)),
               );
               if (pruned.length !== s.breakpoints.length) {
-                runnerManager.updateActiveBreakpoints(pruned);
+                prunedAny = true;
               }
               return {
                 ...s,
@@ -733,9 +898,15 @@ export function App() {
                 breakpoints: pruned,
                 updatedAt: now,
               };
-            }),
-            updatedAt: now,
-          })),
+            });
+            const nextHdl = { ...hdl, scripts: nextScripts, updatedAt: now };
+            if (prunedAny) {
+              runnerManager.updateActiveBreakpoints(
+                collectHandleAllBreakpoints(nextHdl),
+              );
+            }
+            return nextHdl;
+          }),
         ),
       );
     },
@@ -1689,30 +1860,38 @@ export function App() {
       const nextBps = exists
         ? scr.breakpoints.filter((id) => id !== blockId)
         : [...scr.breakpoints, blockId];
-      runnerManager.updateActiveBreakpoints(nextBps);
+      const nextScripts = hdl.scripts.map((s) =>
+        s.id === scr.id ? { ...s, breakpoints: nextBps } : s,
+      );
+      runnerManager.updateActiveBreakpoints(
+        collectHandleAllBreakpoints({ ...hdl, scripts: nextScripts }),
+      );
       return updateProjectById(prev, proj.id, (p) =>
         updateHandleById(p, hdl.id, (h) => ({
           ...h,
-          scripts: h.scripts.map((s) =>
-            s.id === scr.id ? { ...s, breakpoints: nextBps } : s,
-          ),
+          scripts: nextScripts,
         })),
       );
     });
   }, []);
 
   const handleClearBreakpoints = useCallback(() => {
-    setStore((prev) =>
-      updateProjectById(prev, activeProjectIdRef.current, (p) =>
+    setStore((prev) => {
+      const proj = getActiveProject(prev);
+      const hdl = getActiveHandle(proj);
+      const nextScripts = hdl.scripts.map((s) =>
+        s.id === activeScriptIdRef.current ? { ...s, breakpoints: [] } : s,
+      );
+      runnerManager.updateActiveBreakpoints(
+        collectHandleAllBreakpoints({ ...hdl, scripts: nextScripts }),
+      );
+      return updateProjectById(prev, activeProjectIdRef.current, (p) =>
         updateHandleById(p, activeHandleIdRef.current, (h) => ({
           ...h,
-          scripts: h.scripts.map((s) =>
-            s.id === activeScriptIdRef.current ? { ...s, breakpoints: [] } : s,
-          ),
+          scripts: nextScripts,
         })),
-      ),
-    );
-    runnerManager.updateActiveBreakpoints([]);
+      );
+    });
     notify('已清除当前脚本的全部断点');
   }, [notify]);
 
@@ -1755,6 +1934,7 @@ export function App() {
         : activeHandle;
 
       // Pre-Run Static Error Gate: collect blocking `severity === 'error'` diagnostics across ALL scripts in the handle!
+      setActiveHandleSharedFunctions(handleForRun.sharedFunctions ?? []);
       const handleMetasForRun = buildHandleScriptsMeta(handleForRun);
       const blockingErrors: Array<{
         scriptName: string;
@@ -1875,7 +2055,6 @@ export function App() {
         handleForRun,
         entryScript.id,
         language,
-        activeProject.sharedModules,
         activeProject.defaultTimerCount,
         activeChannelPoolConfigs,
       );
@@ -1908,6 +2087,7 @@ export function App() {
         return;
       }
 
+      const allHandleBreakpoints = collectHandleAllBreakpoints(handleForRun);
       const speedDelay = SPEED_DELAY_MS[settings.executionSpeed];
       const bootLogs: LogEntry[] = [
         {
@@ -1923,8 +2103,8 @@ export function App() {
                   ? `同句柄模块: ${siblingNames.join(', ')} · `
                   : ''
               }步进 ${speedDelay}ms${
-                runningEntryDirectly && breakpointsRef.current.length > 0
-                  ? ` · ${breakpointsRef.current.length} 断点`
+                allHandleBreakpoints.length > 0
+                  ? ` · ${allHandleBreakpoints.length} 断点`
                   : ''
               }）...`,
         },
@@ -1954,7 +2134,7 @@ export function App() {
           debugCode: runDebugCode,
           timeoutMs: settings.timeoutMs,
           timeSliceMs: settings.timeSliceMs,
-          breakpoints: runningEntryDirectly ? breakpointsRef.current : [],
+          breakpoints: allHandleBreakpoints,
           stepDelayMs: speedDelay,
           startInStepMode,
           timerCount: activeTimerConfig.count,
@@ -1969,21 +2149,33 @@ export function App() {
             appendLog(level, message, line, mappedBlock);
           },
           onStep: (blockId, vars) => {
-            if (runningEntryDirectly) setExecutingBlockId(blockId);
+            const inActiveCanvas = Boolean(
+              workbenchRef.current?.getWorkspace()?.getBlockById(blockId),
+            );
+            setExecutingBlockId(inActiveCanvas ? blockId : null);
             setLiveVariables(vars);
           },
           onPaused: (blockId, vars, reason) => {
-            if (runningEntryDirectly) setExecutingBlockId(blockId);
+            const inActiveCanvas = Boolean(
+              workbenchRef.current?.getWorkspace()?.getBlockById(blockId),
+            );
+            setExecutingBlockId(inActiveCanvas ? blockId : null);
             setLiveVariables(vars);
-            const range = runningEntryDirectly ? latest.sourceMap[blockId] : undefined;
+            const range = inActiveCanvas ? latest.sourceMap[blockId] : undefined;
             if (reason === 'breakpoint') {
+              const ownerScriptName = inActiveCanvas
+                ? activeScript.name
+                : findScriptNameOwningBlockId(handleForRun, blockId);
+              const bpFileLabel = ownerScriptName
+                ? `${activeHandle.name}/${ownerScriptName}.${adapter.extension}`
+                : scriptFileLabel;
               appendLog(
                 'warn',
-                `[${scriptFileLabel}] 命中断点并暂停${
+                `[${bpFileLabel}] 命中断点并暂停${
                   range ? `（第 ${range.startLine} 行）` : ''
                 }，可查看变量或点击「继续 / 单步」。`,
                 range?.startLine,
-                runningEntryDirectly ? blockId : undefined,
+                inActiveCanvas ? blockId : undefined,
               );
             }
           },
@@ -2032,7 +2224,6 @@ export function App() {
       activeProject.enabledCapabilities,
       activeProject.localExtensions,
       activeProject.defaultTimerCount,
-      activeProject.sharedModules,
       generated,
       appendLog,
       handleDeviceEvent,
@@ -2086,6 +2277,8 @@ export function App() {
         proj.defaultTimerCount,
       );
       setActiveChannelPoolConfigs(hdlPools);
+      setActiveHandleSharedVariables(collectHandleSharedVariableNames(hdl));
+      setActiveHandleSharedFunctions(hdl.sharedFunctions ?? []);
       const hdlMetas = buildHandleScriptsMeta(hdl);
       for (const scr of hdl.scripts) {
         setActiveHandleScripts(hdlMetas, scr.id);
@@ -2104,6 +2297,8 @@ export function App() {
     }
     // Restore active handle bridge context
     setActiveChannelPoolConfigs(activeChannelPoolConfigs);
+    setActiveHandleSharedVariables(collectHandleSharedVariableNames(activeHandle));
+    setActiveHandleSharedFunctions(activeHandle.sharedFunctions ?? []);
     setActiveHandleScripts(buildHandleScriptsMeta(activeHandle), activeScript.id);
 
     if (multiBlockingErrors.length > 0) {
@@ -2254,6 +2449,8 @@ export function App() {
       }
     } finally {
       // Restore active handle scripts metadata in bridge
+      setActiveHandleSharedVariables(collectHandleSharedVariableNames(hdl));
+      setActiveHandleSharedFunctions(hdl.sharedFunctions ?? []);
       setActiveHandleScripts(buildHandleScriptsMeta(hdl), getActiveScript(hdl).id);
     }
   }, [flushActiveCanvasIntoStore, notify]);
@@ -2286,6 +2483,8 @@ export function App() {
         notify(`整工程打包导出失败：${err instanceof Error ? err.message : String(err)}`);
       }
     } finally {
+      setActiveHandleSharedVariables(collectHandleSharedVariableNames(hdl));
+      setActiveHandleSharedFunctions(hdl.sharedFunctions ?? []);
       setActiveHandleScripts(buildHandleScriptsMeta(hdl), getActiveScript(hdl).id);
     }
   }, [flushActiveCanvasIntoStore, notify]);
@@ -2332,6 +2531,20 @@ export function App() {
       ),
     [activeHandle, currentScriptVarNames],
   );
+  const allHandleFunctionNames = useMemo(() => {
+    const names = new Set<string>(activeHandle.sharedFunctions ?? []);
+    for (const meta of buildHandleScriptsMeta(activeHandle)) {
+      for (const fn of meta.declaredFunctions ?? []) {
+        names.add(fn.name);
+      }
+    }
+    const liveWs = workbenchRef.current?.getWorkspace();
+    if (liveWs) {
+      const [noRet, withRet] = Blockly.Procedures.allProcedures(liveWs);
+      for (const [name] of [...noRet, ...withRet]) names.add(name);
+    }
+    return Array.from(names);
+  }, [activeHandle, blocklyDialogReq]);
 
   const settingsModalProject = settingsModal
     ? store.projects.find((p) => p.id === settingsModal.projectId) ?? null
@@ -2528,6 +2741,9 @@ export function App() {
                     onWorkspaceChange={handleWorkspaceChange}
                     onHandleVariableEvent={handleHandleVariableEvent}
                     onRequestCreateVariable={handleRequestCreateVariable}
+                    onRequestCreateSharedFunction={handleRequestCreateSharedFunction}
+                    onToggleSharedFunction={handleToggleSharedFunction}
+                    onHandleFunctionEvent={handleHandleFunctionEvent}
                     onSelectBlock={setSelectedBlockId}
                     onToggleBreakpoint={handleToggleBreakpoint}
                     onEditChannelAlias={(req) => setAliasModalReq(req)}
@@ -2766,6 +2982,7 @@ export function App() {
           handleSharedVars={activeHandleSharedVarNames}
           currentScriptVars={currentScriptVarNames}
           allHandleVars={allHandleVarNames}
+          allHandleFunctions={allHandleFunctionNames}
           onClose={() => setBlocklyDialogReq(null)}
         />
       )}

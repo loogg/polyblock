@@ -160,6 +160,9 @@ export class WorkerDebugSession {
       const reason = hitBreakpoint && !this.pauseOnNextStep ? 'breakpoint' : 'step';
       this.pauseOnNextStep = false;
       this.onClockPause?.(true);
+      const waitResume = new Promise<void>((resolve) => {
+        this.pendingResume = resolve;
+      });
       this.post({
         type: 'PAUSED',
         runId: this.runId,
@@ -169,9 +172,7 @@ export class WorkerDebugSession {
       });
 
       try {
-        await new Promise<void>((resolve) => {
-          this.pendingResume = resolve;
-        });
+        await waitResume;
       } finally {
         // Zero logical time elapses while parked at a breakpoint/step pause
         this.onClockPause?.(false, 0);

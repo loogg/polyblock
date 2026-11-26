@@ -7,6 +7,7 @@ import { backendRegistry } from '../backends/registry';
 import {
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
+  setActiveHandleSharedFunctions,
   setActiveHandleSharedVariables,
 } from '../blocks/timerConfigBridge';
 import { collectHandleSharedVariableNames } from '../projects/handleVariables';
@@ -64,6 +65,7 @@ function compileHandleAllScripts(
   );
   setActiveChannelPoolConfigs(poolCfgs);
   setActiveHandleSharedVariables(collectHandleSharedVariableNames(handle));
+  setActiveHandleSharedFunctions(handle.sharedFunctions ?? []);
   const scriptMetas = buildHandleScriptsMeta(handle);
 
   const compiled: Array<{ scriptId: string; scriptName: string; code: string }> = [];

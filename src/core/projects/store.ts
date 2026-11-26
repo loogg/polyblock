@@ -1536,6 +1536,7 @@ function instantiateHandleSpec(
     autoStart: spec.autoStart ?? true,
     capabilityConfigs,
     sharedVariables,
+    sharedFunctions: [],
     entryScriptId: entryId,
     activeScriptId: entryId,
     scripts,
@@ -1570,7 +1571,6 @@ export function instantiateProjectFromTemplate(
     enabledCapabilities: [...tpl.enabledCapabilities],
     localExtensions: tpl.localExtensions ? cloneJson(tpl.localExtensions) : [],
     defaultTimerCount,
-    sharedModules: [],
     activeHandleId: handles[0].id,
     handles,
     createdAt: now,
@@ -1629,7 +1629,6 @@ export function instantiateProjectFromProfile(
     enabledCapabilities: [...profile.capabilities],
     localExtensions: [],
     defaultTimerCount: profile.defaultTimerCount || DEFAULT_TIMER_COUNT,
-    sharedModules: [],
     activeHandleId: handle.id,
     handles: [handle],
     createdAt: now,
@@ -1711,6 +1710,7 @@ export function migrateProjectV2ToV3(
         ? { [CAP_RT_TIMERS]: timerCfg }
         : {},
     sharedVariables: inferLegacyCrossFileSharedVariables(scripts),
+    sharedFunctions: [],
     entryScriptId: entryId,
     activeScriptId,
     scripts,
@@ -1734,7 +1734,6 @@ export function migrateProjectV2ToV3(
     enabledCapabilities: mergedCaps,
     localExtensions: [],
     defaultTimerCount: timerCfg.count,
-    sharedModules: [],
     activeHandleId: handle.id,
     handles: [handle],
     createdAt: typeof v2.createdAt === 'string' ? v2.createdAt : now,
@@ -1809,6 +1808,11 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
             (v): v is string => typeof v === 'string' && v.trim().length > 0,
           )
         : inferLegacyCrossFileSharedVariables(scripts),
+      sharedFunctions: Array.isArray(rh.sharedFunctions)
+        ? rh.sharedFunctions.filter(
+            (v): v is string => typeof v === 'string' && v.trim().length > 0,
+          )
+        : [],
       entryScriptId: entryId,
       activeScriptId: activeId,
       scripts,
@@ -1852,9 +1856,6 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
     enabledCapabilities,
     localExtensions: normalizeLocalExtensions(raw.localExtensions),
     defaultTimerCount: defaultCount,
-    sharedModules: Array.isArray(raw.sharedModules)
-      ? (raw.sharedModules as ProjectScript[])
-      : [],
     activeHandleId,
     handles,
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : now,
@@ -1928,6 +1929,11 @@ export function parseImportedProject(
               (v): v is string => typeof v === 'string' && v.trim().length > 0,
             )
           : inferLegacyCrossFileSharedVariables(scripts),
+        sharedFunctions: Array.isArray(rh.sharedFunctions)
+          ? rh.sharedFunctions.filter(
+              (v): v is string => typeof v === 'string' && v.trim().length > 0,
+            )
+          : [],
         entryScriptId: entryId,
         activeScriptId: entryId,
         scripts,
@@ -1975,12 +1981,6 @@ export function parseImportedProject(
       enabledCapabilities,
       localExtensions: mergedLocalExtensions,
       defaultTimerCount: defaultCount,
-      sharedModules: Array.isArray(obj.sharedModules)
-        ? normalizeScriptsArray(
-            obj.sharedModules as Array<Record<string, unknown>>,
-            now,
-          ).scripts
-        : [],
       activeHandleId,
       handles,
       createdAt: typeof obj.createdAt === 'string' ? obj.createdAt : now,
@@ -2025,7 +2025,6 @@ export function parseImportedProject(
     enabledCapabilities: inferCapabilitiesFromWorkspaces([v1.workspace]),
     localExtensions: [],
     defaultTimerCount: DEFAULT_TIMER_COUNT,
-    sharedModules: [],
     activeHandleId: handleId,
     handles: [
       {
@@ -2226,6 +2225,7 @@ export function addHandleToProject(
       ? { [CAP_RT_TIMERS]: normalizeTimerConfig(undefined, project.defaultTimerCount) }
       : {},
     sharedVariables: [],
+    sharedFunctions: [],
     entryScriptId: scriptId,
     activeScriptId: scriptId,
     scripts: [
@@ -2299,6 +2299,9 @@ export function duplicateHandleInProject(
     sharedVariables: Array.isArray(target.sharedVariables)
       ? [...target.sharedVariables]
       : inferLegacyCrossFileSharedVariables(clonedScripts),
+    sharedFunctions: Array.isArray(target.sharedFunctions)
+      ? [...target.sharedFunctions]
+      : [],
     entryScriptId: scriptIdMap.get(target.entryScriptId) ?? clonedScripts[0].id,
     activeScriptId: scriptIdMap.get(target.activeScriptId) ?? clonedScripts[0].id,
     scripts: clonedScripts,
@@ -2513,7 +2516,6 @@ export function duplicateProjectInStore(
     ),
     enabledCapabilities: [...target.enabledCapabilities],
     localExtensions: cloneJson(target.localExtensions ?? []),
-    sharedModules: cloneJson(target.sharedModules ?? []),
     activeHandleId: handleIdMap.get(target.activeHandleId) ?? clonedHandles[0].id,
     handles: clonedHandles,
     createdAt: now,

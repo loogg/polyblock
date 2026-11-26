@@ -105,7 +105,7 @@ export interface RuntimeTelemetry {
   timers: RuntimeTimerTelemetry[];
 }
 
-/** Single visual-block script inside a RuntimeHandle (or sharedModules). */
+/** Single visual-block script inside a RuntimeHandle. */
 export interface ProjectScript {
   id: string;
   name: string;
@@ -130,6 +130,12 @@ export interface RuntimeHandle {
    * Variables NOT in this list are strictly single-file globals (Lua top-level `local`, Python module global).
    */
   sharedVariables?: string[];
+  /**
+   * Explicit handle-wide cross-file shared custom function names.
+   * - Lua 5.4: global `function name(...)` callable across scripts (private functions emit `local function`).
+   * - Python 3: module-level `def name(...):` called via `<script>.<name>(...)` across sibling scripts.
+   */
+  sharedFunctions?: string[];
   entryScriptId: string;
   activeScriptId: string;
   scripts: ProjectScript[];
@@ -162,8 +168,6 @@ export interface ProjectModel {
   bundledExtensions?: PolyExtensionPack[];
   /** Project default timer channel count when rt.timers is enabled (1..32). */
   defaultTimerCount: number;
-  /** Forward-compatible reserved pure-script shared libraries (single source, isolated load per handle). */
-  sharedModules: ProjectScript[];
   activeHandleId: string;
   handles: RuntimeHandle[];
   createdAt: string;

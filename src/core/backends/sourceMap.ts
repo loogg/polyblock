@@ -8,8 +8,10 @@ import {
   getActiveChannelPoolConfig,
   getActiveHandleScriptId,
   getActiveHandleScripts,
+  getActiveHandleSharedFunctions,
   getActiveModuleConflicts,
   getActiveProjectCapabilities,
+  isCurrentHandleScriptEntry,
 } from '../blocks/timerConfigBridge';
 import { hasCapability } from '../capabilities/registry';
 import { extensionRegistry } from '../extensions/registry';
@@ -114,19 +116,31 @@ export function analyzeWorkspaceDiagnostics(
 
   const enabledTopBlocks = topBlocks.filter((b) => !b.isShadow() && b.isEnabled());
 
-  // 1. Check duplicate `poly_on_start` + any declarative singleton hat
+  // 1. Check duplicate `poly_on_start` + any declarative singleton hat (Error: 2nd would overwrite 1st!)
+  //    AND enforce entry-only placement for ALL singleton lifecycle/event hats (`on_start`, `on_run`, `on_stop`, etc.)
+  const isEntryScript = isCurrentHandleScriptEntry();
+  const entryScriptName =
+    getActiveHandleScripts().find((s) => s.isEntry)?.name ?? 'main';
   const seenSingletons = new Map<string, number>();
   const startBlocks: Blockly.Block[] = [];
   for (const blk of enabledTopBlocks) {
     if (blk.type === 'poly_on_start') {
       startBlocks.push(blk);
+      if (!isEntryScript) {
+        diagnostics.push({
+          id: `non-entry-singleton-on_start-${blk.id}`,
+          severity: 'error',
+          message: `入口回调「on_start」只能在句柄入口脚本（${entryScriptName}）中定义，请移至入口脚本。`,
+          blockId: blk.id,
+        });
+      }
       const count = (seenSingletons.get(blk.type) ?? 0) + 1;
       seenSingletons.set(blk.type, count);
       if (count > 1) {
         diagnostics.push({
           id: `multi-poly_on_start-${blk.id}`,
-          severity: 'warning',
-          message: '检测到多个“当程序启动”入口块，建议合并为一个入口以保证执行顺序明确。',
+          severity: 'error',
+          message: '同一个脚本内检测到多个“当程序启动 (on_start)”入口块（后者会覆盖前者），请合并为一个。',
           blockId: blk.id,
         });
       }
@@ -135,13 +149,21 @@ export function analyzeWorkspaceDiagnostics(
 
     const hatDef = extensionRegistry.getHatBlockDef(blk.type);
     if (hatDef && hatDef.hat.mode === 'singleton') {
+      if (!isEntryScript) {
+        diagnostics.push({
+          id: `non-entry-singleton-${hatDef.hat.eventName}-${blk.id}`,
+          severity: 'error',
+          message: `生命周期/单例回调「${hatDef.hat.eventName}」只能在句柄入口脚本（${entryScriptName}）中定义，请移至入口脚本。`,
+          blockId: blk.id,
+        });
+      }
       const count = (seenSingletons.get(blk.type) ?? 0) + 1;
       seenSingletons.set(blk.type, count);
       if (count > 1) {
         diagnostics.push({
           id: `multi-${blk.type}-${blk.id}`,
-          severity: 'warning',
-          message: `检测到多个“${hatDef.hat.eventName}”回调块，建议合并为一个以保证执行顺序明确。`,
+          severity: 'error',
+          message: `同一个脚本内检测到多个“${hatDef.hat.eventName}”回调块（后者会覆盖前者），请合并为一个。`,
           blockId: blk.id,
         });
       }
@@ -329,17 +351,15 @@ export function analyzeWorkspaceDiagnostics(
       } else {
         const hatDef = extensionRegistry.getHatBlockDef(blk.type);
         if (hatDef) {
-          const isExtractedDispatch = Boolean(
-            hatDef.hat.mode === 'dispatch' && hatDef.hat.extractBranchFnPrefix,
-          );
+          const isDispatch = hatDef.hat.mode === 'dispatch';
           if (!currentEvents.has(hatDef.hat.eventName)) {
             currentEvents.set(hatDef.hat.eventName, {
               blockId: blk.id,
               isSingleton: hatDef.hat.mode === 'singleton',
-              isExtractedDispatch,
+              isExtractedDispatch: isDispatch,
             });
           }
-          if (isExtractedDispatch) {
+          if (isDispatch) {
             const dupKey = extensionRegistry.renderHatDuplicateKey(blk);
             if (dupKey !== null) {
               currentExtractedBranches.push({
@@ -410,6 +430,69 @@ export function analyzeWorkspaceDiagnostics(
             blockId: localBr.blockId,
           });
         }
+      }
+    }
+
+    // 6. Cross-file shared custom function collision & dangling call checks
+    const sharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
+    if (sharedFnSet.size > 0) {
+      for (const top of enabledTopBlocks) {
+        if (
+          top.type !== 'procedures_defnoreturn' &&
+          top.type !== 'procedures_defreturn'
+        ) {
+          continue;
+        }
+        const fnName = String(top.getFieldValue('NAME') || '').trim();
+        if (!fnName || !sharedFnSet.has(fnName)) continue;
+        for (const sib of siblings) {
+          if ((sib.declaredFunctions ?? []).some((f) => f.name === fnName)) {
+            diagnostics.push({
+              id: `cross-file-shared-fn-dup-${fnName}-${sib.name}-${top.id}`,
+              severity: 'error',
+              message: `跨文件公共函数「${fnName}」与同句柄脚本「${sib.name}」重名，请重命名其中一个或将其转为本文件私有函数。`,
+              blockId: top.id,
+            });
+          }
+        }
+      }
+    }
+
+    for (const blk of workspace.getAllBlocks(false)) {
+      if (
+        blk.isShadow() ||
+        !blk.isEnabled() ||
+        (blk.type !== 'poly_call_shared_noreturn' &&
+          blk.type !== 'poly_call_shared_return')
+      ) {
+        continue;
+      }
+      const meta = (
+        blk as Blockly.Block & {
+          sharedFnMeta_?: { scriptName: string; fnName: string; params: string[] };
+        }
+      ).sharedFnMeta_;
+      if (!meta) continue;
+      const targetScript = handleScripts.find((s) => s.name === meta.scriptName);
+      const existsInTarget = targetScript
+        ? targetScript.id === currentScriptId
+          ? enabledTopBlocks.some(
+              (t) =>
+                (t.type === 'procedures_defnoreturn' ||
+                  t.type === 'procedures_defreturn') &&
+                String(t.getFieldValue('NAME') || '').trim() === meta.fnName,
+            )
+          : (targetScript.declaredFunctions ?? []).some(
+              (f) => f.name === meta.fnName,
+            )
+        : false;
+      if (!targetScript || !existsInTarget || !sharedFnSet.has(meta.fnName)) {
+        diagnostics.push({
+          id: `dangling-shared-fn-${meta.scriptName}-${meta.fnName}-${blk.id}`,
+          severity: 'error',
+          message: `跨文件函数「${meta.scriptName}.${meta.fnName}」不存在或已被转为本文件私有，请检查对应脚本定义。`,
+          blockId: blk.id,
+        });
       }
     }
   }

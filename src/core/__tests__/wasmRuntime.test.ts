@@ -20,6 +20,7 @@ import {
 } from '../projects/store';
 import {
   setActiveHandleScripts,
+  setActiveHandleSharedFunctions,
   setActiveTimerConfig,
 } from '../blocks/timerConfigBridge';
 import { WorkerDebugSession } from '../../workers/debugSession';
@@ -29,6 +30,8 @@ interface HarnessOptions {
   stepDelayMs?: number;
   timeSliceMs?: number;
   callbackTimeoutMs?: number;
+  breakpoints?: string[];
+  onPaused?: (blockId: string, session: WorkerDebugSession) => void;
   preloadModules?: Array<{
     name: string;
     luaSource?: string;
@@ -56,7 +59,7 @@ async function runLuaDebugInWasmoon(
   const session = new WorkerDebugSession(
     {
       runId: 'test-lua',
-      breakpoints: [],
+      breakpoints: opts.breakpoints ?? [],
       stepDelayMs: opts.stepDelayMs ?? 0,
       onClockPause: (paused, creditMs) => {
         if (paused) scheduler.pauseClock();
@@ -64,7 +67,11 @@ async function runLuaDebugInWasmoon(
       },
       getTimeSliceMs: () => scheduler.getTimeSliceMs(),
     },
-    () => {},
+    (msg) => {
+      if (msg.type === 'PAUSED' && typeof msg.blockId === 'string') {
+        opts.onPaused?.(msg.blockId, session);
+      }
+    },
   );
 
   try {
@@ -223,7 +230,7 @@ async function runPyDebugInMicroPython(
   const session = new WorkerDebugSession(
     {
       runId: 'test-py',
-      breakpoints: [],
+      breakpoints: opts.breakpoints ?? [],
       stepDelayMs: opts.stepDelayMs ?? 0,
       onClockPause: (paused, creditMs) => {
         if (paused) scheduler.pauseClock();
@@ -231,7 +238,11 @@ async function runPyDebugInMicroPython(
       },
       getTimeSliceMs: () => scheduler.getTimeSliceMs(),
     },
-    () => {},
+    (msg) => {
+      if (msg.type === 'PAUSED' && typeof msg.blockId === 'string') {
+        opts.onPaused?.(msg.blockId, session);
+      }
+    },
   );
   const mp = await loadMicroPython({
     stdout: (line) => logs.push(line),
@@ -1386,5 +1397,258 @@ sys.modules["board"] = _m
     const { logs: pyLogs } = await runPyDebugInMicroPython(pyDebug);
     expect(pyLogs).toContain('BEFORE = False');
     expect(pyLogs).toContain('AFTER = True');
+  });
+
+  it('executes cross-file shared functions, companion breakpoints (moduleDebugCode), Lua hoisted nested locals, and companion Python callback watchdog in real WASM', async () => {
+    // 1. Cross-file shared function `utils.double_val(21)` -> 42 + companion breakpoint inside `utils`
+    const utilsWsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'procedures_defreturn',
+            id: 'u_def',
+            fields: { NAME: 'double_val' },
+            extraState: { params: [{ name: 'n', id: 'u_pn' }] },
+            inputs: {
+              STACK: {
+                block: {
+                  type: 'poly_print',
+                  id: 'u_bp_block',
+                  inputs: { VALUE: { block: { type: 'text', id: 'u_t', fields: { TEXT: 'IN_UTILS' } } } },
+                },
+              },
+              RETURN: {
+                block: {
+                  type: 'math_arithmetic',
+                  id: 'u_mul',
+                  fields: { OP: 'MULTIPLY' },
+                  inputs: {
+                    A: { block: { type: 'variables_get', id: 'u_gn', fields: { VAR: { id: 'u_pn' } } } },
+                    B: { block: { type: 'math_number', id: 'u_2', fields: { NUM: 2 } } },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [{ name: 'n', id: 'u_pn' }],
+    };
+    const mainWsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'm_s',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'controls_if',
+                  id: 'm_if',
+                  extraState: { hasElse: true },
+                  inputs: {
+                    IF0: { block: { type: 'logic_boolean', id: 'm_true', fields: { BOOL: 'TRUE' } } },
+                    DO0: {
+                      block: {
+                        type: 'poly_local_set',
+                        id: 'm_loc1',
+                        fields: { NAME: 'tag' },
+                        inputs: { VALUE: { block: { type: 'text', id: 'm_hot', fields: { TEXT: 'HOT' } } } },
+                      },
+                    },
+                    ELSE: {
+                      block: {
+                        type: 'poly_local_set',
+                        id: 'm_loc2',
+                        fields: { NAME: 'tag' },
+                        inputs: { VALUE: { block: { type: 'text', id: 'm_cold', fields: { TEXT: 'COLD' } } } },
+                      },
+                    },
+                  },
+                  next: {
+                    block: {
+                      type: 'poly_print_kv',
+                      id: 'm_ptag',
+                      fields: { LABEL: 'TAG' },
+                      inputs: { VALUE: { block: { type: 'poly_local_get', id: 'm_gtag', fields: { NAME: 'tag' } } } },
+                      next: {
+                        block: {
+                          type: 'poly_print_kv',
+                          id: 'm_pres',
+                          fields: { LABEL: 'ANS' },
+                          inputs: {
+                            VALUE: {
+                              block: {
+                                type: 'poly_call_shared_return',
+                                id: 'm_call',
+                                extraState: { scriptName: 'utils', fnName: 'double_val', params: ['n'] },
+                                inputs: {
+                                  ARG0: { block: { type: 'math_number', id: 'm_21', fields: { NUM: 21 } } },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const hdl = {
+      id: 'h_sf',
+      name: 'sf_vm',
+      color: '#4f46e5',
+      autoStart: true,
+      capabilityConfigs: {},
+      sharedFunctions: ['double_val'],
+      entryScriptId: 'sf_main',
+      activeScriptId: 'sf_main',
+      updatedAt: '',
+      scripts: [
+        { id: 'sf_main', name: 'main', workspace: mainWsJson, breakpoints: [], updatedAt: '' },
+        { id: 'sf_utils', name: 'utils', workspace: utilsWsJson, breakpoints: ['u_bp_block'], updatedAt: '' },
+      ],
+    };
+    const metas = buildHandleScriptsMeta(hdl);
+    setActiveHandleSharedFunctions(['double_val']);
+
+    setActiveHandleScripts(metas, 'sf_utils');
+    const uWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(utilsWsJson, uWs);
+    const uLuaModDebug = backendRegistry.get('lua').generate(uWs).moduleDebugCode!;
+    const uPyModDebug = backendRegistry.get('python').generate(uWs).moduleDebugCode!;
+    uWs.dispose();
+
+    setActiveHandleScripts(metas, 'sf_main');
+    const mWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(mainWsJson, mWs);
+    const mLuaDebug = backendRegistry.get('lua').generate(mWs).debugCode;
+    const mPyDebug = backendRegistry.get('python').generate(mWs).debugCode;
+    mWs.dispose();
+    setActiveHandleScripts([], null);
+    setActiveHandleSharedFunctions(null);
+
+    const luaPausedBlocks: string[] = [];
+    const { logs: luaLogs } = await runLuaDebugInWasmoon(mLuaDebug, {
+      breakpoints: ['u_bp_block'],
+      onPaused: (bid, session) => {
+        luaPausedBlocks.push(bid);
+        session.resume();
+      },
+      preloadModules: [{ name: 'utils', luaSource: uLuaModDebug }],
+    });
+    expect(luaPausedBlocks).toContain('u_bp_block');
+    expect(luaLogs).toContain('TAG = HOT');
+    expect(luaLogs).toContain('IN_UTILS');
+    expect(luaLogs).toContain('ANS = 42');
+
+    const pyPausedBlocks: string[] = [];
+    const { logs: pyLogs } = await runPyDebugInMicroPython(mPyDebug, {
+      breakpoints: ['u_bp_block'],
+      onPaused: (bid, session) => {
+        pyPausedBlocks.push(bid);
+        session.resume();
+      },
+      preloadModules: [{ name: 'utils', pythonSource: uPyModDebug, lazyVfs: true }],
+    });
+    expect(pyPausedBlocks).toContain('u_bp_block');
+    expect(pyLogs).toContain('TAG = HOT');
+    expect(pyLogs).toContain('IN_UTILS');
+    expect(pyLogs).toContain('ANS = 42');
+
+    // 2. Infinite loop inside companion `timers.py` (`on_timer_0`) MUST trip Python callback watchdog via `moduleDebugCode`!
+    const infTimersWsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_timer',
+            id: 'inf_t0',
+            fields: { TIMER_ID: '0' },
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'controls_whileUntil',
+                  id: 'inf_loop',
+                  fields: { MODE: 'WHILE' },
+                  inputs: {
+                    BOOL: { block: { type: 'logic_boolean', id: 'inf_true', fields: { BOOL: 'TRUE' } } },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const infMainWsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'inf_start',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_start_timer',
+                  id: 'inf_st0',
+                  fields: { TIMER_ID: '0' },
+                  inputs: {
+                    PERIOD_MS: { shadow: { type: 'math_number', id: 'inf_20', fields: { NUM: 20 } } },
+                    REPEAT: { shadow: { type: 'math_number', id: 'inf_1', fields: { NUM: 1 } } },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const infHdl = {
+      id: 'h_inf_comp',
+      name: 'inf_vm',
+      color: '#ef4444',
+      autoStart: true,
+      capabilityConfigs: {},
+      entryScriptId: 'ic_main',
+      activeScriptId: 'ic_main',
+      updatedAt: '',
+      scripts: [
+        { id: 'ic_main', name: 'main', workspace: infMainWsJson, breakpoints: [], updatedAt: '' },
+        { id: 'ic_timers', name: 'timers', workspace: infTimersWsJson, breakpoints: [], updatedAt: '' },
+      ],
+    };
+    setActiveTimerConfig({ count: 4, aliases: {} });
+    const infMetas = buildHandleScriptsMeta(infHdl);
+    setActiveHandleScripts(infMetas, 'ic_timers');
+    const itWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(infTimersWsJson, itWs);
+    const infTimersModDebug = backendRegistry.get('python').generate(itWs).moduleDebugCode!;
+    itWs.dispose();
+
+    setActiveHandleScripts(infMetas, 'ic_main');
+    const imWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(infMainWsJson, imWs);
+    const infMainPyDebug = backendRegistry.get('python').generate(imWs).debugCode;
+    imWs.dispose();
+    setActiveHandleScripts([], null);
+    setActiveTimerConfig({ count: 8, aliases: {} });
+
+    await expect(
+      runPyDebugInMicroPython(infMainPyDebug, {
+        callbackTimeoutMs: 120,
+        preloadModules: [
+          { name: 'timers', pythonSource: infTimersModDebug, lazyVfs: true },
+        ],
+      }),
+    ).rejects.toThrow(/事件回调执行超时/);
   });
 });

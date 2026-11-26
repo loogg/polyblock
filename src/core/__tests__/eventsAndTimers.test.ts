@@ -5,6 +5,7 @@ import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
 import {
   setActiveHandleScripts,
+  setActiveHandleSharedFunctions,
   setActiveProjectCapabilities,
   setActiveTimerConfig,
 } from '../blocks/timerConfigBridge';
@@ -744,5 +745,347 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(sched.isTickExpired(startNearMax, 32, 0x00000008)).toBe(false); // wrapped, elapsed = 24
     expect(sched.isTickExpired(startNearMax, 32, 0x00000010)).toBe(true); // wrapped, elapsed = 32
     expect(sched.isTickExpired(startNearMax, 32, 0x00000025)).toBe(true); // wrapped, elapsed = 53
+  });
+
+  it('enforces entry-only singleton callbacks, universal central dispatch routing (on_button), 2-tier custom functions, and Lua nested local hoisting', () => {
+    // 1. Entry-only singleton callbacks: placing `on_start` / `on_run` / `on_stop` in a companion script is an ERROR in BOTH Lua & Python
+    setActiveHandleScripts(
+      [
+        {
+          id: 'e_main',
+          name: 'main',
+          isEntry: true,
+          declaredEvents: ['on_start'],
+          requiredScripts: [],
+          dispatchBranches: [],
+        },
+        {
+          id: 'e_sub',
+          name: 'worker',
+          isEntry: false,
+          declaredEvents: ['on_run', 'on_stop'],
+          requiredScripts: [],
+          dispatchBranches: [],
+        },
+      ],
+      'e_sub',
+    );
+    const companionSingletonWs = loadWs({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_run',
+            id: 'sub_run',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_print',
+                  id: 'sub_p',
+                  inputs: { VALUE: { block: { type: 'text', id: 'sub_t', fields: { TEXT: 'x' } } } },
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+    const subLua = backendRegistry.get('lua').generate(companionSingletonWs);
+    const subPy = backendRegistry.get('python').generate(companionSingletonWs);
+    expect(
+      subLua.diagnostics.some(
+        (d) => d.severity === 'error' && d.id.startsWith('non-entry-singleton-on_run'),
+      ),
+    ).toBe(true);
+    expect(
+      subPy.diagnostics.some(
+        (d) => d.severity === 'error' && d.id.startsWith('non-entry-singleton-on_run'),
+      ),
+    ).toBe(true);
+    companionSingletonWs.dispose();
+
+    // 2. Universal central dispatch router: `on_button` split across `main` (A press) & `buttons` (B press)
+    const buttonsWsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_button',
+            id: 'btn_b_hat',
+            fields: { KEY: 'B', EDGE: 'press' },
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_print',
+                  id: 'btn_b_p',
+                  inputs: { VALUE: { block: { type: 'text', id: 'btn_b_t', fields: { TEXT: 'B_PRESSED' } } } },
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const mainBtnWsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_button',
+            id: 'btn_a_hat',
+            fields: { KEY: 'A', EDGE: 'press' },
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_print',
+                  id: 'btn_a_p',
+                  inputs: { VALUE: { block: { type: 'text', id: 'btn_a_t', fields: { TEXT: 'A_PRESSED' } } } },
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const fakeBtnHdl = {
+      id: 'h_btn',
+      name: 'btn_vm',
+      color: '#4f46e5',
+      autoStart: true,
+      capabilityConfigs: {},
+      entryScriptId: 'b_main',
+      activeScriptId: 'b_main',
+      updatedAt: '',
+      scripts: [
+        { id: 'b_main', name: 'main', workspace: mainBtnWsJson, breakpoints: [], updatedAt: '' },
+        { id: 'b_sub', name: 'buttons', workspace: buttonsWsJson, breakpoints: [], updatedAt: '' },
+      ],
+    };
+    const btnMetas = buildHandleScriptsMeta(fakeBtnHdl);
+    setActiveHandleScripts(btnMetas, 'b_sub');
+    const bSubWs = loadWs(buttonsWsJson);
+    const bSubLua = backendRegistry.get('lua').generate(bSubWs);
+    const bSubPy = backendRegistry.get('python').generate(bSubWs);
+    expect(bSubLua.diagnostics).toHaveLength(0);
+    expect(bSubLua.code).toContain('function on_button_B_press(key, pressed)');
+    expect(bSubLua.code).not.toContain('function on_button(key, pressed)');
+    expect(bSubPy.code).toContain('def on_button_B_press(key, pressed):');
+    expect(bSubPy.code).not.toContain('def on_button(key, pressed):');
+    bSubWs.dispose();
+
+    setActiveHandleScripts(btnMetas, 'b_main');
+    const bMainWs = loadWs(mainBtnWsJson);
+    const bMainLua = backendRegistry.get('lua').generate(bMainWs);
+    const bMainPy = backendRegistry.get('python').generate(bMainWs);
+    expect(bMainLua.diagnostics).toHaveLength(0);
+    expect(bMainLua.code).toContain('require("buttons")');
+    expect(bMainLua.code).toContain('function on_button(key, pressed)');
+    expect(bMainLua.code).toContain('on_button_A_press(key, pressed)');
+    expect(bMainLua.code).toContain('if on_button_B_press then on_button_B_press(key, pressed) end');
+    expect(bMainPy.diagnostics).toHaveLength(0);
+    expect(bMainPy.code).toContain('import buttons');
+    expect(bMainPy.code).toContain('def on_button(key, pressed):');
+    expect(bMainPy.code).toContain('on_button_A_press(key, pressed)');
+    expect(bMainPy.code).toContain('_m.on_button_B_press(key, pressed)');
+    bMainWs.dispose();
+
+    // 3. 2-tier custom functions: private (`local function`) vs cross-file shared (`function` / `utils.double_val`)
+    const utilsFnWsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'procedures_defreturn',
+            id: 'fn_pub',
+            fields: { NAME: 'double_val' },
+            extraState: { params: [{ name: 'n', id: 'p_n' }] },
+            inputs: {
+              RETURN: {
+                block: {
+                  type: 'math_arithmetic',
+                  id: 'fn_mul',
+                  fields: { OP: 'MULTIPLY' },
+                  inputs: {
+                    A: { block: { type: 'variables_get', id: 'fn_gn', fields: { VAR: { id: 'p_n' } } } },
+                    B: { block: { type: 'math_number', id: 'fn_2', fields: { NUM: 2 } } },
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: 'procedures_defnoreturn',
+            id: 'fn_priv',
+            fields: { NAME: 'internal_helper' },
+            inputs: {
+              STACK: {
+                block: {
+                  type: 'poly_print',
+                  id: 'fn_pp',
+                  inputs: { VALUE: { block: { type: 'text', id: 'fn_pt', fields: { TEXT: 'priv' } } } },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [{ name: 'n', id: 'p_n' }],
+    };
+    const mainCallWsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'mc_s',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_print',
+                  id: 'mc_p',
+                  inputs: {
+                    VALUE: {
+                      block: {
+                        type: 'poly_call_shared_return',
+                        id: 'mc_call',
+                        extraState: {
+                          scriptName: 'utils',
+                          fnName: 'double_val',
+                          params: ['n'],
+                        },
+                        inputs: {
+                          ARG0: { block: { type: 'math_number', id: 'mc_21', fields: { NUM: 21 } } },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const fnHdl = {
+      id: 'h_fn',
+      name: 'fn_vm',
+      color: '#4f46e5',
+      autoStart: true,
+      capabilityConfigs: {},
+      sharedFunctions: ['double_val'],
+      entryScriptId: 'f_main',
+      activeScriptId: 'f_main',
+      updatedAt: '',
+      scripts: [
+        { id: 'f_main', name: 'main', workspace: mainCallWsJson, breakpoints: [], updatedAt: '' },
+        { id: 'f_utils', name: 'utils', workspace: utilsFnWsJson, breakpoints: [], updatedAt: '' },
+      ],
+    };
+    const fnMetas = buildHandleScriptsMeta(fnHdl);
+    setActiveHandleSharedFunctions(['double_val']);
+
+    setActiveHandleScripts(fnMetas, 'f_utils');
+    const uWs = loadWs(utilsFnWsJson);
+    const uLua = backendRegistry.get('lua').generate(uWs);
+    expect(uLua.code).toContain('function double_val(n)');
+    expect(uLua.code).not.toContain('local function double_val');
+    expect(uLua.code).toContain('local function internal_helper()');
+    uWs.dispose();
+
+    setActiveHandleScripts(fnMetas, 'f_main');
+    const mcWs = loadWs(mainCallWsJson);
+    const mcLua = backendRegistry.get('lua').generate(mcWs);
+    const mcPy = backendRegistry.get('python').generate(mcWs);
+    expect(mcLua.diagnostics).toHaveLength(0);
+    expect(mcLua.code).toContain('require("utils")');
+    expect(mcLua.code).toContain('print(double_val(21))');
+    expect(mcPy.diagnostics).toHaveLength(0);
+    expect(mcPy.code).toContain('import utils');
+    expect(mcPy.code).toContain('print(utils.double_val(21))');
+    expect(mcPy.debugCode).toContain('await _poly_call_mod("utils", "double_val", 21)');
+
+    // Dangling shared function call check when `double_val` is un-shared
+    setActiveHandleSharedFunctions([]);
+    const danglingRes = backendRegistry.get('lua').generate(mcWs);
+    expect(
+      danglingRes.diagnostics.some(
+        (d) => d.severity === 'error' && d.id.startsWith('dangling-shared-fn-'),
+      ),
+    ).toBe(true);
+    mcWs.dispose();
+    setActiveHandleScripts([], null);
+    setActiveHandleSharedFunctions(null);
+
+    // 4. Lua function-top hoisting of nested `poly_local_set` inside `if/else`
+    const hoistWs = loadWs({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'hs_s',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_local_set',
+                  id: 'hs_flat',
+                  fields: { NAME: 'temp' },
+                  inputs: { VALUE: { block: { type: 'math_number', id: 'hs_n', fields: { NUM: 42 } } } },
+                  next: {
+                    block: {
+                      type: 'controls_if',
+                      id: 'hs_if',
+                      extraState: { hasElse: true },
+                      inputs: {
+                        IF0: {
+                          block: {
+                            type: 'logic_compare',
+                            id: 'hs_cmp',
+                            fields: { OP: 'GT' },
+                            inputs: {
+                              A: { block: { type: 'poly_local_get', id: 'hs_gt', fields: { NAME: 'temp' } } },
+                              B: { block: { type: 'math_number', id: 'hs_30', fields: { NUM: 30 } } },
+                            },
+                          },
+                        },
+                        DO0: {
+                          block: {
+                            type: 'poly_local_set',
+                            id: 'hs_msg1',
+                            fields: { NAME: 'msg' },
+                            inputs: { VALUE: { block: { type: 'text', id: 'hs_hot', fields: { TEXT: 'hot' } } } },
+                          },
+                        },
+                        ELSE: {
+                          block: {
+                            type: 'poly_local_set',
+                            id: 'hs_msg2',
+                            fields: { NAME: 'msg' },
+                            inputs: { VALUE: { block: { type: 'text', id: 'hs_cool', fields: { TEXT: 'cool' } } } },
+                          },
+                        },
+                      },
+                      next: {
+                        block: {
+                          type: 'poly_print',
+                          id: 'hs_pr',
+                          inputs: { VALUE: { block: { type: 'poly_local_get', id: 'hs_gm', fields: { NAME: 'msg' } } } },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+    const hoistLua = backendRegistry.get('lua').generate(hoistWs);
+    expect(hoistLua.code).toContain('function on_start()\n  local msg\n  local temp = 42');
+    expect(hoistLua.code).not.toContain('local msg = ');
+    expect(hoistLua.code).toContain("msg = 'hot'");
+    expect(hoistLua.code).toContain("msg = 'cool'");
+    hoistWs.dispose();
   });
 });

@@ -2,8 +2,10 @@ import * as Blockly from 'blockly';
 import { luaGenerator, Order as LuaOrder } from 'blockly/lua';
 import { Order as PyOrder, pythonGenerator } from 'blockly/python';
 import {
+  buildLuaHoistedLocalsLine,
   buildPythonGlobalLineForBlocks,
   codegenContext,
+  formatPythonVarRef,
 } from '../backends/codegenContext';
 import type { BlockCategorySpec, ToolboxBlockSpec } from '../blocks/catalog';
 import { createChannelIdField } from '../blocks/channelField';
@@ -11,6 +13,9 @@ import {
   DEFAULT_TIMER_POOL_KEY,
   formatChannelLabel,
   getActiveChannelPoolConfig,
+  getActiveHandleScriptId,
+  getActiveHandleScripts,
+  isCurrentHandleScriptEntry,
 } from '../blocks/timerConfigBridge';
 import { hasCapability } from '../capabilities/registry';
 import { BUILTIN_EXTENSION_PACKS } from './builtinPacks';
@@ -451,10 +456,10 @@ function renderTemplate(
       }
 
       if (argType === 'field_variable') {
-        const varId = block.getFieldValue(argName);
+        const varId = String(block.getFieldValue(argName) || '');
         return lang === 'lua'
           ? luaGenerator.getVariableName(varId)
-          : pythonGenerator.getVariableName(varId);
+          : formatPythonVarRef(varId, pythonGenerator, block);
       }
 
       rawValue = String(block.getFieldValue(argName) ?? '');
@@ -748,6 +753,19 @@ function hoistImports(generator: unknown, imports: string[] | undefined): void {
   }
 }
 
+function shouldExtractDispatchBranchesForEvent(
+  hatSpec: ExtensionHatSpec,
+): boolean {
+  if (hatSpec.extractBranchFnPrefix) return true;
+  if (!isCurrentHandleScriptEntry()) return true;
+  const curId = getActiveHandleScriptId();
+  return getActiveHandleScripts().some(
+    (s) =>
+      s.id !== curId &&
+      (s.dispatchBranches ?? []).some((b) => b.eventName === hatSpec.eventName),
+  );
+}
+
 function registerHatGenerators(
   pack: PolyExtensionPack,
   b: ExtensionBlockDef,
@@ -755,26 +773,28 @@ function registerHatGenerators(
   section: ResolvedPackSection,
 ): void {
   const paramsStr = (hatSpec.params ?? []).join(', ');
+  const branchParamsStr = hatSpec.extractBranchFnPrefix ? '' : paramsStr;
 
   // --- Lua Hat Generator ---
   luaGenerator.forBlock[b.type] = (block, generator) => {
     hoistImports(generator, hatSpec.imports?.lua);
 
     if (hatSpec.mode === 'singleton') {
+      const hoistedLocals = buildLuaHoistedLocalsLine([block], 'BODY', '  ');
       const body = generator.statementToCode(block, 'BODY');
       if (codegenContext.debugPass) {
-        return `function ${hatSpec.eventName}(${paramsStr})\n${body}end\n`;
+        return `function ${hatSpec.eventName}(${paramsStr})\n${hoistedLocals}${body}end\n`;
       }
       return (
         `${SENTINEL_START}'${block.id}'__\n` +
         `function ${hatSpec.eventName}(${paramsStr})\n` +
-        `${body}` +
+        `${hoistedLocals}${body}` +
         `end\n` +
         `${SENTINEL_END}'${block.id}'__\n`
       );
     }
 
-    // Dispatch mode: aggregate all enabled hats of this block type into ONE top-level function
+    // Dispatch mode: aggregate all enabled hats of this block type
     const dispatchKey = `${hatSpec.eventName}:${b.type}`;
     if (codegenContext.emittedDispatchEvents.has(dispatchKey)) return '';
     codegenContext.emittedDispatchEvents.add(dispatchKey);
@@ -784,10 +804,10 @@ function registerHatGenerators(
       .filter((top) => top.type === b.type && !top.isShadow() && top.isEnabled());
     if (matchingHats.length === 0) return '';
 
-    if (hatSpec.extractBranchFnPrefix) {
-      // Scheme A centralized routing: emit ONLY the extracted global branch functions (`on_timer_0`, etc.).
-      // The handle's entry script (`main.lua`) aggregates all branches across the handle into ONE `on_timer(id)`!
-      const fnPrefix = hatSpec.extractBranchFnPrefix;
+    if (shouldExtractDispatchBranchesForEvent(hatSpec)) {
+      // Centralized entry routing: emit ONLY the extracted global branch functions (`on_timer_0`, `on_button_A_press`, etc.).
+      // The handle's entry script (`main.lua`) aggregates ALL branches across the handle into ONE router!
+      const fnPrefix = hatSpec.extractBranchFnPrefix ?? `${hatSpec.eventName}_`;
       const usedFnNames = new Set<string>();
       const fnDefs: string[] = [];
 
@@ -821,16 +841,17 @@ function registerHatGenerators(
         }
         usedFnNames.add(fnName);
 
+        const hoistedLocals = buildLuaHoistedLocalsLine([hatBlk], 'BODY', '  ');
         const rawBody = generator.statementToCode(hatBlk, 'BODY');
         const headerComment = comment.trim() ? `${comment.trim()}\n` : '';
         if (codegenContext.debugPass) {
-          fnDefs.push(`function ${fnName}()\n${rawBody}end\n`);
+          fnDefs.push(`function ${fnName}(${branchParamsStr})\n${hoistedLocals}${rawBody}end\n`);
         } else {
           fnDefs.push(
             `${SENTINEL_START}'${hatBlk.id}'__\n` +
               `${headerComment}` +
-              `function ${fnName}()\n` +
-              `${rawBody}` +
+              `function ${fnName}(${branchParamsStr})\n` +
+              `${hoistedLocals}${rawBody}` +
               `end\n` +
               `${SENTINEL_END}'${hatBlk.id}'__\n`,
           );
@@ -840,6 +861,7 @@ function registerHatGenerators(
       return `${fnDefs.join('\n')}`;
     }
 
+    const hoistedInlineLocals = buildLuaHoistedLocalsLine(matchingHats, 'BODY', '  ');
     const branches: string[] = [];
     matchingHats.forEach((hatBlk, idx) => {
       const kw = idx === 0 ? 'if' : 'elseif';
@@ -863,7 +885,7 @@ function registerHatGenerators(
       }
     });
 
-    return `function ${hatSpec.eventName}(${paramsStr})\n${branches.join('')}  end\nend\n`;
+    return `function ${hatSpec.eventName}(${paramsStr})\n${hoistedInlineLocals}${branches.join('')}  end\nend\n`;
   };
 
   // --- Python Hat Generator ---
@@ -871,6 +893,7 @@ function registerHatGenerators(
     hoistImports(generator, hatSpec.imports?.python);
     const defKw = codegenContext.debugPass ? 'async def' : 'def';
     const formalParams = hatSpec.params ?? [];
+    const branchFormalParams = hatSpec.extractBranchFnPrefix ? [] : formalParams;
 
     if (hatSpec.mode === 'singleton') {
       const body = generator.statementToCode(block, 'BODY');
@@ -900,10 +923,8 @@ function registerHatGenerators(
       .filter((top) => top.type === b.type && !top.isShadow() && top.isEnabled());
     if (matchingHats.length === 0) return '';
 
-    if (hatSpec.extractBranchFnPrefix) {
-      // Scheme A centralized routing: emit ONLY the extracted branch functions (`def on_timer_0():`).
-      // The handle's entry script (`main.py`) aggregates all branches across the handle into ONE `on_timer(id)`!
-      const fnPrefix = hatSpec.extractBranchFnPrefix;
+    if (shouldExtractDispatchBranchesForEvent(hatSpec)) {
+      const fnPrefix = hatSpec.extractBranchFnPrefix ?? `${hatSpec.eventName}_`;
       const usedFnNames = new Set<string>();
       const fnDefs: string[] = [];
 
@@ -938,16 +959,20 @@ function registerHatGenerators(
         usedFnNames.add(fnName);
 
         const rawBody = generator.statementToCode(hatBlk, 'BODY');
-        const branchGlobalLine = buildPythonGlobalLineForBlocks([hatBlk], generator);
+        const branchGlobalLine = buildPythonGlobalLineForBlocks(
+          [hatBlk],
+          generator,
+          branchFormalParams,
+        );
         const safeBody = rawBody.trim() ? rawBody : '  pass\n';
         const headerComment = comment.trim() ? `${comment.trim()}\n` : '';
         if (codegenContext.debugPass) {
-          fnDefs.push(`${defKw} ${fnName}():\n${branchGlobalLine}${safeBody}\n`);
+          fnDefs.push(`${defKw} ${fnName}(${branchParamsStr}):\n${branchGlobalLine}${safeBody}\n`);
         } else {
           fnDefs.push(
             `${SENTINEL_START}'${hatBlk.id}'__\n` +
               `${headerComment}` +
-              `${defKw} ${fnName}():\n` +
+              `${defKw} ${fnName}(${branchParamsStr}):\n` +
               `${branchGlobalLine}${safeBody}` +
               `${SENTINEL_END}'${hatBlk.id}'__\n`,
           );
@@ -1727,7 +1752,8 @@ class ExtensionRegistry {
 
   /**
    * Renders extracted dispatch branch metadata from either serialized JSON fields or a live Blockly block.
-   * Returns null for hats that do not declare `extractBranchFnPrefix`.
+   * Works generically for ALL `mode: 'dispatch'` hats (both `on_timer` with explicit `extractBranchFnPrefix`
+   * and `on_button` / custom dispatch hats that route centrally in `main` when split across files).
    */
   renderExtractedDispatchBranchFromFields(
     blockType: string,
@@ -1740,17 +1766,22 @@ class ExtensionRegistry {
     baseFnName: string;
     dupKey: string;
     params: string[];
+    passParams: boolean;
+    alwaysExtract: boolean;
     conditionLua: string;
     conditionPython: string;
     commentLua: string;
     commentPython: string;
   } | null {
     const found = this.getHatBlockDef(blockType);
-    const fnPrefix = found?.hat.extractBranchFnPrefix;
-    if (!found || found.hat.mode !== 'dispatch' || !fnPrefix) {
+    if (!found || found.hat.mode !== 'dispatch') {
       return null;
     }
     const { section, hat } = found;
+    const alwaysExtract = Boolean(hat.extractBranchFnPrefix);
+    const fnPrefix = hat.extractBranchFnPrefix ?? `${hat.eventName}_`;
+    const params = [...(hat.params ?? [])];
+    const passParams = !alwaysExtract && params.length > 0;
     const rawKey = hat.duplicateKeyTemplate
       ? renderTemplateFromRawFields(hat.duplicateKeyTemplate, fields, section)
       : String(fallbackIndex);
@@ -1761,7 +1792,9 @@ class ExtensionRegistry {
       fnPrefix,
       baseFnName: `${fnPrefix}${safeSuffix}`,
       dupKey: rawKey,
-      params: [...(hat.params ?? [])],
+      params,
+      passParams,
+      alwaysExtract,
       conditionLua: hat.conditionLua
         ? renderTemplateFromRawFields(hat.conditionLua, fields, section)
         : 'true',

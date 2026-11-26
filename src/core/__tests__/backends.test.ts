@@ -113,8 +113,9 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     expect(luaRes.variableNames).toContain('sum');
 
     const pyRes = backendRegistry.get('python').generate(ws);
-    expect(pyRes.code).toContain('import time');
-    expect(pyRes.code).toContain('time.sleep(0.35)');
+    expect(pyRes.code).toContain('sleep_ms(350)');
+    expect(pyRes.code).not.toContain('import time');
+    expect(pyRes.code).not.toContain('time.sleep');
     expect(pyRes.code).not.toContain('_poly.step');
     expect(pyRes.code).not.toContain('_poly.sleep');
     expect(pyRes.debugCode).toContain('await _poly_tick(');
@@ -123,6 +124,31 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     expect(pyRes.variableNames).toContain('sum');
 
     ws.dispose();
+
+    // poly_clear_log emits a clean comment for hardware export, keeping sentinel ONLY in sandbox debugCode
+    const clearWs = createLoadedWorkspace({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'clr_s',
+            inputs: {
+              BODY: { block: { type: 'poly_clear_log', id: 'clr_b' } },
+            },
+          },
+        ],
+      },
+    });
+    const clearLua = backendRegistry.get('lua').generate(clearWs);
+    expect(clearLua.code).not.toContain('__POLYBLOCK_CLEAR__');
+    expect(clearLua.code).toContain('-- 清空控制台');
+    expect(clearLua.debugCode).toContain('print("__POLYBLOCK_CLEAR__")');
+    const clearPy = backendRegistry.get('python').generate(clearWs);
+    expect(clearPy.code).not.toContain('__POLYBLOCK_CLEAR__');
+    expect(clearPy.code).toContain('# 清空控制台');
+    expect(clearPy.debugCode).toContain('print("__POLYBLOCK_CLEAR__")');
+    clearWs.dispose();
   });
 
   it('pauses on breakpoints and advances with stepNext / resume in WorkerDebugSession', async () => {

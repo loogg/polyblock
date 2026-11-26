@@ -39,6 +39,7 @@ import {
 import {
   formatChannelLabel,
   getActiveChannelPoolConfig,
+  getActiveHandleSharedFunctions,
   registerChannelAliasPromptHandler,
   setActiveChannelPoolConfigs,
   setActiveProjectCapabilities,
@@ -155,11 +156,16 @@ function declutterIfOverlapping(ws: Blockly.WorkspaceSvg): void {
   }
 }
 
+export type HandleFunctionMutation =
+  | { kind: 'rename'; oldName: string; newName: string }
+  | { kind: 'delete'; name: string };
+
 export interface BlocklyWorkbenchHandle {
   getWorkspace: () => Blockly.WorkspaceSvg | null;
   loadWorkspaceJson: (state: Record<string, unknown>) => void;
   saveWorkspaceJson: () => Record<string, unknown>;
   createVariable: (name: string, scope: VariableScopeKind) => void;
+  createProcedure: (name: string, hasReturn: boolean) => void;
   refreshToolbox: () => void;
   focusBlock: (blockId: string) => void;
   resize: () => void;
@@ -178,6 +184,9 @@ interface BlocklyWorkbenchProps {
   onWorkspaceChange: (workspace: Blockly.WorkspaceSvg) => void;
   onHandleVariableEvent?: (mutation: HandleVariableMutation) => void;
   onRequestCreateVariable?: (initialScope: VariableScopeKind) => void;
+  onRequestCreateSharedFunction?: () => void;
+  onToggleSharedFunction?: (fnName: string) => void;
+  onHandleFunctionEvent?: (mutation: HandleFunctionMutation) => void;
   onSelectBlock: (blockId: string | null) => void;
   onToggleBreakpoint: (blockId: string) => void;
   onEditChannelAlias: (req: ChannelAliasPromptRequest) => void;
@@ -189,6 +198,7 @@ interface BlocklyWorkbenchProps {
 let breakpointMenuRegistered = false;
 let currentToggleBpHandler: ((blockId: string) => void) | null = null;
 let currentEditAliasHandler: ((req: ChannelAliasPromptRequest) => void) | null = null;
+let currentToggleSharedFnHandler: ((fnName: string) => void) | null = null;
 let currentBreakpointsSet = new Set<string>();
 
 function registerBreakpointContextMenu(): void {
@@ -282,8 +292,43 @@ function registerBreakpointContextMenu(): void {
     },
   };
 
+  const toggleSharedFnMenuItem: Blockly.ContextMenuRegistry.RegistryItem = {
+    id: 'polyblock_toggle_shared_function',
+    scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+    weight: -5.5,
+    displayText: (scope) => {
+      const fnName = String(scope.block?.getFieldValue('NAME') || '').trim();
+      const isShared = (getActiveHandleSharedFunctions() ?? []).includes(fnName);
+      return isShared
+        ? '转为本文件私有函数（仅本脚本可用）'
+        : '设为跨文件公共函数（同句柄共享）';
+    },
+    preconditionFn: (scope) => {
+      const blk = scope.block;
+      if (
+        !blk ||
+        blk.isInFlyout ||
+        (blk.type !== 'procedures_defnoreturn' && blk.type !== 'procedures_defreturn')
+      ) {
+        return 'hidden';
+      }
+      return 'enabled';
+    },
+    callback: (scope) => {
+      const fnName = String(scope.block?.getFieldValue('NAME') || '').trim();
+      if (fnName) {
+        currentToggleSharedFnHandler?.(fnName);
+      }
+    },
+  };
+
   try {
     Blockly.ContextMenuRegistry.registry.register(bpMenuItem);
+  } catch {
+    // Already registered in HMR
+  }
+  try {
+    Blockly.ContextMenuRegistry.registry.register(toggleSharedFnMenuItem);
   } catch {
     // Already registered in HMR
   }
@@ -317,6 +362,9 @@ export const BlocklyWorkbench = forwardRef<
     onWorkspaceChange,
     onHandleVariableEvent,
     onRequestCreateVariable,
+    onRequestCreateSharedFunction,
+    onToggleSharedFunction,
+    onHandleFunctionEvent,
     onSelectBlock,
     onToggleBreakpoint,
     onEditChannelAlias,
@@ -330,6 +378,8 @@ export const BlocklyWorkbench = forwardRef<
   const onChangeRef = useRef(onWorkspaceChange);
   const onHandleVarRef = useRef(onHandleVariableEvent);
   const onRequestCreateVarRef = useRef(onRequestCreateVariable);
+  const onRequestCreateSharedFnRef = useRef(onRequestCreateSharedFunction);
+  const onHandleFnRef = useRef(onHandleFunctionEvent);
   const suppressedCreateNamesRef = useRef<Set<string>>(new Set());
   const onSelectRef = useRef(onSelectBlock);
   const onOpenTimerCfgRef = useRef(onOpenHandleTimerSettings);
@@ -364,12 +414,15 @@ export const BlocklyWorkbench = forwardRef<
   onChangeRef.current = onWorkspaceChange;
   onHandleVarRef.current = onHandleVariableEvent;
   onRequestCreateVarRef.current = onRequestCreateVariable;
+  onRequestCreateSharedFnRef.current = onRequestCreateSharedFunction;
+  onHandleFnRef.current = onHandleFunctionEvent;
   onSelectRef.current = onSelectBlock;
   onOpenTimerCfgRef.current = onOpenHandleTimerSettings;
   enabledCapsRef.current = enabledCapabilities;
   extraCatsRef.current = extraCategories;
   currentToggleBpHandler = onToggleBreakpoint;
   currentEditAliasHandler = onEditChannelAlias;
+  currentToggleSharedFnHandler = onToggleSharedFunction ?? null;
   registerChannelAliasPromptHandler(onEditChannelAlias);
   currentBreakpointsSet = new Set(breakpoints);
 
@@ -465,6 +518,10 @@ export const BlocklyWorkbench = forwardRef<
       }
     });
 
+    ws.registerButtonCallback('CREATE_SHARED_FUNCTION', () => {
+      onRequestCreateSharedFnRef.current?.();
+    });
+
     ws.registerButtonCallback(OPEN_HANDLE_CHANNEL_CONFIG_CALLBACK, () => {
       onOpenTimerCfgRef.current();
     });
@@ -553,6 +610,61 @@ export const BlocklyWorkbench = forwardRef<
           }
           return curr;
         });
+      } else if (event.type === Blockly.Events.BLOCK_CHANGE) {
+        const ce = event as Blockly.Events.BlockChange;
+        const blk = ce.blockId ? ws.getBlockById(ce.blockId) : null;
+        if (
+          blk &&
+          (blk.type === 'procedures_defnoreturn' || blk.type === 'procedures_defreturn')
+        ) {
+          if (
+            ce.element === 'field' &&
+            ce.name === 'NAME' &&
+            typeof ce.oldValue === 'string' &&
+            typeof ce.newValue === 'string' &&
+            ce.oldValue.trim() &&
+            ce.newValue.trim() &&
+            ce.oldValue.trim() !== ce.newValue.trim()
+          ) {
+            onHandleFnRef.current?.({
+              kind: 'rename',
+              oldName: ce.oldValue.trim(),
+              newName: ce.newValue.trim(),
+            });
+          }
+          if (activeCatRef.current === 'functions') {
+            setTimeout(() => refreshFlyout('functions', ''), 0);
+          }
+        }
+      } else if (event.type === Blockly.Events.BLOCK_DELETE) {
+        const de = event as Blockly.Events.BlockDelete;
+        const oldJson = de.oldJson as
+          | { type?: string; fields?: { NAME?: string } }
+          | undefined;
+        if (
+          oldJson &&
+          (oldJson.type === 'procedures_defnoreturn' ||
+            oldJson.type === 'procedures_defreturn')
+        ) {
+          const fnName = String(oldJson.fields?.NAME ?? '').trim();
+          if (fnName) {
+            onHandleFnRef.current?.({ kind: 'delete', name: fnName });
+          }
+          if (activeCatRef.current === 'functions') {
+            setTimeout(() => refreshFlyout('functions', ''), 0);
+          }
+        }
+      } else if (event.type === Blockly.Events.BLOCK_CREATE) {
+        const cre = event as Blockly.Events.BlockCreate;
+        const blk = cre.blockId ? ws.getBlockById(cre.blockId) : null;
+        if (
+          blk &&
+          (blk.type === 'procedures_defnoreturn' ||
+            blk.type === 'procedures_defreturn') &&
+          activeCatRef.current === 'functions'
+        ) {
+          setTimeout(() => refreshFlyout('functions', ''), 0);
+        }
       }
 
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -715,6 +827,47 @@ export const BlocklyWorkbench = forwardRef<
         suppressedCreateNamesRef.current.add(trimmed);
         ws.getVariableMap().createVariable(trimmed);
         refreshFlyout(activeCatRef.current, searchQueryRef.current);
+      },
+      createProcedure: (name: string, hasReturn: boolean) => {
+        const ws = workspaceRef.current;
+        const trimmed = name.trim();
+        if (!ws || !trimmed) return;
+        const blockType = hasReturn
+          ? 'procedures_defreturn'
+          : 'procedures_defnoreturn';
+        const tops = ws
+          .getTopBlocks(true)
+          .filter((b) => !b.isShadow()) as Blockly.BlockSvg[];
+        let targetX = 36;
+        let targetY = 36;
+        if (tops.length > 0) {
+          let maxBottom = 28;
+          for (const top of tops) {
+            const xy = top.getRelativeToSurfaceXY();
+            const hw = top.getHeightWidth();
+            maxBottom = Math.max(maxBottom, xy.y + hw.height);
+          }
+          targetX = 36;
+          targetY = maxBottom + 44;
+        }
+        Blockly.Events.setGroup(true);
+        let created: Blockly.BlockSvg | null = null;
+        try {
+          created = ws.newBlock(blockType) as Blockly.BlockSvg;
+          created.setFieldValue(trimmed, 'NAME');
+          created.initSvg();
+          created.render();
+          created.moveBy(targetX, targetY);
+        } finally {
+          Blockly.Events.setGroup(false);
+        }
+        if (created) {
+          Blockly.common.setSelected(created);
+          ws.centerOnBlock(created.id);
+          onSelectRef.current(created.id);
+        }
+        refreshFlyout(activeCatRef.current, searchQueryRef.current);
+        onChangeRef.current(ws);
       },
       refreshToolbox: () => {
         refreshFlyout(activeCatRef.current, searchQueryRef.current);

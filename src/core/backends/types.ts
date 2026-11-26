@@ -12,6 +12,12 @@ export interface GeneratedCodeResult {
   code: string;
   /** Instrumented async runtime script used only by browser sandbox runners for stepping & breakpoints. */
   debugCode: string;
+  /**
+   * Instrumented module-level debug script (without top-level event-loop driver / prelude)
+   * used when mounting companion sibling scripts (`timers`, `utils`, etc.) inside browser sandboxes
+   * so breakpoints, single-step highlighting, and watchdog timeouts work across ALL files in a handle.
+   */
+  moduleDebugCode?: string;
   sourceMap: Record<string, SourceLineRange>;
   lineToBlock: Record<number, string>;
   diagnostics: DiagnosticItem[];
