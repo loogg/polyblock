@@ -1,5 +1,6 @@
 // @vitest-environment node
 import * as Blockly from 'blockly';
+import { loadMicroPython } from '@micropython/micropython-webassembly-pyscript';
 import { LuaFactory } from 'wasmoon';
 import { beforeEach, describe, expect, it } from 'vitest';
 import '../backends/luaBackend';
@@ -14,6 +15,7 @@ import {
   moduleNameToRelativeFile,
 } from '../export/bundleExporter';
 import { computeCrc32 } from '../export/zipWriter';
+import { RT_PACK } from '../extensions/builtinPacks';
 import {
   extractImportedModuleNames,
   inspectPackImportSourceMatch,
@@ -212,6 +214,96 @@ describe('3-tier pure-scope ModuleResolver, Conflict Detection, Scanner & Target
     expect(resWithHandle.conflicts).toHaveLength(0);
     expect(resWithHandle.resolvedByName.get('rt')?.tier).toBe('handle');
     expect(resWithHandle.overrides).toHaveLength(1);
+  });
+
+  it('standardizes RT_PACK.sandboxMock identically to all other packs (zero worker/resolver special cases) and runs cleanly in Lua 5.4 & MicroPython', async () => {
+    expect(RT_PACK.sandboxMock?.moduleName).toBe('rt');
+    expect(RT_PACK.sandboxMock?.luaSource).toContain('__poly_rt_tick');
+    expect(RT_PACK.sandboxMock?.pythonSource).toContain('_poly.rt_tick');
+
+    // When `rt` is NOT enabled, resolver does NOT mount `rt` at all
+    const withoutRt = resolveProjectModules({ enabledCapabilities: [] });
+    expect(withoutRt.resolvedByName.has('rt')).toBe(false);
+    expect(withoutRt.sandboxMountOrder.some((m) => m.moduleName === 'rt')).toBe(
+      false,
+    );
+
+    // When `rt` IS enabled, resolver mounts RT_PACK.sandboxMock through standard pipeline
+    const withRt = resolveProjectModules({ enabledCapabilities: ['rt'] });
+    expect(withRt.resolvedByName.get('rt')?.tier).toBe('global');
+    expect(withRt.resolvedByName.get('rt')?.delivery).toBe('sandbox-mock');
+    expect(withRt.exportLibs).toHaveLength(0);
+    const rtMod = withRt.sandboxMountOrder.find((m) => m.moduleName === 'rt');
+    expect(rtMod?.luaSource).toBeTruthy();
+    expect(rtMod?.pythonSource).toBeTruthy();
+
+    // Execute RT_PACK.sandboxMock.luaSource directly in Wasmoon Lua 5.4
+    const lua = await new LuaFactory().createEngine();
+    try {
+      lua.global.set('__poly_rt_tick', () => 1234);
+      lua.global.set('__poly_rt_ms_to_tick', (ms: number) => Math.ceil(ms));
+      lua.global.set('__poly_rt_is_expired', (s: number, t: number) => 1234 - s >= t);
+      await lua.doString(
+        `package.preload["rt"] = load(${JSON.stringify(rtMod!.luaSource!)})`,
+      );
+      expect(await lua.doString('local rt = require("rt"); return rt.tick()')).toBe(
+        1234,
+      );
+      expect(
+        await lua.doString('local rt = require("rt"); return rt.is_expired(1000, 200)'),
+      ).toBe(true);
+    } finally {
+      lua.global.close();
+    }
+
+    // Execute RT_PACK.sandboxMock.pythonSource via the EXACT same scoped-proxy mount as python.worker.ts!
+    const pyLines: string[] = [];
+    const mp = await loadMicroPython({
+      linebuffer: true,
+      stdout: (line: string) => pyLines.push(line),
+    });
+    mp.registerJsModule('_poly', {
+      rt_set_run_period: () => {},
+      rt_start_run: () => {},
+      rt_stop_run: () => {},
+      rt_start_timer: () => {},
+      rt_stop_timer: () => {},
+      rt_get_timer_value: () => 0,
+      rt_is_timer_running: () => false,
+      rt_tick: () => 5678,
+      rt_ms_to_tick: (ms: number) => Math.ceil(ms),
+      rt_is_expired: (s: number, t: number) => 5678 - s >= t,
+    });
+    const rewrittenPy = rtMod!.pythonSource!.replace(
+      /\bimport\s+_poly\b/g,
+      'import _poly__rt as _poly',
+    );
+    mp.runPython(`
+import sys, _poly as _poly_base
+class _PolyScopedProxy:
+  def rt_tick(self): return _poly_base.rt_tick()
+  def rt_ms_to_tick(self, ms): return _poly_base.rt_ms_to_tick(ms)
+  def rt_is_expired(self, s, t): return _poly_base.rt_is_expired(s, t)
+  def rt_set_run_period(self, ms): return _poly_base.rt_set_run_period(ms)
+  def rt_start_run(self): return _poly_base.rt_start_run()
+  def rt_stop_run(self): return _poly_base.rt_stop_run()
+  def rt_start_timer(self, tid, p, r=0): return _poly_base.rt_start_timer(tid, p, r)
+  def rt_stop_timer(self, tid): return _poly_base.rt_stop_timer(tid)
+  def rt_get_timer_value(self, tid): return _poly_base.rt_get_timer_value(tid)
+  def rt_is_timer_running(self, tid): return _poly_base.rt_is_timer_running(tid)
+sys.modules["_poly__rt"] = _PolyScopedProxy()
+_ns = {'_poly': sys.modules["_poly__rt"]}
+exec(${JSON.stringify(rewrittenPy)}, _ns)
+class _M: pass
+_m = _M()
+for _k, _v in _ns.items():
+  if not _k.startswith("__"):
+    setattr(_m, _k, _v)
+sys.modules["rt"] = _m
+import rt
+print(rt.tick(), rt.is_expired(5000, 500))
+`);
+    expect(pyLines.join('\n')).toContain('5678 True');
   });
 
   it('detects same-tier moduleName conflicts across project and global scopes and surfaces them in workspace diagnostics', () => {

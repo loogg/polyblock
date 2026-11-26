@@ -86,21 +86,6 @@ print = function(...)
   __poly_print(table.concat(out, "\\t"))
 end
 
-package.preload["rt"] = function()
-  return {
-    set_run_period = __poly_rt_set_run_period,
-    start_run = __poly_rt_start_run,
-    stop_run = __poly_rt_stop_run,
-    start_timer = __poly_rt_start_timer,
-    stop_timer = __poly_rt_stop_timer,
-    get_timer_value = __poly_rt_get_timer_value,
-    is_timer_running = __poly_rt_is_timer_running,
-    tick = __poly_rt_tick,
-    ms_to_tick = __poly_rt_ms_to_tick,
-    is_expired = __poly_rt_is_expired,
-  }
-end
-
 __poly_event_mode = false
 __poly_start_co = nil
 

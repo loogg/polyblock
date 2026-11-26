@@ -5,6 +5,7 @@ import {
   CheckSquare,
   Cpu,
   Download,
+  Eye,
   FileCode2,
   Paperclip,
   Square,
@@ -37,6 +38,7 @@ import {
 } from '../../core/extensions/scriptLibScanner';
 import type { PolyExtensionPack } from '../../core/extensions/types';
 import type { ScriptLanguageId, TargetProfile } from '../../types/project';
+import { ExtensionSourceModal } from '../ExtensionSourceModal';
 import { ExtensionSpecModal } from '../ExtensionSpecModal';
 
 interface ExtensionsPageProps {
@@ -94,6 +96,10 @@ export function ExtensionsPage({
   onNotify,
 }: ExtensionsPageProps) {
   const [showSpecModal, setShowSpecModal] = useState(false);
+  const [viewingPack, setViewingPack] = useState<{
+    pack: PolyExtensionPack;
+    scopeLabel: string;
+  } | null>(null);
   const extFileInputRef = useRef<HTMLInputElement | null>(null);
   const boardFileInputRef = useRef<HTMLInputElement | null>(null);
   const attachLibsInputRef = useRef<HTMLInputElement | null>(null);
@@ -299,6 +305,21 @@ export function ExtensionsPage({
           </span>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button
+              type="button"
+              className="btn-ghost"
+              style={{ padding: '4px 6px' }}
+              title="只读查看扩展包 .polyext.json 与 Lua/Python 源码"
+              aria-label={`查看 ${pack.name} 源码`}
+              onClick={() =>
+                setViewingPack({
+                  pack,
+                  scopeLabel: isCustom ? '自定义全局包' : '预装全局包',
+                })
+              }
+            >
+              <Eye size={13} />
+            </button>
             {isCustom && (
               <>
                 <button
@@ -637,6 +658,15 @@ export function ExtensionsPage({
 
       {showSpecModal && (
         <ExtensionSpecModal onClose={() => setShowSpecModal(false)} />
+      )}
+
+      {viewingPack && (
+        <ExtensionSourceModal
+          pack={viewingPack.pack}
+          scopeLabel={viewingPack.scopeLabel}
+          onClose={() => setViewingPack(null)}
+          onNotify={onNotify}
+        />
       )}
     </div>
   );

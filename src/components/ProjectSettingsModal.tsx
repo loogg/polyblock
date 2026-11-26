@@ -4,6 +4,7 @@ import {
   Copy,
   Cpu,
   Download,
+  Eye,
   FileCode2,
   Globe,
   Paperclip,
@@ -59,6 +60,7 @@ import type {
   ScriptLanguageId,
   TargetProfile,
 } from '../types/project';
+import { ExtensionSourceModal } from './ExtensionSourceModal';
 
 export type ProjectSettingsTab = 'general' | 'capabilities' | 'handles';
 
@@ -152,6 +154,10 @@ export function ProjectSettingsModal({
   const localExtFileRef = useRef<HTMLInputElement | null>(null);
   const attachLibsInputRef = useRef<HTMLInputElement | null>(null);
   const [attachTargetPackId, setAttachTargetPackId] = useState<string | null>(null);
+  const [viewingPack, setViewingPack] = useState<{
+    pack: PolyExtensionPack;
+    scopeLabel: string;
+  } | null>(null);
 
   const selectedHandle: RuntimeHandle =
     project.handles.find((h) => h.id === selectedHandleId) ?? project.handles[0];
@@ -171,11 +177,11 @@ export function ProjectSettingsModal({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !viewingPack) onClose();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  }, [onClose, viewingPack]);
 
   const backends = backendRegistry.list();
   const localPacks = project.localExtensions ?? [];
@@ -808,6 +814,18 @@ export function ProjectSettingsModal({
                                   type="button"
                                   className="btn-ghost"
                                   style={{ padding: '4px 6px' }}
+                                  title="只读查看扩展包 .polyext.json 与 Lua/Python 源码"
+                                  aria-label={`查看 ${pack.name} 源码`}
+                                  onClick={() =>
+                                    setViewingPack({ pack, scopeLabel: '项目内嵌包' })
+                                  }
+                                >
+                                  <Eye size={13} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-ghost"
+                                  style={{ padding: '4px 6px' }}
                                   title="附加或替换此包的真实库源码 (.lua / .py -> libs[])"
                                   aria-label={`为 ${pack.name} 附加库源码`}
                                   onClick={() => {
@@ -942,22 +960,36 @@ export function ProjectSettingsModal({
                                 )}
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              className={`ext-toggle-btn ${toggleBtnClass}`}
-                              style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
-                              disabled={overridden}
-                              title={
-                                overridden
-                                  ? '已被上方同名项目内嵌包覆盖，请操作上方条目'
-                                  : undefined
-                              }
-                              onClick={() =>
-                                onToggleCapabilityForProject(project.id, pack.id)
-                              }
-                            >
-                              {toggleBtnText}
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                              <button
+                                type="button"
+                                className="btn-ghost"
+                                style={{ padding: '4px 6px' }}
+                                title="只读查看扩展包 .polyext.json 与 Lua/Python 源码"
+                                aria-label={`查看 ${pack.name} 源码`}
+                                onClick={() =>
+                                  setViewingPack({ pack, scopeLabel: '预装全局包' })
+                                }
+                              >
+                                <Eye size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                className={`ext-toggle-btn ${toggleBtnClass}`}
+                                style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
+                                disabled={overridden}
+                                title={
+                                  overridden
+                                    ? '已被上方同名项目内嵌包覆盖，请操作上方条目'
+                                    : undefined
+                                }
+                                onClick={() =>
+                                  onToggleCapabilityForProject(project.id, pack.id)
+                                }
+                              >
+                                {toggleBtnText}
+                              </button>
+                            </div>
                           </div>
                           {renderSectionChips(pack, overridden)}
                         </div>
@@ -1068,22 +1100,36 @@ export function ProjectSettingsModal({
                                   )}
                                 </div>
                               </div>
-                              <button
-                                type="button"
-                                className={`ext-toggle-btn ${toggleBtnClass}`}
-                                style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
-                                disabled={overridden}
-                                title={
-                                  overridden
-                                    ? '已被上方同名项目内嵌包覆盖，请操作上方条目'
-                                    : undefined
-                                }
-                                onClick={() =>
-                                  onToggleCapabilityForProject(project.id, pack.id)
-                                }
-                              >
-                                {toggleBtnText}
-                              </button>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                                <button
+                                  type="button"
+                                  className="btn-ghost"
+                                  style={{ padding: '4px 6px' }}
+                                  title="只读查看扩展包 .polyext.json 与 Lua/Python 源码"
+                                  aria-label={`查看 ${pack.name} 源码`}
+                                  onClick={() =>
+                                    setViewingPack({ pack, scopeLabel: '自定义全局包' })
+                                  }
+                                >
+                                  <Eye size={13} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`ext-toggle-btn ${toggleBtnClass}`}
+                                  style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
+                                  disabled={overridden}
+                                  title={
+                                    overridden
+                                      ? '已被上方同名项目内嵌包覆盖，请操作上方条目'
+                                      : undefined
+                                  }
+                                  onClick={() =>
+                                    onToggleCapabilityForProject(project.id, pack.id)
+                                  }
+                                >
+                                  {toggleBtnText}
+                                </button>
+                              </div>
                             </div>
                             {renderSectionChips(pack, overridden)}
                           </div>
@@ -1412,6 +1458,14 @@ export function ProjectSettingsModal({
           </div>
         </div>
       </div>
+      {viewingPack && (
+        <ExtensionSourceModal
+          pack={viewingPack.pack}
+          scopeLabel={viewingPack.scopeLabel}
+          onClose={() => setViewingPack(null)}
+          onNotify={onNotify}
+        />
+      )}
     </div>
   );
 }

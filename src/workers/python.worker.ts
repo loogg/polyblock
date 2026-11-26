@@ -215,32 +215,6 @@ for _k in list(globals().keys()):
     del globals()[_k]
 `;
 
-const MOUNT_RT_MODULE_SNIPPET = `
-import sys, _poly
-class _PolyRtModule:
-  def set_run_period(self, ms):
-    return _poly.rt_set_run_period(ms)
-  def start_run(self):
-    return _poly.rt_start_run()
-  def stop_run(self):
-    return _poly.rt_stop_run()
-  def start_timer(self, tid, period_ms, repeat=0):
-    return _poly.rt_start_timer(tid, period_ms, repeat)
-  def stop_timer(self, tid):
-    return _poly.rt_stop_timer(tid)
-  def get_timer_value(self, tid):
-    return _poly.rt_get_timer_value(tid)
-  def is_timer_running(self, tid):
-    return _poly.rt_is_timer_running(tid)
-  def tick(self):
-    return _poly.rt_tick()
-  def ms_to_tick(self, ms):
-    return _poly.rt_ms_to_tick(ms)
-  def is_expired(self, start_tick, timeout_ticks):
-    return _poly.rt_is_expired(start_tick, timeout_ticks)
-sys.modules["rt"] = _PolyRtModule()
-`;
-
 self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
   const msg = event.data;
   if (!msg) return;
@@ -359,9 +333,6 @@ for _mn in ${JSON.stringify(mountedModuleNames)}:
       mountedModuleNames = [];
     }
 
-    // Mount core rt scheduler module
-    mp.runPython(MOUNT_RT_MODULE_SNIPPET);
-
     // Helper to register dotted module paths (`utils.crc16`) cleanly in sys.modules
     const mountOnePyModule = (mod: NonNullable<typeof mockModules>[number]) => {
       if (!mod.pythonSource || !mod.moduleName) return;
@@ -411,6 +382,26 @@ class _PolyScopedProxy:
     return _poly_base.emit_event(ename, json.dumps(list(eargs)))
   def now_ms(self):
     return _poly_base.now_ms()
+  def rt_set_run_period(self, ms):
+    return _poly_base.rt_set_run_period(ms)
+  def rt_start_run(self):
+    return _poly_base.rt_start_run()
+  def rt_stop_run(self):
+    return _poly_base.rt_stop_run()
+  def rt_start_timer(self, tid, period_ms, repeat=0):
+    return _poly_base.rt_start_timer(tid, period_ms, repeat)
+  def rt_stop_timer(self, tid):
+    return _poly_base.rt_stop_timer(tid)
+  def rt_get_timer_value(self, tid):
+    return _poly_base.rt_get_timer_value(tid)
+  def rt_is_timer_running(self, tid):
+    return _poly_base.rt_is_timer_running(tid)
+  def rt_tick(self):
+    return _poly_base.rt_tick()
+  def rt_ms_to_tick(self, ms):
+    return _poly_base.rt_ms_to_tick(ms)
+  def rt_is_expired(self, start_tick, timeout_ticks):
+    return _poly_base.rt_is_expired(start_tick, timeout_ticks)
 sys.modules[${JSON.stringify(proxyModName)}] = _PolyScopedProxy(${JSON.stringify(mod.packId)})
 _poly_mod_ns = {'_poly': sys.modules[${JSON.stringify(proxyModName)}]}
 exec(${JSON.stringify(rewrittenSource)}, _poly_mod_ns)

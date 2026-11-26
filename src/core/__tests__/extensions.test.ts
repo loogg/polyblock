@@ -138,6 +138,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
 
     const rtBadges = derivePackBadges(RT_PACK).map((b) => b.label);
     expect(rtBadges).toContain('3 组件');
+    expect(rtBadges).toContain('沙箱模拟');
     expect(rtBadges).toContain('事件回调');
     expect(rtBadges).toContain('通道池 T0~31');
 

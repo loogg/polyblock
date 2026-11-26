@@ -244,27 +244,6 @@ export function resolveProjectModules(
     }
   }
 
-  // Preinstalled `rt` WASM scheduler sits at Tier 3 (`global`, `sandbox-mock`) when `rt` capability
-  // is enabled AND not replaced by a project-local pack with id="rt" — so ANY higher tier (`handle` or `project`)
-  // can override `rt` cleanly, while a second global pack providing `rt` triggers a same-tier conflict!
-  const rtEnabled = hasCapability(enabledCaps, 'rt');
-  const localPackOwnsRtId = localPackIds.has('rt');
-  const globalAlreadyHasRtFromRtPack = candidatesByTier.global.some(
-    (c) => c.ownerId === 'global:rt' && c.moduleName === 'rt',
-  );
-  if (rtEnabled && !localPackOwnsRtId && !globalAlreadyHasRtFromRtPack) {
-    candidatesByTier.global.push({
-      moduleName: 'rt',
-      tier: 'global',
-      delivery: 'sandbox-mock',
-      isRealLib: false,
-      ownerId: 'global:rt',
-      ownerLabel: '预装扩展包「嵌入式运行时核心包 (rt)」',
-      // Empty source marker: actual default `rt` table is pre-mounted by worker bootstrap before user modules!
-      source: { moduleName: 'rt', packId: 'rt' },
-    });
-  }
-
   // 1. Detect same-tier `moduleName` conflicts (regardless of `lib` vs `sandbox-mock`)
   const conflicts: ModuleConflictItem[] = [];
   for (const tier of TIER_PRIORITY_ORDER) {

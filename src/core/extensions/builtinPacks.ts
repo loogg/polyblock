@@ -291,6 +291,57 @@ export const RT_PACK: PolyExtensionPack = {
       ],
     },
   ],
+  sandboxMock: {
+    moduleName: 'rt',
+    luaSource: `
+local M = {
+  set_run_period = __poly_rt_set_run_period,
+  start_run = __poly_rt_start_run,
+  stop_run = __poly_rt_stop_run,
+  start_timer = __poly_rt_start_timer,
+  stop_timer = __poly_rt_stop_timer,
+  get_timer_value = __poly_rt_get_timer_value,
+  is_timer_running = __poly_rt_is_timer_running,
+  tick = __poly_rt_tick,
+  ms_to_tick = __poly_rt_ms_to_tick,
+  is_expired = __poly_rt_is_expired,
+}
+return M
+`.trim(),
+    pythonSource: `
+import _poly
+
+def set_run_period(ms):
+    return _poly.rt_set_run_period(ms)
+
+def start_run():
+    return _poly.rt_start_run()
+
+def stop_run():
+    return _poly.rt_stop_run()
+
+def start_timer(tid, period_ms, repeat=0):
+    return _poly.rt_start_timer(tid, period_ms, repeat)
+
+def stop_timer(tid):
+    return _poly.rt_stop_timer(tid)
+
+def get_timer_value(tid):
+    return _poly.rt_get_timer_value(tid)
+
+def is_timer_running(tid):
+    return _poly.rt_is_timer_running(tid)
+
+def tick():
+    return _poly.rt_tick()
+
+def ms_to_tick(ms):
+    return _poly.rt_ms_to_tick(ms)
+
+def is_expired(start_tick, timeout_ticks):
+    return _poly.rt_is_expired(start_tick, timeout_ticks)
+`.trim(),
+  },
 };
 
 export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {

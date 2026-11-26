@@ -3403,3 +3403,119 @@ select {
   gap: 10px;
   flex-wrap: wrap;
 }
+
+
+/* ============================================================================
+   Read-Only Extension Pack Source Viewer Modal
+   ============================================================================ */
+.source-viewer-backdrop {
+  z-index: 185;
+}
+
+.source-viewer-modal {
+  width: min(880px, 95vw);
+  height: min(84vh, 720px);
+  display: flex;
+  flex-direction: column;
+}
+
+.source-viewer-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel-subtle);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.source-viewer-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color 0.14s, border-color 0.14s;
+}
+
+.source-viewer-tab:hover {
+  color: var(--text-primary);
+}
+
+.source-viewer-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.source-tab-badge {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.source-viewer-tab.active .source-tab-badge {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.source-viewer-banner {
+  padding: 8px 14px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.source-viewer-lines-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.source-viewer-lines-meta code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.source-viewer-code {
+  flex: 1 1 auto;
+  overflow: auto;
+  background: var(--bg-code);
+  padding: 10px 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  user-select: text;
+}
+
+.code-line.readonly {
+  cursor: text;
+  padding-left: 10px;
+}
+
+.code-line.readonly .ln {
+  width: 36px;
+  flex: 0 0 36px;
+}
