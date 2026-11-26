@@ -266,12 +266,12 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                 <tbody>
                   <tr>
                     <td><code>message0</code> / <code>args0</code></td>
-                    <td>积木文案（<code>%1</code>、<code>%2</code> 占位）与参数定义；支持 <code>input_value</code>、<code>field_dropdown</code>、<code>field_number</code>、<code>field_input</code>、<code>field_variable</code>、<code>field_channel_id</code>。</td>
+                    <td>积木展示文案（用 <code>%1</code>、<code>%2</code> 按顺序占位）与参数定义数组；每个参数的 <code>name</code> 在代码模板中写作 <code>{`{{NAME}}`}</code>。详见下方速查表。</td>
                   </tr>
                   <tr>
                     <td><code>lua</code> / <code>python</code></td>
                     <td>
-                      代码生成模板 <code>{`{ template, imports? }`}</code>；占位符修饰器支持 <code>:json</code>、<code>:int</code>、<code>:bool_lua</code>、<code>:bool_py</code>、<code>:channel_comment_lua</code>、<code>:channel_comment_py</code>。不写 <code>imports</code> 时自动继承包顶层 <code>imports</code>，写 <code>[]</code> 可显式取消导入。
+                      代码生成模板 <code>{`{ template, imports? }`}</code>，<strong>两者至少填一个即可</strong>（支持单语言扩展包；切到未提供模板的语言时校验面板会自动报 Error）。占位符修饰器支持 <code>:json</code>、<code>:int</code>、<code>:bool_lua</code>、<code>:bool_py</code>、<code>:channel_comment_lua</code>、<code>:channel_comment_py</code>。不写 <code>imports</code> 时自动继承包顶层 <code>imports</code>，写 <code>[]</code> 可显式取消导入。
                     </td>
                   </tr>
                   <tr>
@@ -281,6 +281,54 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                   <tr>
                     <td><code>sandboxRunnable</code></td>
                     <td>默认 <code>true</code>；仅对无沙箱实现的纯真机积木设为 <code>false</code>（导出正常，沙箱运行时给出明确提示）。</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <h4 className="spec-subhead">args0 参数类型速查表（name 对应模板 {`{{NAME}}`}）</h4>
+              <table className="spec-table">
+                <thead>
+                  <tr>
+                    <th><code>type</code></th>
+                    <th>画布形态</th>
+                    <th>常用属性与模板用法</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>input_value</code></td>
+                    <td>凹进去的值插槽（可拖入数字/文本/表达式）</td>
+                    <td><code>name</code>、可选 <code>check</code>（<code>"Number"</code>/<code>"String"</code>/<code>"Boolean"</code>）；可配合积木 <code>shadows</code> 填默认阴影值，模板写 <code>{`{{X}}`}</code>。</td>
+                  </tr>
+                  <tr>
+                    <td><code>field_number</code></td>
+                    <td>积木上的内联数字输入框</td>
+                    <td><code>name</code>、<code>value</code>（默认值）、<code>min</code>、<code>max</code>、<code>precision</code>；模板写 <code>{`{{MS}}`}</code> 或 <code>{`{{MS:int}}`}</code>。</td>
+                  </tr>
+                  <tr>
+                    <td><code>field_input</code></td>
+                    <td>积木上的内联文本输入框</td>
+                    <td><code>name</code>、<code>text</code>（默认文本）；模板写 <code>{`{{TXT:json}}`}</code> 自动加双引号转义。</td>
+                  </tr>
+                  <tr>
+                    <td><code>field_dropdown</code></td>
+                    <td>固定选项下拉菜单</td>
+                    <td><code>name</code>、<code>options: [["展示名", "值"], ...]</code>；模板写 <code>{`{{DIR:json}}`}</code> 或 <code>{`{{STATE:bool_lua}}`}</code>。</td>
+                  </tr>
+                  <tr>
+                    <td><code>field_checkbox</code></td>
+                    <td>积木上的勾选框（布尔开关）</td>
+                    <td><code>name</code>、<code>checked: true | false</code>；模板写 <code>{`{{EN:bool_lua}}`}</code> / <code>{`{{EN:bool_py}}`}</code>。</td>
+                  </tr>
+                  <tr>
+                    <td><code>field_variable</code></td>
+                    <td>工作区变量选择器下拉框</td>
+                    <td><code>name</code>、<code>variable</code>（默认变量名如 <code>"cfg"</code>）；模板写 <code>{`{{DICT}}`}</code> 自动输出合法变量标识符。</td>
+                  </tr>
+                  <tr>
+                    <td><code>field_channel_id</code></td>
+                    <td>每句柄通道池下拉框（带别名与越界校验）</td>
+                    <td><code>name</code>；<strong>无需手写绑定 ID</strong>，自动绑定所属 <code>section.handleConfigs</code> 中的 <code>channel-pool</code>；模板可用 <code>{`{{CH:int}}`}</code> 与 <code>{`{{CH:channel_comment_lua}}`}</code>。</td>
                   </tr>
                 </tbody>
               </table>

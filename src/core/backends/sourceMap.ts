@@ -1,5 +1,9 @@
 import type * as Blockly from 'blockly';
-import type { DiagnosticItem, SourceLineRange } from '../../types/project';
+import type {
+  DiagnosticItem,
+  ScriptLanguageId,
+  SourceLineRange,
+} from '../../types/project';
 import {
   getActiveChannelPoolConfig,
   getActiveHandleScriptId,
@@ -89,6 +93,7 @@ export function extractSourceMap(rawCode: string): StrippedCodeResult {
  */
 export function analyzeWorkspaceDiagnostics(
   workspace: Blockly.Workspace,
+  targetLanguage?: ScriptLanguageId,
 ): DiagnosticItem[] {
   const diagnostics: DiagnosticItem[] = [];
 
@@ -240,6 +245,25 @@ export function analyzeWorkspaceDiagnostics(
           blockId: blk.id,
         });
         continue;
+      }
+    }
+
+    // Single-language extension block compatibility check
+    if (owner && targetLanguage && owner.block.kind !== 'hat') {
+      if (targetLanguage === 'lua' && !owner.block.lua?.template) {
+        diagnostics.push({
+          id: `lang-unsupported-lua-${blk.id}`,
+          severity: 'error',
+          message: `积木「${owner.block.message0.replace(/%\d/g, '▢')}」（所属「${owner.pack.name}」）仅支持 Python，未提供 lua.template，请切换项目语言或补全 Lua 模板。`,
+          blockId: blk.id,
+        });
+      } else if (targetLanguage === 'python' && !owner.block.python?.template) {
+        diagnostics.push({
+          id: `lang-unsupported-python-${blk.id}`,
+          severity: 'error',
+          message: `积木「${owner.block.message0.replace(/%\d/g, '▢')}」（所属「${owner.pack.name}」）仅支持 Lua，未提供 python.template，请切换项目语言或补全 Python 模板。`,
+          blockId: blk.id,
+        });
       }
     }
 

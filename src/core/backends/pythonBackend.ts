@@ -496,7 +496,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       debugCode,
       sourceMap,
       lineToBlock,
-      diagnostics: analyzeWorkspaceDiagnostics(workspace),
+      diagnostics: analyzeWorkspaceDiagnostics(workspace, 'python'),
       blockCount: workspace
         .getAllBlocks(false)
         .filter((b) => !b.isShadow()).length,

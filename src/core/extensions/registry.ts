@@ -255,6 +255,30 @@ export function formatPackPlacementSummary(pack: PolyExtensionPack): string {
 }
 
 /**
+ * Inspects which target script languages a pack's blocks support.
+ * Statement/value blocks may provide Lua-only, Python-only, or dual-language templates.
+ */
+export function getPackSupportedLanguages(pack: PolyExtensionPack): {
+  lua: boolean;
+  python: boolean;
+  label: string;
+} {
+  const nonHatBlocks = getAllPackBlocks(pack).filter((b) => b.kind !== 'hat');
+  if (nonHatBlocks.length === 0) {
+    return { lua: true, python: true, label: 'Lua 5.4 / Python 3' };
+  }
+  const lua = nonHatBlocks.some((b) => Boolean(b.lua?.template));
+  const python = nonHatBlocks.some((b) => Boolean(b.python?.template));
+  const label =
+    lua && python
+      ? 'Lua 5.4 / Python 3'
+      : lua
+        ? '仅 Lua 5.4'
+        : '仅 Python 3';
+  return { lua, python, label };
+}
+
+/**
  * Derives objective multi-attribute badges from a pack's actual declarative contents
  * (across all sections + optional user-authored `tags`).
  */
@@ -303,6 +327,13 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
           : `内置脚本库 · ${pack.libs.length}文件`,
       tone: 'lib',
     });
+  }
+
+  const langs = getPackSupportedLanguages(pack);
+  if (langs.lua && !langs.python) {
+    badges.push({ id: 'lang-only', label: '仅 Lua', tone: 'tag' });
+  } else if (langs.python && !langs.lua) {
+    badges.push({ id: 'lang-only', label: '仅 Python', tone: 'tag' });
   }
 
   if (hasHat) {
@@ -940,6 +971,13 @@ function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
           }
           return `${rendered}\n`;
         };
+      } else {
+        luaGenerator.forBlock[b.type] = () => {
+          if (b.kind === 'value') {
+            return ['nil --[[ 未提供 Lua 模板 ]]', LuaOrder.ATOMIC];
+          }
+          return `-- [PolyBlock] 积木 "${b.type}" 仅支持 Python，未提供 lua.template\n`;
+        };
       }
 
       if (b.python) {
@@ -960,6 +998,13 @@ function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
             return [rendered, PyOrder.ATOMIC];
           }
           return `${rendered}\n`;
+        };
+      } else {
+        pythonGenerator.forBlock[b.type] = () => {
+          if (b.kind === 'value') {
+            return ['None  # 未提供 Python 模板', PyOrder.ATOMIC];
+          }
+          return `# [PolyBlock] 积木 "${b.type}" 仅支持 Lua，未提供 python.template\n`;
         };
       }
     }
@@ -1205,11 +1250,18 @@ function validateBlockDef(
   } else {
     const luaSpec = blk.lua as Record<string, unknown> | undefined;
     const pySpec = blk.python as Record<string, unknown> | undefined;
-    if (!luaSpec || typeof luaSpec.template !== 'string') {
-      throw new Error(`积木 ${blk.type} 缺少 lua.template`);
+    const hasLua = Boolean(luaSpec && typeof luaSpec.template === 'string');
+    const hasPy = Boolean(pySpec && typeof pySpec.template === 'string');
+    if (luaSpec !== undefined && !hasLua) {
+      throw new Error(`积木 ${blk.type} 的 lua 对象缺少字符串字段 template`);
     }
-    if (!pySpec || typeof pySpec.template !== 'string') {
-      throw new Error(`积木 ${blk.type} 缺少 python.template`);
+    if (pySpec !== undefined && !hasPy) {
+      throw new Error(`积木 ${blk.type} 的 python 对象缺少字符串字段 template`);
+    }
+    if (!hasLua && !hasPy) {
+      throw new Error(
+        `积木 ${blk.type} 至少需要提供 lua.template 或 python.template 之一`,
+      );
     }
   }
   return blk as unknown as ExtensionBlockDef;

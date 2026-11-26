@@ -30,6 +30,7 @@ import {
   formatSectionPlacement,
   getAllPackBlocks,
   getPackEnableState,
+  getPackSupportedLanguages,
   resolvePackSections,
 } from '../../core/extensions/registry';
 import {
@@ -301,7 +302,7 @@ export function ExtensionsPage({
 
         <div className="card-footer">
           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            ID: {pack.id} · Lua 5.4 / Python 3
+            ID: {pack.id} · {getPackSupportedLanguages(pack).label}
           </span>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

@@ -302,7 +302,7 @@
         "args0": {
           "type": "array",
           "items": { "type": "object" },
-          "description": "Blockly 参数定义（input_value / field_dropdown / field_number / field_input / field_variable / field_channel_id）。"
+          "description": "Blockly 参数定义（input_value / field_number / field_input / field_dropdown / field_checkbox / field_variable / field_channel_id；其中 field_channel_id 自动绑定本 section 的 handleConfigs 通道池）。"
         },
         "inputsInline": { "type": "boolean", "default": true },
         "outputType": {
@@ -324,8 +324,14 @@
             }
           }
         },
-        "lua": { "$ref": "#/definitions/ExtensionCodeTemplate" },
-        "python": { "$ref": "#/definitions/ExtensionCodeTemplate" },
+        "lua": {
+          "$ref": "#/definitions/ExtensionCodeTemplate",
+          "description": "Lua 5.4 代码模板（statement/value 积木与 python 至少提供其一，支持单语言扩展包）。"
+        },
+        "python": {
+          "$ref": "#/definitions/ExtensionCodeTemplate",
+          "description": "Python 3 代码模板（statement/value 积木与 lua 至少提供其一，支持单语言扩展包）。"
+        },
         "hat": { "$ref": "#/definitions/ExtensionHatSpec" },
         "simWidgetKeys": {
           "type": "array",

@@ -7,7 +7,11 @@ import '../backends/luaBackend';
 import '../backends/pythonBackend';
 import { analyzeWorkspaceDiagnostics } from '../backends/sourceMap';
 import { registerPolyBlocks } from '../blocks/definitions';
-import { setActiveModuleConflicts } from '../blocks/timerConfigBridge';
+import {
+  setActiveHandleScripts,
+  setActiveModuleConflicts,
+  setActiveProjectCapabilities,
+} from '../blocks/timerConfigBridge';
 import {
   buildProjectTargetBundle,
   buildSingleHandleTargetBundle,
@@ -22,9 +26,12 @@ import {
   resolveProjectModules,
 } from '../extensions/moduleResolver';
 import {
+  derivePackBadges,
   extensionRegistry,
+  getPackSupportedLanguages,
   validateExtensionPack,
 } from '../extensions/registry';
+import { backendRegistry } from '../backends/registry';
 import {
   buildExtensionPackFromScriptLibs,
   mergeAttachedLibFiles,
@@ -127,6 +134,8 @@ describe('3-tier pure-scope ModuleResolver, Conflict Detection, Scanner & Target
     extensionRegistry.ensureInitialized();
     extensionRegistry.setActiveProjectLocalPacks([]);
     setActiveModuleConflicts([]);
+    setActiveProjectCapabilities(null);
+    setActiveHandleScripts([], null);
   });
 
   it('enforces pure 3-tier scope priority (handle > project > global) even when project uses sandboxMock over global libs', () => {
@@ -462,8 +471,18 @@ def reset():
       functions: fEntry.scannedFunctions,
     });
 
-    // Generated pack validates cleanly & matches imports -> libs
+    // Generated pack validates cleanly & matches imports -> libs (Lua-only upload produces Lua-only templates!)
     const validated = validateExtensionPack(generatedPack);
+    expect(validated.imports?.lua).toEqual(['local crc16 = require("crc16")']);
+    expect(validated.imports?.python).toBeUndefined();
+    expect(validated.sections[0].blocks[0].lua?.template).toBe('crc16.calc({{ARG1}})');
+    expect(validated.sections[0].blocks[0].python).toBeUndefined();
+    expect(getPackSupportedLanguages(validated)).toEqual({
+      lua: true,
+      python: false,
+      label: '仅 Lua 5.4',
+    });
+    expect(derivePackBadges(validated).map((b) => b.label)).toContain('仅 Lua');
     expect(validated.libs?.map((l) => `${l.moduleName}:${l.role}`)).toEqual([
       'crc16:entry',
       'crc16_table:helper',
@@ -604,5 +623,125 @@ def reset():
     expect(() => buildProjectTargetBundle(badProj)).toThrow(
       ModuleConflictExportError,
     );
+  });
+
+  it('supports single-language extension packs (Lua-only or Python-only), rejects blocks with neither template, and emits static Error on unsupported target language', () => {
+    const luaOnlyPack = extensionRegistry.validateProjectLocalPack({
+      format: 'polyblock-extension',
+      version: 1,
+      id: 'lua-only-math',
+      name: '仅 Lua 扩展数学',
+      packVersion: '1.0.0',
+      iconLabel: '数学',
+      color: '#10b981',
+      description: '单语言纯模板测试包',
+      sections: [
+        {
+          id: 'main',
+          label: '数学',
+          blocks: [
+            {
+              type: 'ext_luaonly_abs',
+              kind: 'value',
+              outputType: 'Number',
+              message0: '%1 的绝对值',
+              args0: [{ type: 'input_value', name: 'X', check: 'Number' }],
+              lua: { template: 'math.abs({{X}})' },
+            },
+          ],
+        },
+      ],
+    });
+    expect(getPackSupportedLanguages(luaOnlyPack)).toEqual({
+      lua: true,
+      python: false,
+      label: '仅 Lua 5.4',
+    });
+    expect(derivePackBadges(luaOnlyPack).map((b) => b.label)).toContain('仅 Lua');
+
+    // Block with NEITHER lua nor python template must fail validation
+    expect(() =>
+      validateExtensionPack({
+        format: 'polyblock-extension',
+        version: 1,
+        id: 'bad-no-tpl',
+        name: '缺模板包',
+        sections: [
+          {
+            id: 'main',
+            label: '缺模板',
+            blocks: [
+              {
+                type: 'ext_bad_notpl',
+                kind: 'statement',
+                message0: '空操作',
+              },
+            ],
+          },
+        ],
+      }),
+    ).toThrow(/至少需要提供 lua\.template 或 python\.template 之一/);
+
+    // Mount Lua-only pack & verify Lua codegen succeeds (0 diagnostics) while Python codegen emits clear Error without crashing
+    extensionRegistry.setActiveProjectLocalPacks([luaOnlyPack]);
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_start',
+              id: 's_lang',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'poly_print',
+                    id: 'p_lang',
+                    inputs: {
+                      VALUE: {
+                        block: {
+                          type: 'ext_luaonly_abs',
+                          id: 'abs_lang',
+                          inputs: {
+                            X: {
+                              block: {
+                                type: 'math_number',
+                                id: 'n_lang',
+                                fields: { NUM: -9 },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      ws,
+    );
+
+    const luaRes = backendRegistry.get('lua').generate(ws);
+    expect(luaRes.code).toContain('print(math.abs(-9))');
+    expect(luaRes.code).not.toContain('require("math")');
+    expect(luaRes.diagnostics).toHaveLength(0);
+
+    const pyRes = backendRegistry.get('python').generate(ws);
+    expect(pyRes.code).toContain('未提供 Python 模板');
+    expect(
+      pyRes.diagnostics.some(
+        (d) =>
+          d.severity === 'error' &&
+          d.blockId === 'abs_lang' &&
+          d.message.includes('仅支持 Lua'),
+      ),
+    ).toBe(true);
+
+    ws.dispose();
+    extensionRegistry.setActiveProjectLocalPacks([]);
   });
 });

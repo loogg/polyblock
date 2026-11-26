@@ -350,12 +350,14 @@ export function buildExtensionPackFromScriptLibs(
   }
   const libs = Array.from(libMap.values());
 
-  // Determine which modules are directly invoked by generated blocks -> hoist their imports
+  // Determine which modules & languages are actually provided by uploaded files
   const usedModuleNames = Array.from(new Set(selectedFns.map((f) => f.moduleName)));
-  const luaImports = usedModuleNames.map(
+  const luaModules = usedModuleNames.filter((mn) => Boolean(libMap.get(mn)?.luaSource));
+  const pyModules = usedModuleNames.filter((mn) => Boolean(libMap.get(mn)?.pythonSource));
+  const luaImports = luaModules.map(
     (mn) => `local ${mn.replace(/[^A-Za-z0-9_]/g, '_')} = require("${mn}")`,
   );
-  const pyImports = usedModuleNames.map((mn) => `import ${mn}`);
+  const pyImports = pyModules.map((mn) => `import ${mn}`);
 
   const blocks: ExtensionBlockDef[] = selectedFns.map((fn) => {
     const safeModIdent = fn.moduleName.replace(/[^A-Za-z0-9_]/g, '_');
@@ -378,6 +380,9 @@ export function buildExtensionPackFromScriptLibs(
       paramParts.length > 0 ? `${msgBase} ${paramParts.join(' ')}` : msgBase;
     const callExpr = `${safeModIdent}.${fn.funcName}(${callPlaceholders.join(', ')})`;
     const pyCallExpr = `${fn.moduleName}.${fn.funcName}(${callPlaceholders.join(', ')})`;
+    const modEntry = libMap.get(fn.moduleName);
+    const hasLua = Boolean(modEntry?.luaSource);
+    const hasPy = Boolean(modEntry?.pythonSource);
 
     return {
       type: blockType,
@@ -389,10 +394,18 @@ export function buildExtensionPackFromScriptLibs(
       ...(Object.keys(shadows).length > 0 ? { shadows } : {}),
       tooltip: `调用库模块 ${fn.moduleName}.${fn.funcName}(${fn.params.join(', ')})`,
       keywords: `${opts.packName} ${fn.moduleName} ${fn.funcName} ${msgBase}`,
-      lua: { template: callExpr },
-      python: { template: pyCallExpr },
+      ...(hasLua ? { lua: { template: callExpr } } : {}),
+      ...(hasPy ? { python: { template: pyCallExpr } } : {}),
     };
   });
+
+  const importsObj: PolyExtensionPack['imports'] =
+    luaImports.length > 0 || pyImports.length > 0
+      ? {
+          ...(luaImports.length > 0 ? { lua: luaImports } : {}),
+          ...(pyImports.length > 0 ? { python: pyImports } : {}),
+        }
+      : undefined;
 
   return {
     $schema: './schemas/polyext.schema.json',
@@ -408,10 +421,7 @@ export function buildExtensionPackFromScriptLibs(
       `由原生脚本库自动生成的扩展包（含 ${libs.length} 个源码模块，沙箱与真机导出共用）。`,
     builtin: false,
     tags: ['脚本库'],
-    imports: {
-      lua: luaImports,
-      python: pyImports,
-    },
+    ...(importsObj ? { imports: importsObj } : {}),
     sections: [
       {
         id: 'main',

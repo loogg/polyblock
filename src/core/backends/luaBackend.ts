@@ -388,7 +388,7 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
       debugCode,
       sourceMap,
       lineToBlock,
-      diagnostics: analyzeWorkspaceDiagnostics(workspace),
+      diagnostics: analyzeWorkspaceDiagnostics(workspace, 'lua'),
       blockCount: workspace
         .getAllBlocks(false)
         .filter((b) => !b.isShadow()).length,

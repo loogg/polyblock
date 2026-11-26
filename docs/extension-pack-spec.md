@@ -80,10 +80,22 @@
 
 ### 常用积木字段
 
-- `type`、`message0`、`args0`（支持 `input_value`、`field_dropdown`、`field_number`、`field_input`、`field_variable`、`field_channel_id`）
-- `lua` / `python`：`{ template, imports? }`；不写 `imports` 自动继承包级 `imports`，写 `imports: []` 显式取消导入。
+- `type`、`message0`（用 `%1`、`%2` 占位）、`args0`（见下表）
+- `lua` / `python`：`{ template, imports? }`，**两者至少提供其一即可**（支持单语言扩展包；切到未提供模板的语言时，代码校验面板自动报静态 Error）。不写 `imports` 自动继承包级 `imports`，写 `imports: []` 显式取消导入。
 - `simWidgetKeys?: string[]`：声明本积木关联的 `pack.simWidgets` key 列表；启用本组件时自动聚合展示。
 - `sandboxRunnable?: boolean`：默认 `true`；仅真机可用、浏览器无沙箱实现的积木标 `false`。
+
+### `args0` 参数类型速查表（`name` 对应模板 `{{NAME}}`）
+
+| `type` | 画布形态 | 常用属性与模板用法 |
+|---|---|---|
+| `input_value` | 凹进去的值插槽（可拖入数字/文本/表达式） | `name`、可选 `check`（`"Number"` / `"String"` / `"Boolean"`）；配合积木 `shadows` 设默认阴影值，模板写 `{{X}}` |
+| `field_number` | 积木内联数字框 | `name`、`value`、`min`、`max`、`precision`；模板写 `{{MS}}` 或 `{{MS:int}}` |
+| `field_input` | 积木内联文本框 | `name`、`text`；模板写 `{{TXT:json}}` 自动加双引号转义 |
+| `field_dropdown` | 固定选项下拉框 | `name`、`options: [["展示名", "值"], ...]`；模板写 `{{DIR:json}}` 或 `{{ON:bool_lua}}` |
+| `field_checkbox` | 积木勾选框（布尔开关） | `name`、`checked: true \| false`；模板写 `{{EN:bool_lua}}` / `{{EN:bool_py}}` |
+| `field_variable` | 工作区变量选择器 | `name`、`variable`（默认变量名）；模板写 `{{DICT}}` 自动输出合法变量标识符 |
+| `field_channel_id` | 每句柄通道池下拉框（带别名/越界校验） | `name`；**无需手写绑定 ID**，自动绑定所属 `section.handleConfigs` 的 `channel-pool`；支持 `{{CH:int}}` 与 `{{CH:channel_comment_lua}}` |
 
 ---
 
