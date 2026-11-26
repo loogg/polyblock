@@ -16,7 +16,9 @@ import {
 import {
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
+  setActiveHandleSharedVariables,
 } from '../blocks/timerConfigBridge';
+import { collectHandleSharedVariableNames } from '../projects/handleVariables';
 import { CAP_RT_TIMERS } from '../capabilities/registry';
 import { resolveProjectModules } from '../extensions/moduleResolver';
 import { extensionRegistry } from '../extensions/registry';
@@ -88,6 +90,8 @@ export function buildHandleScriptModules(
       }
     : handle;
   const handleMetas = buildHandleScriptsMeta(effectiveHandle);
+  const sharedVars = collectHandleSharedVariableNames(effectiveHandle);
+  setActiveHandleSharedVariables(sharedVars);
 
   if (language === 'python') {
     const sharedMod = buildHandlePythonSharedModule(effectiveHandle);
@@ -195,6 +199,7 @@ export class MultiHandleRunnerOrchestrator {
         project.defaultTimerCount,
       );
       setActiveChannelPoolConfigs(poolCfgs);
+      setActiveHandleSharedVariables(collectHandleSharedVariableNames(handle));
       const scriptMetas = buildHandleScriptsMeta(handle);
       setActiveHandleScripts(scriptMetas, entryScript.id);
       const compiled = compileScriptHeadless(

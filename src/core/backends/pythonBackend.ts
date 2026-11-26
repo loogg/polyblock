@@ -30,31 +30,37 @@ let pythonGeneratorsRegistered = false;
 function registerPythonBlockGenerators(): void {
   if (pythonGeneratorsRegistered) return;
 
-  // Wrap Blockly's pythonGenerator.init so cross-file shared variables:
-  // 1) are NOT re-declared as `<var> = None` at top of every file
-  // 2) automatically add `import shared` cleanly at the top imports section
+  // Wrap Blockly's pythonGenerator.init so:
+  // 1) Cross-file shared variables are NOT re-declared as `<var> = None` and add `import shared`
+  // 2) Unused handle-synced variables in this script do NOT pollute top-level with redundant `<var> = None`
   const origInit = pythonGenerator.init.bind(pythonGenerator);
   pythonGenerator.init = (workspace: Blockly.Workspace) => {
     origInit(workspace);
     const sharedMod = codegenContext.pythonSharedModuleName;
     const sharedIdents = codegenContext.pythonSharedVarIdents;
-    if (sharedMod && sharedIdents.size > 0) {
-      const defs = (
-        pythonGenerator as unknown as { definitions_: Record<string, string> }
-      ).definitions_;
-      if (typeof defs.variables === 'string') {
-        const kept = defs.variables
-          .split('\n')
-          .filter((line) => {
-            const m = line.match(/^([A-Za-z0-9_]+)\s*=\s*None$/);
-            return !m || !sharedIdents.has(m[1]);
-          });
-        if (kept.length > 0) {
-          defs.variables = kept.join('\n');
-        } else {
-          delete defs.variables;
-        }
+    const usedIdents = codegenContext.pythonUsedVarIdents;
+    const defs = (
+      pythonGenerator as unknown as { definitions_: Record<string, string> }
+    ).definitions_;
+    if (
+      typeof defs.variables === 'string' &&
+      (sharedIdents.size > 0 || usedIdents !== null)
+    ) {
+      const kept = defs.variables.split('\n').filter((line) => {
+        const m = line.match(/^([A-Za-z0-9_]+)\s*=\s*None$/);
+        if (!m) return Boolean(line.trim());
+        const ident = m[1];
+        if (sharedIdents.has(ident)) return false;
+        if (usedIdents !== null && !usedIdents.has(ident)) return false;
+        return true;
+      });
+      if (kept.length > 0) {
+        defs.variables = kept.join('\n');
+      } else {
+        delete defs.variables;
       }
+    }
+    if (sharedMod && sharedIdents.size > 0) {
       defs['import_poly_shared'] = `import ${sharedMod}`;
     }
   };
@@ -473,6 +479,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
     const sharedVarIdents = new Set<string>();
     const sharedSnapEntries: Array<[string, string]> = [];
     const nonSharedVarIdents: string[] = [];
+    const usedVarIdents = new Set<string>();
 
     try {
       resetCodegenPassContext({
@@ -480,16 +487,28 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
         eventDrivenMode: eventDriven,
       });
       pythonGenerator.init(workspace);
+      const usedVarIds = new Set<string>();
+      for (const blk of workspace.getAllBlocks(false)) {
+        if (blk.isShadow() || !blk.isEnabled()) continue;
+        for (const fName of ['VAR', 'LIST']) {
+          if (!blk.getField(fName)) continue;
+          const vId = blk.getFieldValue(fName);
+          if (vId) usedVarIds.add(String(vId));
+        }
+      }
       for (const v of workspace.getVariableMap().getAllVariables()) {
         const ident = pythonGenerator.getVariableName(v.getId());
         varEntries.push([v.getName(), ident]);
         varIdToIdent.set(v.getId(), ident);
+        if (usedVarIds.has(v.getId())) {
+          usedVarIdents.add(ident);
+        }
         const sharedAttr = sharedAttrByName.get(v.getName());
-        if (sharedAttr && sharedInfo.moduleName) {
+        if (sharedAttr && sharedInfo.moduleName && usedVarIds.has(v.getId())) {
           sharedVarIdToAttr.set(v.getId(), sharedAttr);
           sharedVarIdents.add(ident);
           sharedSnapEntries.push([v.getName(), sharedAttr]);
-        } else {
+        } else if (usedVarIds.has(v.getId())) {
           nonSharedVarIdents.push(ident);
         }
       }
@@ -502,6 +521,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
         pythonSharedModuleName: activeSharedModName,
         pythonSharedVarIdToAttr: sharedVarIdToAttr,
         pythonSharedVarIdents: sharedVarIdents,
+        pythonUsedVarIdents: usedVarIdents,
       });
       rawClean = pythonGenerator.workspaceToCode(workspace);
     } finally {
@@ -546,6 +566,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
         pythonSharedModuleName: activeSharedModName,
         pythonSharedVarIdToAttr: sharedVarIdToAttr,
         pythonSharedVarIdents: sharedVarIdents,
+        pythonUsedVarIdents: usedVarIdents,
       });
       pythonGenerator.STATEMENT_PREFIX = `await _poly_tick(%1, _poly_snap(locals(), globals()))\n`;
       pythonGenerator.STATEMENT_SUFFIX = null;
@@ -558,6 +579,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
         pythonSharedModuleName: '',
         pythonSharedVarIdToAttr: new Map(),
         pythonSharedVarIdents: new Set(),
+        pythonUsedVarIdents: null,
       });
       pythonGenerator.STATEMENT_PREFIX = prevPrefix;
       pythonGenerator.STATEMENT_SUFFIX = prevSuffix;

@@ -3,11 +3,13 @@ import type { RuntimeHandle, ScriptLanguageId } from '../../types/project';
 import {
   getActiveHandleScriptId,
   getActiveHandleScripts,
+  getActiveHandleSharedVariables,
   isCurrentHandleScriptEntry,
   type ActiveHandleScriptMeta,
   type DispatchBranchMeta,
 } from '../blocks/timerConfigBridge';
 import { extensionRegistry } from '../extensions/registry';
+import { collectHandleSharedVariableNames } from '../projects/handleVariables';
 import { sanitizeLocalIdent } from './scopeAnalysis';
 
 export const CORE_TOP_HAT_TYPES = new Set<string>([
@@ -264,36 +266,51 @@ export interface HandlePythonSharedVarsInfo {
 }
 
 /**
- * Resolves variables shared across >= 2 scripts within the SAME RuntimeHandle so Python
- * achieves identical cross-file variable sharing semantics to Lua's shared `_G` table
- * via a clean auto-generated `shared.py` module.
+ * Resolves the authoritative cross-file shared variables for the active RuntimeHandle:
+ * 1. Explicit `explicitSharedNames` (passed directly when building for a `RuntimeHandle`),
+ * 2. Active bridge list `getActiveHandleSharedVariables()` (set by workbench / runner / exporter),
+ * 3. Legacy fallback (when neither is set, e.g. older standalone tests): variables actively used across >= 2 scripts.
  */
 export function resolveHandleSharedPythonVars(
   scriptsMeta: ActiveHandleScriptMeta[],
   liveWorkspace?: Blockly.Workspace,
   liveScriptId?: string | null,
+  explicitSharedNames?: string[] | null,
 ): HandlePythonSharedVarsInfo {
-  if (scriptsMeta.length < 2) {
-    return { moduleName: '', entries: [] };
-  }
+  const activeExplicit =
+    explicitSharedNames !== undefined
+      ? explicitSharedNames
+      : getActiveHandleSharedVariables();
 
-  const currentId = liveScriptId ?? getActiveHandleScriptId();
-  const varScriptCounts = new Map<string, number>();
-
-  for (const scr of scriptsMeta) {
-    const names =
-      liveWorkspace && currentId && scr.id === currentId
-        ? collectLiveWorkspaceVariableNames(liveWorkspace)
-        : scr.declaredVariables ?? [];
-    for (const name of new Set(names)) {
-      varScriptCounts.set(name, (varScriptCounts.get(name) ?? 0) + 1);
+  let sharedNames: string[] = [];
+  if (activeExplicit !== null) {
+    const seen = new Set<string>();
+    for (const raw of activeExplicit) {
+      const n = raw.trim();
+      if (n && !seen.has(n)) {
+        seen.add(n);
+        sharedNames.push(n);
+      }
     }
-  }
+  } else if (scriptsMeta.length >= 2) {
+    const currentId = liveScriptId ?? getActiveHandleScriptId();
+    const varScriptCounts = new Map<string, number>();
 
-  const sharedNames = Array.from(varScriptCounts.entries())
-    .filter(([, count]) => count >= 2)
-    .map(([name]) => name)
-    .sort((a, b) => a.localeCompare(b));
+    for (const scr of scriptsMeta) {
+      const names =
+        liveWorkspace && currentId && scr.id === currentId
+          ? collectLiveWorkspaceVariableNames(liveWorkspace)
+          : scr.declaredVariables ?? [];
+      for (const name of new Set(names)) {
+        varScriptCounts.set(name, (varScriptCounts.get(name) ?? 0) + 1);
+      }
+    }
+
+    sharedNames = Array.from(varScriptCounts.entries())
+      .filter(([, count]) => count >= 2)
+      .map(([name]) => name)
+      .sort((a, b) => a.localeCompare(b));
+  }
 
   if (sharedNames.length === 0) {
     return { moduleName: '', entries: [] };
@@ -323,15 +340,16 @@ export function resolveHandleSharedPythonVars(
 }
 
 /**
- * Builds the auto-generated `shared.py` source module for a Python handle when >= 1 variable
- * is shared across multiple scripts in that handle. Returns `null` for single-file handles
- * or handles with no cross-file shared variables.
+ * Builds the auto-generated read-only `shared.py` source module for a Python handle whenever
+ * the handle has >= 1 explicit cross-file shared variable (`handle.sharedVariables`).
+ * Returns `null` when the handle has no cross-file shared variables.
  */
 export function buildHandlePythonSharedModule(
   handle: RuntimeHandle,
   liveScriptOverride?: { scriptId: string; workspace: Record<string, unknown> },
 ): {
   moduleName: string;
+  fileName: string;
   entries: Array<{ name: string; attr: string }>;
   pythonSource: string;
 } | null {
@@ -346,17 +364,24 @@ export function buildHandlePythonSharedModule(
       }
     : handle;
   const metas = buildHandleScriptsMeta(effectiveHandle);
-  const info = resolveHandleSharedPythonVars(metas);
+  const explicitShared = collectHandleSharedVariableNames(effectiveHandle);
+  const info = resolveHandleSharedPythonVars(
+    metas,
+    undefined,
+    undefined,
+    explicitShared,
+  );
   if (!info.moduleName || info.entries.length === 0) {
     return null;
   }
   const lines = [
-    '# 由 PolyBlock 自动生成的同句柄跨文件共享变量模块',
+    '# 由 PolyBlock 自动生成的同句柄跨文件共享变量模块（只读）',
     ...info.entries.map((e) => `${e.attr} = None`),
     '',
   ];
   return {
     moduleName: info.moduleName,
+    fileName: `${info.moduleName}.py`,
     entries: info.entries,
     pythonSource: lines.join('\n'),
   };

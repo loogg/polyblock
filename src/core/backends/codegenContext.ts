@@ -16,6 +16,8 @@ export interface CodegenPassContext {
   pythonSharedVarIdToAttr: Map<string, string>;
   /** Sanitized local Blockly identifiers belonging to the shared module (excluded from `<v> = None` & `global`). */
   pythonSharedVarIdents: Set<string>;
+  /** Sanitized identifiers of variables actively referenced by enabled blocks in the current workspace. */
+  pythonUsedVarIdents: Set<string> | null;
 }
 
 export const codegenContext: CodegenPassContext = {
@@ -26,6 +28,7 @@ export const codegenContext: CodegenPassContext = {
   pythonSharedModuleName: '',
   pythonSharedVarIdToAttr: new Map<string, string>(),
   pythonSharedVarIdents: new Set<string>(),
+  pythonUsedVarIdents: null,
 };
 
 export function resetCodegenPassContext(opts: {
@@ -35,6 +38,7 @@ export function resetCodegenPassContext(opts: {
   pythonSharedModuleName?: string;
   pythonSharedVarIdToAttr?: Map<string, string>;
   pythonSharedVarIdents?: Set<string>;
+  pythonUsedVarIdents?: Set<string> | null;
 }): void {
   codegenContext.debugPass = opts.debugPass;
   codegenContext.eventDrivenMode = opts.eventDrivenMode;
@@ -47,6 +51,8 @@ export function resetCodegenPassContext(opts: {
   codegenContext.pythonSharedVarIdents = new Set(
     opts.pythonSharedVarIdents ?? [],
   );
+  codegenContext.pythonUsedVarIdents =
+    opts.pythonUsedVarIdents !== undefined ? opts.pythonUsedVarIdents : null;
 }
 
 /**

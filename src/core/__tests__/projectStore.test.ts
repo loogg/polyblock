@@ -1,4 +1,14 @@
+import * as Blockly from 'blockly';
 import { describe, expect, it } from 'vitest';
+import { backendRegistry } from '../backends/registry';
+import { registerPolyBlocks } from '../blocks/definitions';
+import { setActiveHandleSharedVariables } from '../blocks/timerConfigBridge';
+import {
+  applyHandleVariableMutation,
+  collectHandleSharedVariableNames,
+  syncHandleVariablesIntoWorkspaceJson,
+  validateSharedVariableName,
+} from '../projects/handleVariables';
 import {
   CAP_RT,
   CAP_RT_LIFECYCLE,
@@ -244,5 +254,122 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     expect(reimported.version).toBe(3);
     expect(reimported.name).toBe('智能双轮机器人全栈仿真 (2)');
     expect(reimported.handles).toHaveLength(3);
+  });
+
+  it('enforces explicit 3-tier variable scopes (cross-file shared vs single-file global) symmetrically across Lua & Python', () => {
+    registerPolyBlocks();
+
+    // 1. Validation rules reject leading digits (`123`), spaces, keywords, duplicates; accept ASCII & Chinese
+    expect(validateSharedVariableName('', []).valid).toBe(false);
+    expect(validateSharedVariableName('123', []).valid).toBe(false);
+    expect(validateSharedVariableName('a b', []).valid).toBe(false);
+    expect(validateSharedVariableName('global', []).valid).toBe(false);
+    expect(validateSharedVariableName('total', ['total']).valid).toBe(false);
+    expect(validateSharedVariableName('total', ['total'], 'total').valid).toBe(true);
+    expect(validateSharedVariableName('counter_1', ['total'])).toEqual({
+      valid: true,
+      trimmed: 'counter_1',
+    });
+    expect(validateSharedVariableName('步数', ['total'])).toEqual({
+      valid: true,
+      trimmed: '步数',
+    });
+
+    // 2. Single-file globals (`total`, `i` in `starter_suite`) stay strictly private to `main`:
+    //    adding `script_2` does NOT leak `main`'s single-file vars into `script_2`!
+    let proj = instantiateProjectFromTemplate('starter_suite');
+    proj = addScriptToProject(proj, 'script_2');
+    let hdl = getActiveHandle(proj);
+    expect(hdl.scripts.map((s) => s.name)).toEqual(['main', 'script_2']);
+    expect(collectHandleSharedVariableNames(hdl)).toEqual([]);
+
+    // In Lua, single-file `total` emits chunk-top `local total = nil` (isolated from `_G`);
+    // loop counter `i` stays loop-local without noisy `local i = nil`.
+    setActiveHandleSharedVariables([]);
+    const mainWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(hdl.scripts[0].workspace, mainWs);
+    const luaMain = backendRegistry.get('lua').generate(mainWs).code;
+    const pyMain = backendRegistry.get('python').generate(mainWs).code;
+    mainWs.dispose();
+    expect(luaMain).toContain('local total = nil');
+    expect(luaMain).not.toContain('local i = nil');
+    expect(pyMain).toContain('total = None');
+    expect(pyMain).not.toContain('import shared');
+
+    // 3. Creating a single-file variable in `script_2` does NOT touch `main` or `handle.sharedVariables`
+    const afterFileVar = applyHandleVariableMutation(hdl, hdl.scripts[1].id, {
+      kind: 'create',
+      name: 'local_only',
+      scope: 'file',
+    });
+    expect(collectHandleSharedVariableNames(afterFileVar.handle)).toEqual([]);
+    const mainVarsAfterFile = (
+      (afterFileVar.handle.scripts[0].workspace.variables as Array<{ name: string }>) ?? []
+    ).map((v) => v.name);
+    expect(mainVarsAfterFile).not.toContain('local_only');
+
+    // 4. Creating an explicit cross-file (`shared`) variable in `script_2` adds to `handle.sharedVariables`
+    //    AND propagates immediately to `main`!
+    const afterCreateShared = applyHandleVariableMutation(
+      afterFileVar.handle,
+      hdl.scripts[1].id,
+      { kind: 'create', name: 'speed', scope: 'shared' },
+    );
+    expect(collectHandleSharedVariableNames(afterCreateShared.handle)).toEqual(['speed']);
+    const mainVarsAfterShared = (
+      (afterCreateShared.handle.scripts[0].workspace.variables as Array<{ name: string }>) ?? []
+    ).map((v) => v.name);
+    expect(mainVarsAfterShared).toContain('speed');
+
+    // 5. Renaming a cross-file shared variable (`speed` -> `vel`) propagates across all scripts
+    const afterRenameShared = applyHandleVariableMutation(
+      afterCreateShared.handle,
+      hdl.scripts[1].id,
+      { kind: 'rename', oldName: 'speed', newName: 'vel' },
+    );
+    expect(collectHandleSharedVariableNames(afterRenameShared.handle)).toEqual(['vel']);
+    const mainVarsAfterRename = (
+      (afterRenameShared.handle.scripts[0].workspace.variables as Array<{ name: string }>) ?? []
+    ).map((v) => v.name);
+    expect(mainVarsAfterRename).toContain('vel');
+    expect(mainVarsAfterRename).not.toContain('speed');
+
+    // 6. Deleting an unused cross-file shared variable removes it cleanly from `handle.sharedVariables` & siblings
+    const afterDeleteUnused = applyHandleVariableMutation(
+      afterRenameShared.handle,
+      hdl.scripts[1].id,
+      { kind: 'delete', name: 'vel' },
+    );
+    expect(afterDeleteUnused.keptInSiblings).toEqual([]);
+    expect(collectHandleSharedVariableNames(afterDeleteUnused.handle)).toEqual([]);
+
+    // 7. L2 `event_timer_demo` explicitly configures `board_vm.sharedVariables = ['led_on', 'ticks']`:
+    //    Lua emits bare `_G` (NO `local led_on`), Python emits `import shared` / `shared.led_on`!
+    const l2 = instantiateProjectFromTemplate('event_timer_demo');
+    const boardVm = l2.handles.find((h) => h.name === 'board_vm')!;
+    expect(collectHandleSharedVariableNames(boardVm)).toEqual(['led_on', 'ticks']);
+    setActiveHandleSharedVariables(collectHandleSharedVariableNames(boardVm));
+    const l2MainWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(boardVm.scripts[0].workspace, l2MainWs);
+    const l2Lua = backendRegistry.get('lua').generate(l2MainWs).code;
+    const l2Py = backendRegistry.get('python').generate(l2MainWs).code;
+    l2MainWs.dispose();
+    expect(l2Lua).not.toContain('local led_on');
+    expect(l2Lua).not.toContain('local ticks');
+    expect(l2Py).toContain('import shared');
+    expect(l2Py).toContain('shared.led_on = False');
+
+    // Unused synced shared variables in an empty `script_2.py` never emit `<var> = None`
+    const syncedEmpty = syncHandleVariablesIntoWorkspaceJson(
+      { blocks: { languageVersion: 0, blocks: [] } },
+      ['led_on', 'ticks'],
+    );
+    const emptyWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(syncedEmpty, emptyWs);
+    const emptyPy = backendRegistry.get('python').generate(emptyWs).code;
+    emptyWs.dispose();
+    setActiveHandleSharedVariables(null);
+    expect(emptyPy).not.toContain('led_on = None');
+    expect(emptyPy).not.toContain('ticks = None');
   });
 });

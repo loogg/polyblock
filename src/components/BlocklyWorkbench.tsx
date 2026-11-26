@@ -45,6 +45,10 @@ import {
   type ChannelAliasPromptRequest,
 } from '../core/blocks/timerConfigBridge';
 import type { ProjectTimerConfig, ThemeMode } from '../types/project';
+import type {
+  HandleVariableMutation,
+  VariableScopeKind,
+} from '../core/projects/handleVariables';
 
 function findChannelFieldOnBlock(
   blk: Blockly.Block | undefined | null,
@@ -155,6 +159,8 @@ export interface BlocklyWorkbenchHandle {
   getWorkspace: () => Blockly.WorkspaceSvg | null;
   loadWorkspaceJson: (state: Record<string, unknown>) => void;
   saveWorkspaceJson: () => Record<string, unknown>;
+  createVariable: (name: string, scope: VariableScopeKind) => void;
+  refreshToolbox: () => void;
   focusBlock: (blockId: string) => void;
   resize: () => void;
 }
@@ -170,6 +176,8 @@ interface BlocklyWorkbenchProps {
   extraCategories: BlockCategorySpec[];
   channelPoolConfigs: Record<string, ProjectTimerConfig>;
   onWorkspaceChange: (workspace: Blockly.WorkspaceSvg) => void;
+  onHandleVariableEvent?: (mutation: HandleVariableMutation) => void;
+  onRequestCreateVariable?: (initialScope: VariableScopeKind) => void;
   onSelectBlock: (blockId: string | null) => void;
   onToggleBreakpoint: (blockId: string) => void;
   onEditChannelAlias: (req: ChannelAliasPromptRequest) => void;
@@ -307,6 +315,8 @@ export const BlocklyWorkbench = forwardRef<
     extraCategories,
     channelPoolConfigs,
     onWorkspaceChange,
+    onHandleVariableEvent,
+    onRequestCreateVariable,
     onSelectBlock,
     onToggleBreakpoint,
     onEditChannelAlias,
@@ -318,6 +328,9 @@ export const BlocklyWorkbench = forwardRef<
   const mountRef = useRef<HTMLDivElement | null>(null);
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
   const onChangeRef = useRef(onWorkspaceChange);
+  const onHandleVarRef = useRef(onHandleVariableEvent);
+  const onRequestCreateVarRef = useRef(onRequestCreateVariable);
+  const suppressedCreateNamesRef = useRef<Set<string>>(new Set());
   const onSelectRef = useRef(onSelectBlock);
   const onOpenTimerCfgRef = useRef(onOpenHandleTimerSettings);
   const initialDataRef = useRef(initialWorkspace);
@@ -349,6 +362,8 @@ export const BlocklyWorkbench = forwardRef<
   );
 
   onChangeRef.current = onWorkspaceChange;
+  onHandleVarRef.current = onHandleVariableEvent;
+  onRequestCreateVarRef.current = onRequestCreateVariable;
   onSelectRef.current = onSelectBlock;
   onOpenTimerCfgRef.current = onOpenHandleTimerSettings;
   enabledCapsRef.current = enabledCapabilities;
@@ -420,13 +435,34 @@ export const BlocklyWorkbench = forwardRef<
 
     workspaceRef.current = ws;
 
-    ws.registerButtonCallback('CREATE_VARIABLE', (button) => {
-      Blockly.Variables.createVariableButtonHandler(
-        button.getTargetWorkspace(),
-        () => {
+    ws.registerButtonCallback('CREATE_SHARED_VARIABLE', () => {
+      if (onRequestCreateVarRef.current) {
+        onRequestCreateVarRef.current('shared');
+      } else {
+        Blockly.Variables.createVariableButtonHandler(ws, () => {
           refreshFlyout('variables', '');
-        },
-      );
+        });
+      }
+    });
+
+    ws.registerButtonCallback('CREATE_FILE_VARIABLE', () => {
+      if (onRequestCreateVarRef.current) {
+        onRequestCreateVarRef.current('file');
+      } else {
+        Blockly.Variables.createVariableButtonHandler(ws, () => {
+          refreshFlyout('variables', '');
+        });
+      }
+    });
+
+    ws.registerButtonCallback('CREATE_VARIABLE', () => {
+      if (onRequestCreateVarRef.current) {
+        onRequestCreateVarRef.current('file');
+      } else {
+        Blockly.Variables.createVariableButtonHandler(ws, () => {
+          refreshFlyout('variables', '');
+        });
+      }
     });
 
     ws.registerButtonCallback(OPEN_HANDLE_CHANNEL_CONFIG_CALLBACK, () => {
@@ -476,11 +512,41 @@ export const BlocklyWorkbench = forwardRef<
 
       if (event.isUiEvent) return;
 
-      if (
-        event.type === Blockly.Events.VAR_CREATE ||
-        event.type === Blockly.Events.VAR_DELETE ||
-        event.type === Blockly.Events.VAR_RENAME
-      ) {
+      if (event.type === Blockly.Events.VAR_CREATE) {
+        const ve = event as Blockly.Events.VarCreate;
+        if (ve.varName && !suppressedCreateNamesRef.current.delete(ve.varName)) {
+          onHandleVarRef.current?.({
+            kind: 'create',
+            name: ve.varName,
+            scope: 'file',
+          });
+        }
+        setActiveCat((curr) => {
+          if (curr === 'variables') {
+            setTimeout(() => refreshFlyout('variables', ''), 0);
+          }
+          return curr;
+        });
+      } else if (event.type === Blockly.Events.VAR_RENAME) {
+        const ve = event as Blockly.Events.VarRename;
+        if (ve.oldName && ve.newName) {
+          onHandleVarRef.current?.({
+            kind: 'rename',
+            oldName: ve.oldName,
+            newName: ve.newName,
+          });
+        }
+        setActiveCat((curr) => {
+          if (curr === 'variables') {
+            setTimeout(() => refreshFlyout('variables', ''), 0);
+          }
+          return curr;
+        });
+      } else if (event.type === Blockly.Events.VAR_DELETE) {
+        const ve = event as Blockly.Events.VarDelete;
+        if (ve.varName) {
+          onHandleVarRef.current?.({ kind: 'delete', name: ve.varName });
+        }
         setActiveCat((curr) => {
           if (curr === 'variables') {
             setTimeout(() => refreshFlyout('variables', ''), 0);
@@ -632,6 +698,7 @@ export const BlocklyWorkbench = forwardRef<
         } finally {
           Blockly.Events.enable();
         }
+        refreshFlyout(activeCatRef.current, searchQueryRef.current);
       },
       saveWorkspaceJson: () => {
         const ws = workspaceRef.current;
@@ -640,6 +707,17 @@ export const BlocklyWorkbench = forwardRef<
           string,
           unknown
         >;
+      },
+      createVariable: (name: string, _scope: VariableScopeKind) => {
+        const ws = workspaceRef.current;
+        const trimmed = name.trim();
+        if (!ws || !trimmed) return;
+        suppressedCreateNamesRef.current.add(trimmed);
+        ws.getVariableMap().createVariable(trimmed);
+        refreshFlyout(activeCatRef.current, searchQueryRef.current);
+      },
+      refreshToolbox: () => {
+        refreshFlyout(activeCatRef.current, searchQueryRef.current);
       },
       focusBlock: (blockId: string) => {
         const ws = workspaceRef.current;

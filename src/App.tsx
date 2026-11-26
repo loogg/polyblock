@@ -1,6 +1,10 @@
-import type * as Blockly from 'blockly';
+import * as Blockly from 'blockly';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityRail } from './components/ActivityRail';
+import {
+  BlocklyDialogModal,
+  type BlocklyDialogRequest,
+} from './components/BlocklyDialogModal';
 import {
   BlocklyWorkbench,
   type BlocklyWorkbenchHandle,
@@ -18,10 +22,14 @@ import {
 } from './components/ProjectSettingsModal';
 import { ScriptLibImportModal } from './components/ScriptLibImportModal';
 import { ScriptTabBar } from './components/ScriptTabBar';
+import { SharedVarsView } from './components/SharedVarsView';
 import { StatusBar } from './components/StatusBar';
 import { TimerAliasModal } from './components/TimerAliasModal';
 import { TopBar } from './components/TopBar';
-import { buildHandleScriptsMeta } from './core/backends/eventMode';
+import {
+  buildHandlePythonSharedModule,
+  buildHandleScriptsMeta,
+} from './core/backends/eventMode';
 import { backendRegistry } from './core/backends/registry';
 import type { GeneratedCodeResult } from './core/backends/types';
 import {
@@ -29,6 +37,7 @@ import {
   setActiveChannelPoolConfig,
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
+  setActiveHandleSharedVariables,
   setActiveModuleConflicts,
   setActiveProjectCapabilities,
   type ChannelAliasPromptRequest,
@@ -62,6 +71,16 @@ import type {
   PolyExtensionPack,
   SimStateMap,
 } from './core/extensions/types';
+import {
+  applyHandleVariableMutation,
+  collectAllVariableNamesInHandle,
+  collectHandleSharedVariableNames,
+  collectScriptVariableNames,
+  collectUsedVariableNamesInJson,
+  syncHandleVariablesIntoWorkspaceJson,
+  type HandleVariableMutation,
+  type VariableScopeKind,
+} from './core/projects/handleVariables';
 import {
   addHandleToProject,
   addScriptToHandle,
@@ -239,6 +258,9 @@ export function App() {
   } | null>(null);
   const [aliasModalReq, setAliasModalReq] =
     useState<ChannelAliasPromptRequest | null>(null);
+  const [blocklyDialogReq, setBlocklyDialogReq] =
+    useState<BlocklyDialogRequest | null>(null);
+  const [viewingSharedModule, setViewingSharedModule] = useState<boolean>(false);
 
   /** Per-project isolated simulator state so switching projects never bleeds simulated hardware state. */
   const [simStatesByProject, setSimStatesByProject] = useState<
@@ -309,6 +331,7 @@ export function App() {
   );
   setActiveChannelPoolConfigs(activeChannelPoolConfigs);
   setActiveProjectCapabilities(activeProject.enabledCapabilities);
+  setActiveHandleSharedVariables(collectHandleSharedVariableNames(activeHandle));
   setActiveHandleScripts(buildHandleScriptsMeta(activeHandle), activeScript.id);
   setActiveModuleConflicts(activeModuleResolution.conflicts);
   extensionRegistry.setActiveProjectLocalPacks(activeProject.localExtensions ?? []);
@@ -316,6 +339,31 @@ export function App() {
   const language = activeProject.language;
   const breakpoints = activeScript.breakpoints;
   const activeBackend = backendRegistry.get(language);
+
+  const activeSharedPyModule = useMemo(() => {
+    if (language !== 'python') return null;
+    return buildHandlePythonSharedModule(activeHandle);
+  }, [language, activeHandle]);
+
+  useEffect(() => {
+    if (!activeSharedPyModule && viewingSharedModule) {
+      setViewingSharedModule(false);
+    }
+  }, [activeSharedPyModule, viewingSharedModule]);
+
+  const sharedModuleEntriesWithUsage = useMemo(() => {
+    if (!activeSharedPyModule) return [];
+    const usedByScript = activeHandle.scripts.map((s) => ({
+      name: s.name,
+      used: new Set(collectUsedVariableNamesInJson(s.workspace)),
+    }));
+    return activeSharedPyModule.entries.map((entry) => ({
+      ...entry,
+      usedInScripts: usedByScript
+        .filter((s) => s.used.has(entry.name))
+        .map((s) => s.name),
+    }));
+  }, [activeSharedPyModule, activeHandle.scripts]);
 
   const allExtensionPacks = useMemo(
     () => extensionRegistry.listAll(),
@@ -428,6 +476,32 @@ export function App() {
     }
   }, [settings]);
 
+  // Replace Blockly v12's unstyled default dialog/prompt/confirm/alert with PolyBlock's modal UI
+  useEffect(() => {
+    Blockly.dialog.setPrompt((message, defaultValue, callback) => {
+      setBlocklyDialogReq({
+        kind: 'prompt',
+        message,
+        defaultValue: defaultValue ?? '',
+        callback,
+      });
+    });
+    Blockly.dialog.setConfirm((message, callback) => {
+      setBlocklyDialogReq({
+        kind: 'confirm',
+        message,
+        callback,
+      });
+    });
+    Blockly.dialog.setAlert((message, callback) => {
+      setBlocklyDialogReq({
+        kind: 'alert',
+        message,
+        callback,
+      });
+    });
+  }, []);
+
   useEffect(() => {
     const onHashChange = () => setActivePage(readPageFromHash());
     window.addEventListener('hashchange', onHashChange);
@@ -515,6 +589,8 @@ export function App() {
         ),
       );
       setActiveProjectCapabilities(nextProj.enabledCapabilities);
+      const sharedVarNames = collectHandleSharedVariableNames(nextHandle);
+      setActiveHandleSharedVariables(sharedVarNames);
       setActiveHandleScripts(buildHandleScriptsMeta(nextHandle), nextScript.id);
       const nextModRes = resolveProjectModules({
         enabledCapabilities: nextProj.enabledCapabilities,
@@ -537,8 +613,13 @@ export function App() {
       setLiveVariables({});
       setHandleTelemetries({});
       setErrorLine(null);
+      setViewingSharedModule(false);
 
-      workbenchRef.current?.loadWorkspaceJson(nextScript.workspace);
+      const syncedWorkspace = syncHandleVariablesIntoWorkspaceJson(
+        nextScript.workspace,
+        sharedVarNames,
+      );
+      workbenchRef.current?.loadWorkspaceJson(syncedWorkspace);
       const ws = workbenchRef.current?.getWorkspace();
       if (ws) {
         regenerateFromWorkspace(ws, nextProj.language);
@@ -556,6 +637,71 @@ export function App() {
       setHandleTelemetries({});
     }
   }, [runnerStatus]);
+
+  const handleHandleVariableEvent = useCallback(
+    (mutation: HandleVariableMutation) => {
+      const projId = activeProjectIdRef.current;
+      const hdlId = activeHandleIdRef.current;
+      const scrId = activeScriptIdRef.current;
+      const now = new Date().toISOString();
+
+      // Compute updated sharedVariables & sibling notice synchronously from current storeRef
+      // (React 18 may batch setStore updaters asynchronously, so never read side-effects out of them!)
+      const curProj = storeRef.current.projects.find((p) => p.id === projId);
+      const curHdl = curProj?.handles.find((h) => h.id === hdlId);
+      const previewRes = curHdl
+        ? applyHandleVariableMutation(curHdl, scrId, mutation)
+        : null;
+      const nextSharedNames = previewRes
+        ? collectHandleSharedVariableNames(previewRes.handle)
+        : null;
+      const keptNotice = previewRes?.keptInSiblings ?? [];
+
+      if (nextSharedNames !== null) {
+        setActiveHandleSharedVariables(nextSharedNames);
+      }
+
+      setStore((prev) =>
+        updateProjectById(prev, projId, (proj) =>
+          updateHandleById(proj, hdlId, (hdl) => {
+            const { handle: updatedHdl } = applyHandleVariableMutation(
+              hdl,
+              scrId,
+              mutation,
+            );
+            return { ...updatedHdl, updatedAt: now };
+          }),
+        ),
+      );
+
+      const ws = workbenchRef.current?.getWorkspace();
+      if (ws) regenerateFromWorkspace(ws, languageRef.current);
+      workbenchRef.current?.refreshToolbox();
+
+      if (mutation.kind === 'delete' && keptNotice.length > 0) {
+        notify(
+          `跨文件变量「${mutation.name}」仍在 ${keptNotice.join('、')} 中被积木引用，已保留这些脚本中的定义`,
+        );
+      }
+    },
+    [notify, regenerateFromWorkspace],
+  );
+
+  const handleRequestCreateVariable = useCallback(
+    (initialScope: VariableScopeKind) => {
+      setBlocklyDialogReq({
+        kind: 'create-variable',
+        initialScope,
+        onConfirm: (name, scope) => {
+          handleHandleVariableEvent({ kind: 'create', name, scope });
+          workbenchRef.current?.createVariable(name, scope);
+          const ws = workbenchRef.current?.getWorkspace();
+          if (ws) regenerateFromWorkspace(ws, languageRef.current);
+        },
+      });
+    },
+    [handleHandleVariableEvent, regenerateFromWorkspace],
+  );
 
   const handleWorkspaceChange = useCallback(
     (ws: Blockly.WorkspaceSvg) => {
@@ -2157,9 +2303,35 @@ export function App() {
     workbenchRef.current?.focusBlock(blockId);
   }, []);
 
-  const initialScriptWorkspace = getActiveScript(
-    getActiveHandle(getActiveProject(initialStoreRef.current)),
-  ).workspace;
+  const initialHandle = getActiveHandle(getActiveProject(initialStoreRef.current));
+  const initialScriptWorkspace = syncHandleVariablesIntoWorkspaceJson(
+    getActiveScript(initialHandle).workspace,
+    collectHandleSharedVariableNames(initialHandle),
+  );
+  const activeHandleSharedVarNames = useMemo(
+    () => collectHandleSharedVariableNames(activeHandle),
+    [activeHandle, blocklyDialogReq],
+  );
+  const currentScriptVarNames = useMemo(() => {
+    const fromStore = collectScriptVariableNames(activeScript.workspace);
+    const liveVars =
+      workbenchRef.current
+        ?.getWorkspace()
+        ?.getVariableMap()
+        .getAllVariables()
+        .map((v) => v.getName()) ?? [];
+    return Array.from(new Set([...fromStore, ...liveVars]));
+  }, [activeScript.workspace, blocklyDialogReq]);
+  const allHandleVarNames = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...collectAllVariableNamesInHandle(activeHandle),
+          ...currentScriptVarNames,
+        ]),
+      ),
+    [activeHandle, currentScriptVarNames],
+  );
 
   const settingsModalProject = settingsModal
     ? store.projects.find((p) => p.id === settingsModal.projectId) ?? null
@@ -2231,13 +2403,22 @@ export function App() {
                   project={activeProject}
                   activeHandleId={activeHandle.id}
                   activeScriptId={activeScript.id}
+                  language={language}
                   extension={activeBackend.extension}
+                  viewingSharedModule={viewingSharedModule}
                   hasTimersCapability={hasTimersCapability}
                   defaultTimerCount={activeProject.defaultTimerCount}
                   disabled={runnerStatus === 'running' || runnerStatus === 'paused'}
-                  onSelectHandleScript={(hdlId, scrId) =>
-                    handleSelectHandleAndScript(hdlId, scrId)
-                  }
+                  onSelectHandleScript={(hdlId, scrId) => {
+                    setViewingSharedModule(false);
+                    handleSelectHandleAndScript(hdlId, scrId);
+                  }}
+                  onSelectHandleSharedModule={(hdlId) => {
+                    if (hdlId !== activeHandle.id) {
+                      handleSelectHandleAndScript(hdlId);
+                    }
+                    setViewingSharedModule(true);
+                  }}
                   onAddHandle={() => handleAddHandle(activeProject.id)}
                   onAddScriptInHandle={(hdlId) => handleAddScriptInHandle(hdlId)}
                   onOpenHandleSettings={(hdlId) =>
@@ -2263,8 +2444,21 @@ export function App() {
                   defaultTimerCount={activeProject.defaultTimerCount}
                   showExplorer={showExplorer}
                   disabled={runnerStatus === 'running' || runnerStatus === 'paused'}
+                  sharedModuleTab={
+                    activeSharedPyModule
+                      ? {
+                          fileName: activeSharedPyModule.fileName,
+                          varCount: activeSharedPyModule.entries.length,
+                        }
+                      : null
+                  }
+                  viewingSharedModule={viewingSharedModule}
+                  onSelectSharedModule={() => setViewingSharedModule(true)}
                   onToggleExplorer={() => setShowExplorer((v) => !v)}
-                  onSelectHandle={(hdlId) => handleSelectHandleAndScript(hdlId)}
+                  onSelectHandle={(hdlId) => {
+                    setViewingSharedModule(false);
+                    handleSelectHandleAndScript(hdlId);
+                  }}
                   onAddHandle={() => handleAddHandle(activeProject.id)}
                   onOpenHandleSettings={(hdlId) =>
                     setSettingsModal({
@@ -2273,9 +2467,10 @@ export function App() {
                       initialHandleId: hdlId,
                     })
                   }
-                  onSelectScript={(scrId) =>
-                    handleSelectHandleAndScript(activeHandle.id, scrId)
-                  }
+                  onSelectScript={(scrId) => {
+                    setViewingSharedModule(false);
+                    handleSelectHandleAndScript(activeHandle.id, scrId);
+                  }}
                   onAddScript={() => handleAddScriptInHandle(activeHandle.id)}
                   onRenameScript={handleRenameScript}
                   onDuplicateScript={handleDuplicateScript}
@@ -2283,30 +2478,69 @@ export function App() {
                   onDeleteScript={handleDeleteScript}
                 />
 
-                <BlocklyWorkbench
-                  ref={workbenchRef}
-                  theme={settings.theme}
-                  initialWorkspace={initialScriptWorkspace}
-                  visible={activePage === 'blocks'}
-                  executingBlockId={executingBlockId}
-                  isPaused={runnerStatus === 'paused'}
-                  breakpoints={breakpoints}
-                  enabledCapabilities={activeProject.enabledCapabilities}
-                  extraCategories={extraCategories}
-                  channelPoolConfigs={activeChannelPoolConfigs}
-                  onWorkspaceChange={handleWorkspaceChange}
-                  onSelectBlock={setSelectedBlockId}
-                  onToggleBreakpoint={handleToggleBreakpoint}
-                  onEditChannelAlias={(req) => setAliasModalReq(req)}
-                  onOpenHandleTimerSettings={() =>
-                    setSettingsModal({
-                      projectId: activeProject.id,
-                      initialTab: 'handles',
-                      initialHandleId: activeHandle.id,
-                    })
+                {viewingSharedModule && activeSharedPyModule && (
+                  <SharedVarsView
+                    handleName={activeHandle.name}
+                    handleColor={activeHandle.color}
+                    fileName={activeSharedPyModule.fileName}
+                    moduleName={activeSharedPyModule.moduleName}
+                    pythonSource={activeSharedPyModule.pythonSource}
+                    entries={sharedModuleEntriesWithUsage}
+                    disabled={runnerStatus === 'running' || runnerStatus === 'paused'}
+                    onCreateSharedVariable={() =>
+                      handleRequestCreateVariable('shared')
+                    }
+                    onCopySource={async () => {
+                      try {
+                        await navigator.clipboard.writeText(
+                          activeSharedPyModule.pythonSource,
+                        );
+                        notify(`已复制 ${activeSharedPyModule.fileName} 到剪贴板`);
+                      } catch {
+                        notify('复制失败，请手动选中代码复制');
+                      }
+                    }}
+                    onBackToCanvas={() => setViewingSharedModule(false)}
+                  />
+                )}
+
+                <div
+                  className={
+                    viewingSharedModule && activeSharedPyModule
+                      ? 'hidden-pane'
+                      : 'blocks-canvas-host'
                   }
-                  onOpenExtensionsPage={() => navigateTo('extensions')}
-                />
+                >
+                  <BlocklyWorkbench
+                    ref={workbenchRef}
+                    theme={settings.theme}
+                    initialWorkspace={initialScriptWorkspace}
+                    visible={
+                      activePage === 'blocks' &&
+                      !(viewingSharedModule && activeSharedPyModule)
+                    }
+                    executingBlockId={executingBlockId}
+                    isPaused={runnerStatus === 'paused'}
+                    breakpoints={breakpoints}
+                    enabledCapabilities={activeProject.enabledCapabilities}
+                    extraCategories={extraCategories}
+                    channelPoolConfigs={activeChannelPoolConfigs}
+                    onWorkspaceChange={handleWorkspaceChange}
+                    onHandleVariableEvent={handleHandleVariableEvent}
+                    onRequestCreateVariable={handleRequestCreateVariable}
+                    onSelectBlock={setSelectedBlockId}
+                    onToggleBreakpoint={handleToggleBreakpoint}
+                    onEditChannelAlias={(req) => setAliasModalReq(req)}
+                    onOpenHandleTimerSettings={() =>
+                      setSettingsModal({
+                        projectId: activeProject.id,
+                        initialTab: 'handles',
+                        initialHandleId: activeHandle.id,
+                      })
+                    }
+                    onOpenExtensionsPage={() => navigateTo('extensions')}
+                  />
+                </div>
               </div>
 
               {showCode && (
@@ -2520,6 +2754,19 @@ export function App() {
           }
           onSave={(alias) => handleSaveInlineChannelAlias(aliasModalReq, alias)}
           onClose={() => setAliasModalReq(null)}
+        />
+      )}
+
+      {blocklyDialogReq !== null && (
+        <BlocklyDialogModal
+          request={blocklyDialogReq}
+          handleName={activeHandle.name}
+          handleColor={activeHandle.color}
+          activeScriptLabel={`${activeScript.name}.${activeBackend.extension}`}
+          handleSharedVars={activeHandleSharedVarNames}
+          currentScriptVars={currentScriptVarNames}
+          allHandleVars={allHandleVarNames}
+          onClose={() => setBlocklyDialogReq(null)}
         />
       )}
 

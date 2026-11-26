@@ -3,6 +3,7 @@ import {
   Copy,
   FileCode2,
   FolderTree,
+  Lock,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -26,6 +27,9 @@ interface ScriptTabBarProps {
   defaultTimerCount: number;
   showExplorer: boolean;
   disabled?: boolean;
+  sharedModuleTab?: { fileName: string; varCount: number } | null;
+  viewingSharedModule?: boolean;
+  onSelectSharedModule?: () => void;
   onToggleExplorer: () => void;
   onSelectHandle: (handleId: string) => void;
   onAddHandle: () => void;
@@ -49,6 +53,9 @@ export function ScriptTabBar({
   defaultTimerCount,
   showExplorer,
   disabled = false,
+  sharedModuleTab = null,
+  viewingSharedModule = false,
+  onSelectSharedModule,
   onToggleExplorer,
   onSelectHandle,
   onAddHandle,
@@ -243,7 +250,7 @@ export function ScriptTabBar({
       {/* Horizontal Script Tabs for Active Handle */}
       <div className="script-tabs-scroll">
         {scripts.map((script) => {
-          const isActive = script.id === activeScriptId;
+          const isActive = !viewingSharedModule && script.id === activeScriptId;
           const isEntry = script.id === entryScriptId;
           const isEditing = editingId === script.id;
 
@@ -354,6 +361,25 @@ export function ScriptTabBar({
           <Plus size={14} />
         </button>
       </div>
+
+      {/* Pinned Far-Right Read-Only Python `shared.py` Tab (ONLY shown when handle has cross-file shared vars) */}
+      {sharedModuleTab && onSelectSharedModule && (
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewingSharedModule}
+          className={`script-tab-pinned ${viewingSharedModule ? 'active' : ''}`}
+          onClick={onSelectSharedModule}
+          title={`自动生成的同句柄跨文件共享变量模块 ${sharedModuleTab.fileName}（只读，随 Python 目标运行包一起导出）`}
+        >
+          <Lock size={11} className="script-tab-lock" />
+          <span className="script-tab-name">
+            {sharedModuleTab.fileName.replace(/\.py$/, '')}
+            <span className="script-tab-ext">.py</span>
+          </span>
+          <span className="count-badge">{sharedModuleTab.varCount}</span>
+        </button>
+      )}
 
       {/* Unclipped Tab Context Menu */}
       {menuState && menuScript && (

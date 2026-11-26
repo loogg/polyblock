@@ -3,6 +3,7 @@ import type {
   ScopedVariableItem,
   VariableScopeNode,
 } from '../../types/project';
+import { getActiveHandleSharedVariables } from '../blocks/timerConfigBridge';
 import { extensionRegistry } from '../extensions/registry';
 
 const RESERVED_IDENTS = new Set([
@@ -201,8 +202,13 @@ export function analyzeWorkspaceScopes(
     rawScopes.push(raw);
   }
 
-  // Partition global vars: shared (>= 2 scopes OR unused) vs single-scope
-  const sharedVars: ScopedVariableItem[] = [];
+  // Partition vars cleanly into 3 tiers:
+  // 1) Cross-file Handle Shared (`handle.sharedVariables`)
+  // 2) Single-file globals (used across >= 2 callbacks or unused file-scoped vars)
+  // 3) Single-callback file vars (shown directly inside that callback's node)
+  const explicitSharedSet = new Set(getActiveHandleSharedVariables() ?? []);
+  const handleSharedVars: ScopedVariableItem[] = [];
+  const fileGlobalVars: ScopedVariableItem[] = [];
   const singleScopeOwner = new Map<string, string>(); // varId -> scopeId
 
   for (const v of allVars) {
@@ -216,11 +222,19 @@ export function analyzeWorkspaceScopes(
       rawScopes.some((s) => s.params.some((p) => p.name === v.getName()));
     if (isOnlyParam) continue;
 
-    if (!usage || usage.scopes.size !== 1) {
-      sharedVars.push({
+    if (explicitSharedSet.has(v.getName())) {
+      handleSharedVars.push({
         name: v.getName(),
         ident,
         kind: 'shared',
+        firstBlockId: usage?.firstBlockId,
+        usedInScopes: usage ? Array.from(usage.shortLabels) : undefined,
+      });
+    } else if (!usage || usage.scopes.size !== 1) {
+      fileGlobalVars.push({
+        name: v.getName(),
+        ident,
+        kind: 'scope-global',
         firstBlockId: usage?.firstBlockId,
         usedInScopes: usage ? Array.from(usage.shortLabels) : undefined,
       });
@@ -232,12 +246,21 @@ export function analyzeWorkspaceScopes(
 
   const scopes: VariableScopeNode[] = [];
 
-  if (sharedVars.length > 0) {
+  if (handleSharedVars.length > 0) {
     scopes.push({
       id: 'shared',
-      label: '句柄共享变量 (Global)',
+      label: '跨文件全局 (Handle)',
       category: 'shared',
-      variables: sharedVars,
+      variables: handleSharedVars,
+    });
+  }
+
+  if (fileGlobalVars.length > 0) {
+    scopes.push({
+      id: 'file_globals',
+      label: '单文件全局 (File)',
+      category: 'top',
+      variables: fileGlobalVars,
     });
   }
 

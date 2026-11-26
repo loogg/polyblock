@@ -123,6 +123,13 @@ export interface RuntimeHandle {
   autoStart: boolean;
   /** Generic per-handle capability config store (e.g., capabilityConfigs['rt.timers']). */
   capabilityConfigs: Record<string, unknown>;
+  /**
+   * Explicit handle-wide cross-file shared variable names.
+   * - Lua 5.4: bare `_G` globals shared across all scripts in this handle.
+   * - Python 3: auto-generated `shared.py` module (`import shared` / `shared.<var>`).
+   * Variables NOT in this list are strictly single-file globals (Lua top-level `local`, Python module global).
+   */
+  sharedVariables?: string[];
   entryScriptId: string;
   activeScriptId: string;
   scripts: ProjectScript[];

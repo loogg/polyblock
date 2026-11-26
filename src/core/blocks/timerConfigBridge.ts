@@ -86,7 +86,16 @@ const activeChannelPools = new Map<string, ProjectTimerConfig>([
 let activeCapabilities: string[] | null = null;
 let activeHandleScripts: ActiveHandleScriptMeta[] = [];
 let activeHandleScriptId: string | null = null;
+let activeHandleSharedVariables: string[] | null = null;
 let activeModuleConflicts: ModuleConflictItem[] = [];
+
+export function setActiveHandleSharedVariables(names: string[] | null): void {
+  activeHandleSharedVariables = names ? [...names] : null;
+}
+
+export function getActiveHandleSharedVariables(): string[] | null {
+  return activeHandleSharedVariables;
+}
 
 export function setActiveModuleConflicts(conflicts: ModuleConflictItem[]): void {
   activeModuleConflicts = [...conflicts];

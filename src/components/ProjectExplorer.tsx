@@ -2,24 +2,29 @@ import {
   ChevronDown,
   ChevronRight,
   FileCode2,
+  Lock,
   Plus,
   Settings2,
   Star,
   X,
 } from 'lucide-react';
 import { useState } from 'react';
+import { buildHandlePythonSharedModule } from '../core/backends/eventMode';
 import { getHandleTimerConfig } from '../core/projects/store';
-import type { ProjectModel } from '../types/project';
+import type { ProjectModel, ScriptLanguageId } from '../types/project';
 
 interface ProjectExplorerProps {
   project: ProjectModel;
   activeHandleId: string;
   activeScriptId: string;
+  language: ScriptLanguageId;
   extension: string;
+  viewingSharedModule?: boolean;
   hasTimersCapability: boolean;
   defaultTimerCount: number;
   disabled?: boolean;
   onSelectHandleScript: (handleId: string, scriptId: string) => void;
+  onSelectHandleSharedModule?: (handleId: string) => void;
   onAddHandle: () => void;
   onAddScriptInHandle: (handleId: string) => void;
   onOpenHandleSettings: (handleId: string) => void;
@@ -30,11 +35,14 @@ export function ProjectExplorer({
   project,
   activeHandleId,
   activeScriptId,
+  language,
   extension,
+  viewingSharedModule = false,
   hasTimersCapability,
   defaultTimerCount,
   disabled = false,
   onSelectHandleScript,
+  onSelectHandleSharedModule,
   onAddHandle,
   onAddScriptInHandle,
   onOpenHandleSettings,
@@ -132,7 +140,7 @@ export function ProjectExplorer({
                 <div className="explorer-script-list">
                   {handle.scripts.map((scr) => {
                     const isActiveScript =
-                      isActiveHandle && scr.id === activeScriptId;
+                      isActiveHandle && !viewingSharedModule && scr.id === activeScriptId;
                     const isEntry = scr.id === handle.entryScriptId;
                     return (
                       <button
@@ -161,6 +169,30 @@ export function ProjectExplorer({
                       </button>
                     );
                   })}
+                  {language === 'python' && (() => {
+                    const sharedMod = buildHandlePythonSharedModule(handle);
+                    if (!sharedMod || !onSelectHandleSharedModule) return null;
+                    const isActiveShared = isActiveHandle && viewingSharedModule;
+                    return (
+                      <button
+                        type="button"
+                        className={`explorer-script-row explorer-script-readonly ${
+                          isActiveShared ? 'active' : ''
+                        }`}
+                        disabled={disabled && !isActiveHandle}
+                        onClick={() => onSelectHandleSharedModule(handle.id)}
+                        title={`只读自动生成模块 ${sharedMod.fileName}（${sharedMod.entries.length} 个跨文件共享变量）`}
+                      >
+                        <Lock size={11} style={{ flexShrink: 0, opacity: 0.75 }} />
+                        <span className="explorer-script-name">
+                          {sharedMod.fileName}
+                        </span>
+                        <span className="count-badge" style={{ marginLeft: 'auto' }}>
+                          {sharedMod.entries.length}
+                        </span>
+                      </button>
+                    );
+                  })()}
                 </div>
               )}
             </div>

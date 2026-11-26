@@ -1,6 +1,7 @@
 import * as Blockly from 'blockly';
 import { extensionRegistry } from '../extensions/registry';
 import type { CoreCategoryTarget } from '../extensions/types';
+import { getActiveHandleSharedVariables } from './timerConfigBridge';
 
 export interface ToolboxBlockSpec {
   kind: 'block';
@@ -465,34 +466,72 @@ export function buildFlyoutToolbox(
 
   if (category.custom === 'VARIABLE' && workspace) {
     const vars = workspace.getVariableMap().getAllVariables();
+    const sharedSet = new Set(getActiveHandleSharedVariables() ?? []);
+    const sharedVars = vars.filter((v) => sharedSet.has(v.getName()));
+    const fileVars = vars.filter((v) => !sharedSet.has(v.getName()));
+
     const items: Blockly.utils.toolbox.FlyoutItemInfoArray = [
       topSpacer,
-      { kind: 'label', text: '句柄共享变量 (Global)' },
+      { kind: 'label', text: '跨文件全局 (同句柄共享)' },
       {
         kind: 'button',
-        text: '+ 新建共享变量',
-        callbackkey: 'CREATE_VARIABLE',
+        text: '+ 新建跨文件变量',
+        callbackkey: 'CREATE_SHARED_VARIABLE',
       },
     ];
 
-    if (vars.length > 0) {
-      const firstId = vars[0].getId();
+    if (sharedVars.length > 0) {
+      const firstSharedId = sharedVars[0].getId();
       items.push(
         {
           kind: 'block',
           type: 'variables_set',
-          fields: { VAR: { id: firstId } },
+          fields: { VAR: { id: firstSharedId } },
           inputs: { VALUE: numShadow(0) },
         } as unknown as Blockly.utils.toolbox.BlockInfo,
         {
           kind: 'block',
           type: 'math_change',
-          fields: { VAR: { id: firstId } },
+          fields: { VAR: { id: firstSharedId } },
           inputs: { DELTA: numShadow(1) },
         } as unknown as Blockly.utils.toolbox.BlockInfo,
       );
+      for (const v of sharedVars) {
+        items.push({
+          kind: 'block',
+          type: 'variables_get',
+          fields: { VAR: { id: v.getId() } },
+        } as unknown as Blockly.utils.toolbox.BlockInfo);
+      }
+    }
 
-      for (const v of vars) {
+    items.push(
+      { kind: 'sep', gap: '16' },
+      { kind: 'label', text: '单文件全局 (仅本脚本)' },
+      {
+        kind: 'button',
+        text: '+ 新建单文件变量',
+        callbackkey: 'CREATE_FILE_VARIABLE',
+      },
+    );
+
+    if (fileVars.length > 0) {
+      const firstFileId = fileVars[0].getId();
+      items.push(
+        {
+          kind: 'block',
+          type: 'variables_set',
+          fields: { VAR: { id: firstFileId } },
+          inputs: { VALUE: numShadow(0) },
+        } as unknown as Blockly.utils.toolbox.BlockInfo,
+        {
+          kind: 'block',
+          type: 'math_change',
+          fields: { VAR: { id: firstFileId } },
+          inputs: { DELTA: numShadow(1) },
+        } as unknown as Blockly.utils.toolbox.BlockInfo,
+      );
+      for (const v of fileVars) {
         items.push({
           kind: 'block',
           type: 'variables_get',

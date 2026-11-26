@@ -22,6 +22,7 @@ import type {
   PolyExtensionPack,
   ResolvedHandleChannelPoolSpec,
 } from '../extensions/types';
+import { inferLegacyCrossFileSharedVariables } from './handleVariables';
 import {
   FLAGSHIP_DRIVE_CTRL_WS,
   FLAGSHIP_PATROL_TEST_WS,
@@ -64,6 +65,8 @@ export interface HandleTemplateSpec {
   timerConfig?: Partial<ProjectTimerConfig>;
   /** Additional per-handle channel pool configs (e.g. `pwm-servo` isolated from `rt.timers`). */
   capabilityConfigs?: Record<string, Partial<ProjectTimerConfig>>;
+  /** Explicit cross-file shared variables for this handle (Lua `_G` / Python `shared.py`). */
+  sharedVariables?: string[];
   scripts: Array<{
     name: string;
     isEntry?: boolean;
@@ -1355,6 +1358,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
             '1': '告警倒计时',
           },
         },
+        sharedVariables: ['led_on', 'ticks'],
         scripts: [
           { name: 'main', isEntry: true, workspace: EVENT_LOOP_MAIN_WS },
           { name: 'timers', workspace: EVENT_LOOP_TIMERS_WS },
@@ -1520,6 +1524,10 @@ function instantiateHandleSpec(
     }
   }
 
+  const sharedVariables = Array.isArray(spec.sharedVariables)
+    ? [...spec.sharedVariables]
+    : inferLegacyCrossFileSharedVariables(scripts);
+
   return {
     id: createId('hdl'),
     name: sanitizeHandleName(spec.name),
@@ -1527,6 +1535,7 @@ function instantiateHandleSpec(
     color: spec.color ?? HANDLE_COLOR_PALETTE[idx % HANDLE_COLOR_PALETTE.length],
     autoStart: spec.autoStart ?? true,
     capabilityConfigs,
+    sharedVariables,
     entryScriptId: entryId,
     activeScriptId: entryId,
     scripts,
@@ -1701,6 +1710,7 @@ export function migrateProjectV2ToV3(
       v2.timerConfig || hasCapability(mergedCaps, CAP_RT_TIMERS)
         ? { [CAP_RT_TIMERS]: timerCfg }
         : {},
+    sharedVariables: inferLegacyCrossFileSharedVariables(scripts),
     entryScriptId: entryId,
     activeScriptId,
     scripts,
@@ -1794,6 +1804,11 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
           : HANDLE_COLOR_PALETTE[idx % HANDLE_COLOR_PALETTE.length],
       autoStart: rh.autoStart !== false,
       capabilityConfigs: existingCapConfigs,
+      sharedVariables: Array.isArray(rh.sharedVariables)
+        ? rh.sharedVariables.filter(
+            (v): v is string => typeof v === 'string' && v.trim().length > 0,
+          )
+        : inferLegacyCrossFileSharedVariables(scripts),
       entryScriptId: entryId,
       activeScriptId: activeId,
       scripts,
@@ -1908,6 +1923,11 @@ export function parseImportedProject(
             : HANDLE_COLOR_PALETTE[hIdx % HANDLE_COLOR_PALETTE.length],
         autoStart: rh.autoStart !== false,
         capabilityConfigs: capCfgs,
+        sharedVariables: Array.isArray(rh.sharedVariables)
+          ? rh.sharedVariables.filter(
+              (v): v is string => typeof v === 'string' && v.trim().length > 0,
+            )
+          : inferLegacyCrossFileSharedVariables(scripts),
         entryScriptId: entryId,
         activeScriptId: entryId,
         scripts,
@@ -2205,6 +2225,7 @@ export function addHandleToProject(
     capabilityConfigs: hasTimers
       ? { [CAP_RT_TIMERS]: normalizeTimerConfig(undefined, project.defaultTimerCount) }
       : {},
+    sharedVariables: [],
     entryScriptId: scriptId,
     activeScriptId: scriptId,
     scripts: [
@@ -2275,6 +2296,9 @@ export function duplicateHandleInProject(
     ),
     color: HANDLE_COLOR_PALETTE[project.handles.length % HANDLE_COLOR_PALETTE.length],
     capabilityConfigs: cloneJson(target.capabilityConfigs ?? {}),
+    sharedVariables: Array.isArray(target.sharedVariables)
+      ? [...target.sharedVariables]
+      : inferLegacyCrossFileSharedVariables(clonedScripts),
     entryScriptId: scriptIdMap.get(target.entryScriptId) ?? clonedScripts[0].id,
     activeScriptId: scriptIdMap.get(target.activeScriptId) ?? clonedScripts[0].id,
     scripts: clonedScripts,
