@@ -3,7 +3,7 @@ import type { ProjectTimerConfig } from '../../types/project';
 export const DEFAULT_TIMER_COUNT = 8;
 export const MIN_TIMER_COUNT = 1;
 export const MAX_TIMER_COUNT = 32;
-export const DEFAULT_TIMER_POOL_KEY = 'rt-timers';
+export const DEFAULT_TIMER_POOL_KEY = 'rt.timers';
 export const EDIT_TIMER_ALIAS_SENTINEL = '__EDIT_TIMER_ALIAS__';
 
 export interface ChannelAliasPromptRequest {
@@ -57,7 +57,7 @@ export function normalizeTimerConfig(
 
 /**
  * Per-configKey isolated channel pool configurations for the currently active RuntimeHandle.
- * Prevents collisions when multiple packs declare `handleChannelPool` (e.g. `rt-timers` vs `pwm-driver`).
+ * Prevents collisions when multiple packs/sections declare `handleChannelPool` (e.g. `rt.timers` vs `pwm-driver`).
  */
 const activeChannelPools = new Map<string, ProjectTimerConfig>([
   [DEFAULT_TIMER_POOL_KEY, { count: DEFAULT_TIMER_COUNT, aliases: {} }],

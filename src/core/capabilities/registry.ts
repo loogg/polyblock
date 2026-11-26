@@ -1,45 +1,13 @@
-import type {
-  RuntimeCapabilitySpec,
-  TargetProfile,
-} from '../../types/project';
+import type { TargetProfile } from '../../types/project';
 
-export const CAP_RT_LIFECYCLE = 'rt-lifecycle';
-export const CAP_RT_TIMERS = 'rt-timers';
-export const CAP_RT_TICK = 'rt-tick';
+/** Unified built-in `rt` runtime pack & its fine-grained section capability IDs. */
+export const CAP_RT = 'rt';
+export const CAP_RT_LIFECYCLE = 'rt.lifecycle';
+export const CAP_RT_TIMERS = 'rt.timers';
+export const CAP_RT_TICK = 'rt.tick';
 export const CAP_VIRTUAL_BOARD = 'virtual-board';
 
 export const STORAGE_CUSTOM_PROFILES_KEY = 'polyblock.profiles.custom.v1';
-
-/** Built-in pluggable runtime capabilities (decoupled from Layer 0 core!). */
-export const BUILTIN_RUNTIME_CAPABILITIES: RuntimeCapabilitySpec[] = [
-  {
-    id: CAP_RT_LIFECYCLE,
-    name: '周期事件循环 (on_run / on_stop)',
-    shortLabel: '周期循环',
-    color: '#e0911f',
-    scope: 'project',
-    description:
-      '为项目启用常驻周期回调 on_run（默认 100ms，可动态调频/启停）与安全停机 on_stop 积木，对应板端 rt 周期调度。',
-  },
-  {
-    id: CAP_RT_TIMERS,
-    name: '多路编号定时器 (rt.timer)',
-    shortLabel: '多路定时',
-    color: '#6366f1',
-    scope: 'handle',
-    description:
-      '为项目内每个隔离句柄提供独立的整数通道定时器池（0~31 路）、画布就地别名与顶层零闭包 on_timer(id) 分发。',
-  },
-  {
-    id: CAP_RT_TICK,
-    name: '系统时钟与到期判断 (rt.tick)',
-    shortLabel: '系统时钟',
-    color: '#0891b2',
-    scope: 'project',
-    description:
-      '提供嵌入式 RTOS 系统滴答（rt.tick）、毫秒转 tick（rt.ms_to_tick）与 32 位回绕安全到期判断（rt.is_expired），不依赖编号定时器通道池。',
-  },
-];
 
 export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
   {
@@ -61,11 +29,11 @@ export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
     id: 'embedded-rt',
     name: '通用嵌入式 RT 控制板',
     description:
-      '多隔离句柄 + on_run 周期循环 + 每句柄独立多路定时器（0~31）+ 系统 tick 时钟，不含特定演示外设，适合按需挂载自家硬件扩展包。',
+      '启用完整嵌入式运行时核心包 rt（周期事件 + 每句柄独立多路定时器 + 系统时钟 tick），不含演示外设，适合按需挂载自家硬件扩展包。',
     defaultLanguage: 'lua',
     maxHandles: 8,
     defaultTimerCount: 8,
-    capabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_RT_TICK],
+    capabilities: [CAP_RT],
     builtin: true,
   },
   {
@@ -74,11 +42,11 @@ export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
     id: 'virtual-board-rt',
     name: '虚拟硬件 RT 演示板',
     description:
-      '完整演示多句柄并发 + 周期调度 + 多路编号定时器 + 系统 tick 时钟 + 示例虚拟板外设（LED / 三色灯 / OLED / 温度 / 按键回调）。',
+      '完整演示多句柄并发 + 嵌入式运行时核心包 rt（周期 / 定时 / 时钟）+ 示例虚拟板外设（LED / 三色灯 / OLED / 温度 / 按键回调）。',
     defaultLanguage: 'lua',
     maxHandles: 8,
     defaultTimerCount: 8,
-    capabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_RT_TICK, CAP_VIRTUAL_BOARD],
+    capabilities: [CAP_RT, CAP_VIRTUAL_BOARD],
     builtin: true,
   },
   {
@@ -87,7 +55,7 @@ export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
     id: 'virtual-board-basic',
     name: '虚拟硬件基础演示板（无定时）',
     description:
-      '仅启用示例虚拟硬件外设包与字典进阶包，不含定时器与 on_run 周期循环，演示不同项目的差异化能力装配。',
+      '仅启用示例虚拟硬件外设包与字典进阶包，不含 rt 运行时周期与定时器，演示不同项目的差异化能力装配。',
     defaultLanguage: 'python',
     maxHandles: 4,
     defaultTimerCount: 8,
@@ -102,11 +70,11 @@ export const SAMPLE_CUSTOM_BOARD_TEMPLATE: TargetProfile = {
   id: 'my-industrial-controller',
   name: '自定义工业控制板（示例模板）',
   description:
-    '演示如何通过纯 JSON 定义自己的目标设备规格：Lua 5.4、最多 8 个隔离句柄、每句柄默认 16 路定时器。',
+    '演示如何通过纯 JSON 定义目标设备规格：Lua 5.4、最多 8 个隔离句柄、启用 rt（也可按 rt.lifecycle / rt.timers / rt.tick 细粒度裁剪）。',
   defaultLanguage: 'lua',
   maxHandles: 8,
   defaultTimerCount: 16,
-  capabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, 'dict-json'],
+  capabilities: [CAP_RT, 'dict-json'],
 };
 
 export function validateTargetProfile(raw: unknown): TargetProfile {
@@ -189,12 +157,12 @@ class TargetProfileRegistry {
     const valid = validateTargetProfile(raw);
     const existing = this.profiles.get(valid.id);
     if (existing?.builtin) {
-      throw new Error(`板型 ID "${valid.id}" 与内置预设冲突，请更换自定义 ID`);
+      throw new Error(`板型 ID "${valid.id}" 与内置板型冲突，请更换自定义 ID`);
     }
-    const custom: TargetProfile = { ...valid, builtin: false };
-    this.profiles.set(custom.id, custom);
-    this.persistCustom();
-    return custom;
+    const customProfile: TargetProfile = { ...valid, builtin: false };
+    this.profiles.set(customProfile.id, customProfile);
+    this.persistCustomProfiles();
+    return customProfile;
   }
 
   removeCustomProfile(id: string): boolean {
@@ -202,14 +170,14 @@ class TargetProfileRegistry {
     const existing = this.profiles.get(id);
     if (!existing || existing.builtin) return false;
     this.profiles.delete(id);
-    this.persistCustom();
+    this.persistCustomProfiles();
     return true;
   }
 
-  private persistCustom(): void {
+  private persistCustomProfiles(): void {
     try {
-      const customOnly = Array.from(this.profiles.values()).filter((p) => !p.builtin);
-      localStorage.setItem(STORAGE_CUSTOM_PROFILES_KEY, JSON.stringify(customOnly));
+      const custom = Array.from(this.profiles.values()).filter((p) => !p.builtin);
+      localStorage.setItem(STORAGE_CUSTOM_PROFILES_KEY, JSON.stringify(custom));
     } catch {
       // ignore quota errors
     }
@@ -218,9 +186,21 @@ class TargetProfileRegistry {
 
 export const targetProfileRegistry = new TargetProfileRegistry();
 
+/**
+ * Checks whether a pack (`"rt"`) or specific section (`"rt.timers"`) is enabled in `enabledCapabilities`:
+ * - For a section ID `"packId.sectionId"`: enabled if `"packId.sectionId"` OR whole-pack `"packId"` is present.
+ * - For a pack ID `"packId"`: enabled if `"packId"` OR any `"packId.*"` section is present.
+ */
 export function hasCapability(
-  enabledCapabilities: string[] | undefined,
-  capId: string,
+  enabledCapabilities: string[],
+  capabilityId: string,
 ): boolean {
-  return Array.isArray(enabledCapabilities) && enabledCapabilities.includes(capId);
+  if (enabledCapabilities.includes(capabilityId)) return true;
+  const dotIdx = capabilityId.indexOf('.');
+  if (dotIdx > 0) {
+    const parentPackId = capabilityId.slice(0, dotIdx);
+    return enabledCapabilities.includes(parentPackId);
+  }
+  const prefix = `${capabilityId}.`;
+  return enabledCapabilities.some((c) => c.startsWith(prefix));
 }

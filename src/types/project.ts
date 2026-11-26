@@ -58,7 +58,7 @@ export interface VariableScopeNode {
   variables: ScopedVariableItem[];
 }
 
-/** Per-handle timer capability config stored under handle.capabilityConfigs['rt-timers']. */
+/** Per-handle timer capability config stored under handle.capabilityConfigs['rt.timers']. */
 export interface ProjectTimerConfig {
   /** Number of available timer channels for this handle (1..32, default 8 -> IDs 0..7). */
   count: number;
@@ -76,19 +76,9 @@ export interface TargetProfile {
   defaultLanguage: ScriptLanguageId;
   maxHandles: number;
   defaultTimerCount: number;
-  /** Default enabled capability IDs (runtime capabilities + peripheral/extension packs). */
+  /** Default enabled capability IDs (pack IDs like `"rt"` or section IDs like `"rt.timers"`). */
   capabilities: string[];
   builtin?: boolean;
-}
-
-/** Built-in runtime capability metadata (e.g., rt-lifecycle, rt-timers). */
-export interface RuntimeCapabilitySpec {
-  id: string;
-  name: string;
-  shortLabel: string;
-  color: string;
-  scope: 'project' | 'handle';
-  description: string;
 }
 
 /** Live runtime telemetry emitted by the cooperative WASM event-loop scheduler. */
@@ -131,7 +121,7 @@ export interface RuntimeHandle {
   description?: string;
   color: string;
   autoStart: boolean;
-  /** Generic per-handle capability config store (e.g., capabilityConfigs['rt-timers']). */
+  /** Generic per-handle capability config store (e.g., capabilityConfigs['rt.timers']). */
   capabilityConfigs: Record<string, unknown>;
   entryScriptId: string;
   activeScriptId: string;
@@ -163,7 +153,7 @@ export interface ProjectModel {
    * loading without polluting their global library.
    */
   bundledExtensions?: PolyExtensionPack[];
-  /** Project default timer channel count when rt-timers is enabled (1..32). */
+  /** Project default timer channel count when rt.timers is enabled (1..32). */
   defaultTimerCount: number;
   /** Forward-compatible reserved pure-script shared libraries (single source, isolated load per handle). */
   sharedModules: ProjectScript[];

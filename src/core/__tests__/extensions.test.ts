@@ -14,7 +14,9 @@ import {
   setActiveProjectCapabilities,
 } from '../blocks/timerConfigBridge';
 import {
+  CAP_RT,
   CAP_RT_LIFECYCLE,
+  CAP_RT_TICK,
   CAP_RT_TIMERS,
   CAP_VIRTUAL_BOARD,
   SAMPLE_CUSTOM_BOARD_TEMPLATE,
@@ -22,12 +24,16 @@ import {
   validateTargetProfile,
 } from '../capabilities/registry';
 import {
+  RT_PACK,
   SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
   VIRTUAL_BOARD_PACK,
 } from '../extensions/builtinPacks';
 import {
   derivePackBadges,
   extensionRegistry,
+  getPackEnableState,
+  resolvePackSections,
+  togglePackOrSectionCapability,
   validateExtensionPack,
 } from '../extensions/registry';
 import {
@@ -56,7 +62,8 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
 
   it('strictly gates core toolbox categories & hardware button hats by enabledCapabilities', () => {
     const pureCats = getCoreCategoriesForCapabilities([]);
-    expect(pureCats.some((c) => c.id === 'timers')).toBe(false);
+    expect(pureCats.some((c) => c.id === 'ext_rt_timers')).toBe(false);
+    expect(pureCats.some((c) => c.id === 'ext_rt_tick')).toBe(false);
     const pureEventBlocks =
       pureCats.find((c) => c.id === 'event')?.blocks.map((b) => b.type) ?? [];
     expect(pureEventBlocks).toEqual([
@@ -65,13 +72,15 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       'poly_comment',
     ]);
 
-    const rtCats = getCoreCategoriesForCapabilities([
-      CAP_RT_LIFECYCLE,
-      CAP_RT_TIMERS,
-    ]);
-    expect(rtCats.some((c) => c.id === 'timers')).toBe(true);
+    const rtCats = getCoreCategoriesForCapabilities([CAP_RT]);
+    expect(rtCats.some((c) => c.id === 'ext_rt_timers')).toBe(true);
+    expect(rtCats.some((c) => c.id === 'ext_rt_tick')).toBe(true);
     const rtEventBlocks =
       rtCats.find((c) => c.id === 'event')?.blocks.map((b) => b.type) ?? [];
+    // Must preserve all 3 core event blocks + declaratively merged rt.lifecycle blocks
+    expect(rtEventBlocks).toContain('poly_on_start');
+    expect(rtEventBlocks).toContain('poly_require_script');
+    expect(rtEventBlocks).toContain('poly_comment');
     expect(rtEventBlocks).toContain('poly_on_run');
     expect(rtEventBlocks).toContain('poly_on_stop');
     expect(rtEventBlocks).not.toContain('poly_on_button');
@@ -98,29 +107,37 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(targetProfileRegistry.removeCustomProfile(imported.id)).toBe(true);
   });
 
-  it('registers all 6 built-in packs by source, derives multi-attribute badges, and sorts toolbox categories by numeric toolboxOrder', () => {
+  it('registers all 4 built-in packs (with multi-section rt), derives badges, and sorts toolbox categories by numeric toolboxOrder', () => {
     const all = extensionRegistry.listAll();
     expect(all.map((p) => p.id)).toEqual(
       expect.arrayContaining([
-        'rt-lifecycle',
-        'rt-timers',
-        'rt-tick',
+        'rt',
         'virtual-board',
         'dict-json',
         'clock-timer',
       ]),
     );
-    expect(extensionRegistry.listBySource('builtin')).toHaveLength(6);
+    expect(extensionRegistry.listBySource('builtin')).toHaveLength(4);
+    expect(resolvePackSections(RT_PACK).map((s) => s.capId)).toEqual([
+      CAP_RT_LIFECYCLE,
+      CAP_RT_TIMERS,
+      CAP_RT_TICK,
+    ]);
     expect(CORE_TOOLBOX_ORDERS.map((c) => c.order)).toEqual([
       10, 20, 30, 40, 50, 60, 70, 80, 90,
     ]);
 
-    // Multi-attribute badge derivation on mixed-capability packs
+    // Multi-attribute badge derivation on mixed-capability & multi-section packs
+    const rtBadges = derivePackBadges(RT_PACK).map((b) => b.label);
+    expect(rtBadges).toContain('3 组件');
+    expect(rtBadges).toContain('事件回调');
+    expect(rtBadges).toContain('通道池 T0~31');
+
     const vbBadges = derivePackBadges(VIRTUAL_BOARD_PACK).map((b) => b.label);
     expect(vbBadges).toContain('外设模拟 · 6控件');
     expect(vbBadges).toContain('事件回调');
 
-    // Numeric toolboxOrder slots rt-timers (#15) between 事件 (#10) and 打印 (#20),
+    // Numeric toolboxOrder slots rt.timers (#15) & rt.tick (#18) between 事件 (#10) and 打印 (#20),
     // and custom pack (#35) right between 控制 (#30) and 变量 (#40)!
     const midPack = extensionRegistry.validateProjectLocalPack({
       ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
@@ -144,13 +161,20 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     );
     extensionRegistry.setActiveProjectLocalPacks([midPack]);
     const ordered = getOrderedToolboxCategories([
-      CAP_RT_TIMERS,
+      CAP_RT,
       'mid-order-pack',
       CAP_VIRTUAL_BOARD,
     ]);
     const orderedIds = ordered.map((c) => c.id);
-    expect(orderedIds.indexOf('event')).toBeLessThan(orderedIds.indexOf('timers'));
-    expect(orderedIds.indexOf('timers')).toBeLessThan(orderedIds.indexOf('print'));
+    expect(orderedIds.indexOf('event')).toBeLessThan(
+      orderedIds.indexOf('ext_rt_timers'),
+    );
+    expect(orderedIds.indexOf('ext_rt_timers')).toBeLessThan(
+      orderedIds.indexOf('ext_rt_tick'),
+    );
+    expect(orderedIds.indexOf('ext_rt_tick')).toBeLessThan(
+      orderedIds.indexOf('print'),
+    );
     expect(orderedIds.indexOf('control')).toBeLessThan(
       orderedIds.indexOf('ext_mid-order-pack'),
     );
@@ -704,7 +728,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       resDisabled.diagnostics.some(
         (d) =>
           d.severity === 'error' &&
-          d.id.startsWith('cap-missing-ext-diag-servo-pack') &&
+          d.id.startsWith('cap-missing-diag-servo-pack-') &&
           d.message.includes('诊断测试舵机包'),
       ),
     ).toBe(true);
@@ -767,11 +791,11 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
 
     // Configure TWO completely separate channel pools on the same active handle
     setActiveChannelPoolConfigs({
-      'rt-timers': { count: 8, aliases: { '0': '心跳灯' } },
+      [CAP_RT_TIMERS]: { count: 8, aliases: { '0': '心跳灯' } },
       'pwm-driver': { count: 4, aliases: { '0': '左轮油门' } },
     });
 
-    const timerOpts = buildChannelDropdownOptions('rt-timers', 'T', '0', 8, 32, false);
+    const timerOpts = buildChannelDropdownOptions(CAP_RT_TIMERS, 'T', '0', 8, 32, false);
     const pwmOpts = buildChannelDropdownOptions('pwm-driver', 'PWM', '0', 4, 8, false);
     expect(timerOpts).toHaveLength(8);
     expect(timerOpts[0]).toEqual(['T0 · 心跳灯', '0']);
@@ -812,23 +836,219 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
 
     setActiveProjectCapabilities([CAP_RT_TIMERS, 'pwm-driver']);
     const luaRes = backendRegistry.get('lua').generate(ws);
-    // Uses pwm-driver's own alias (`PWM0: 左轮油门`), NOT rt-timers's `T0: 心跳灯`!
+    // Uses pwm-driver's own alias (`PWM0: 左轮油门`), NOT rt.timers's `T0: 心跳灯`!
     expect(luaRes.code).toContain('pwm.duty(0, 60) -- PWM0: 左轮油门');
     expect(luaRes.code).not.toContain('心跳灯');
-    // PWM5 exceeds pwm-driver count=4 even though rt-timers has count=8!
+    // PWM5 exceeds pwm-driver count=4 even though rt.timers has count=8!
     expect(
       luaRes.diagnostics.some(
         (d) => d.severity === 'error' && d.id.startsWith('pool-pwm-driver-oob-5-'),
       ),
     ).toBe(true);
 
-    // Updating pwm-driver count to 6 clears OOB without affecting rt-timers
+    // Updating pwm-driver count to 6 clears OOB without affecting rt.timers
     setActiveChannelPoolConfig('pwm-driver', { count: 6, aliases: { '0': '左轮油门' } }, 4, 1, 8);
     expect(backendRegistry.get('lua').generate(ws).diagnostics).toHaveLength(0);
 
     ws.dispose();
     setActiveProjectCapabilities(null);
-    setActiveChannelPoolConfigs({ 'rt-timers': { count: 8, aliases: {} } });
+    setActiveChannelPoolConfigs({ [CAP_RT_TIMERS]: { count: 8, aliases: {} } });
+    extensionRegistry.setActiveProjectLocalPacks([]);
+  });
+
+  it('supports fine-grained Scheme 1 section pruning, generic core-category merging (control), hidden sections, and generic content-based import deduplication', () => {
+    // 1. Fine-grained section toggling on unified RT_PACK
+    let caps = [CAP_RT];
+    expect(getPackEnableState(RT_PACK, caps)).toMatchObject({
+      status: 'full',
+      enabledCount: 3,
+      totalCount: 3,
+    });
+
+    // Uncheck ONLY `rt.timers` -> collapses to ['rt.lifecycle', 'rt.tick'] (partial 2/3)
+    const step1 = togglePackOrSectionCapability(CAP_RT_TIMERS, caps);
+    expect(step1.action).toBe('disabled');
+    expect(step1.nextCapabilities).toEqual([CAP_RT_LIFECYCLE, CAP_RT_TICK]);
+    caps = step1.nextCapabilities;
+    expect(getPackEnableState(RT_PACK, caps)).toMatchObject({
+      status: 'partial',
+      enabledCount: 2,
+      totalCount: 3,
+    });
+
+    const partialCats = getOrderedToolboxCategories(caps);
+    expect(partialCats.some((c) => c.id === 'ext_rt_timers')).toBe(false);
+    expect(partialCats.some((c) => c.id === 'ext_rt_tick')).toBe(true);
+    expect(
+      partialCats.find((c) => c.id === 'event')?.blocks.some((b) => b.type === 'poly_on_run'),
+    ).toBe(true);
+
+    // Re-checking `rt.timers` auto-collapses cleanly back to whole pack `['rt']`
+    const step2 = togglePackOrSectionCapability(CAP_RT_TIMERS, caps);
+    expect(step2.action).toBe('enabled');
+    expect(step2.nextCapabilities).toEqual([CAP_RT]);
+
+    // Toggling whole pack `'rt'` from full -> disabled completely
+    const step3 = togglePackOrSectionCapability(CAP_RT, step2.nextCapabilities);
+    expect(step3.action).toBe('disabled');
+    expect(step3.nextCapabilities).toEqual([]);
+
+    // 2. Custom multi-section SDK pack targeting core `'control'` category + hidden section + standalone `#35`,
+    //    plus generic content-based import deduplication across TWO distinct packs sharing `require("my_sdk")`
+    const sdkPackA = extensionRegistry.validateProjectLocalPack({
+      format: 'polyblock-extension',
+      version: 1,
+      id: 'custom-mcu-sdk',
+      name: '自定义 MCU SDK',
+      packVersion: '1.0.0',
+      categoryLabel: 'MCU',
+      color: '#ec4899',
+      description: '验证多组件声明式注入控制分类、隐藏组件与独立排序组件。',
+      sections: [
+        {
+          id: 'ctrl_ext',
+          label: '流程控制扩展',
+          visible: true,
+          categoryTarget: 'control',
+          blocks: ['ext_mcu_yield'],
+        },
+        {
+          id: 'internal',
+          label: '内部隐藏',
+          visible: false,
+          categoryTarget: 'own',
+          toolboxOrder: 34,
+          blocks: ['ext_mcu_hidden'],
+        },
+        {
+          id: 'io',
+          label: '板级IO',
+          visible: true,
+          categoryTarget: 'own',
+          toolboxOrder: 35,
+          color: '#06b6d4',
+          blocks: ['ext_mcu_gpio'],
+        },
+      ],
+      blocks: [
+        {
+          type: 'ext_mcu_yield',
+          kind: 'statement',
+          message0: 'MCU 让出控制权',
+          lua: {
+            imports: ['local my_sdk = require("my_sdk")'],
+            template: 'my_sdk.yield()',
+          },
+          python: {
+            imports: ['import my_sdk'],
+            template: 'my_sdk.yield_now()',
+          },
+        },
+        {
+          type: 'ext_mcu_hidden',
+          kind: 'statement',
+          message0: '内部调试调用',
+          lua: { template: '-- hidden' },
+          python: { template: 'pass' },
+        },
+        {
+          type: 'ext_mcu_gpio',
+          kind: 'statement',
+          message0: '设置 GPIO %1',
+          args0: [{ type: 'field_number', name: 'PIN', value: 1 }],
+          lua: {
+            imports: ['local my_sdk = require("my_sdk")'],
+            template: 'my_sdk.gpio({{PIN}})',
+          },
+          python: {
+            imports: ['import my_sdk'],
+            template: 'my_sdk.gpio({{PIN}})',
+          },
+        },
+      ],
+    });
+    const sdkPackB = extensionRegistry.validateProjectLocalPack({
+      format: 'polyblock-extension',
+      version: 1,
+      id: 'custom-mcu-addon',
+      name: 'MCU 扩展插件',
+      packVersion: '1.0.0',
+      categoryLabel: '插件',
+      color: '#8b5cf6',
+      description: '与 custom-mcu-sdk 共享相同 Lua/Python import 行，验证通用按内容去重。',
+      blocks: [
+        {
+          type: 'ext_mcu_addon_ping',
+          kind: 'statement',
+          message0: 'MCU Ping',
+          lua: {
+            imports: ['local my_sdk = require("my_sdk")'],
+            template: 'my_sdk.ping()',
+          },
+          python: {
+            imports: ['import my_sdk'],
+            template: 'my_sdk.ping()',
+          },
+        },
+      ],
+    });
+
+    extensionRegistry.setActiveProjectLocalPacks([sdkPackA, sdkPackB]);
+    const sdkCats = getOrderedToolboxCategories(['custom-mcu-sdk', 'custom-mcu-addon']);
+    // Section `ctrl_ext` declaratively merged into core `control` (ZERO hardcoding of 'event'!)
+    expect(
+      sdkCats.find((c) => c.id === 'control')?.blocks.some((b) => b.type === 'ext_mcu_yield'),
+    ).toBe(true);
+    // Section `internal` with visible=false is NOT rendered in sidebar
+    expect(sdkCats.some((c) => c.id === 'ext_custom-mcu-sdk_internal')).toBe(false);
+    // Section `io` rendered at #35 between control (#30) and variables (#40)
+    const ids = sdkCats.map((c) => c.id);
+    expect(ids.indexOf('control')).toBeLessThan(ids.indexOf('ext_custom-mcu-sdk_io'));
+    expect(ids.indexOf('ext_custom-mcu-sdk_io')).toBeLessThan(ids.indexOf('variables'));
+
+    // Generic content-based import deduplication across two distinct packs (`sdkPackA` + `sdkPackB`)
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_start',
+              id: 'dedup_s',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'ext_mcu_yield',
+                    id: 'dedup_1',
+                    next: {
+                      block: {
+                        type: 'ext_mcu_gpio',
+                        id: 'dedup_2',
+                        fields: { PIN: 4 },
+                        next: {
+                          block: {
+                            type: 'ext_mcu_addon_ping',
+                            id: 'dedup_3',
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      ws,
+    );
+    const luaDedup = backendRegistry.get('lua').generate(ws);
+    expect(luaDedup.code.match(/local my_sdk = require\("my_sdk"\)/g)?.length).toBe(1);
+    const pyDedup = backendRegistry.get('python').generate(ws);
+    expect(pyDedup.code.match(/^import my_sdk$/gm)?.length).toBe(1);
+
+    ws.dispose();
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
 
@@ -839,15 +1059,14 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       const proj = instantiateProjectFromTemplate(tpl.id);
       extensionRegistry.setActiveProjectLocalPacks(proj.localExtensions ?? []);
       setActiveProjectCapabilities(proj.enabledCapabilities);
-      const poolPacks = extensionRegistry.getChannelPoolPacks(
-        proj.enabledCapabilities,
-        proj.localExtensions,
-      );
+      const pools = extensionRegistry
+        .getChannelPools(proj.enabledCapabilities, proj.localExtensions)
+        .map((entry) => entry.pool);
 
       for (const hdl of proj.handles) {
         const poolCfgs = getAllHandleChannelPoolConfigs(
           hdl,
-          poolPacks,
+          pools,
           proj.defaultTimerCount,
         );
         setActiveChannelPoolConfigs(poolCfgs);
@@ -868,7 +1087,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
             `${tpl.id}/${hdl.name}/${scr.name} Python diagnostics`,
           ).toHaveLength(0);
 
-          if (tpl.id === 'multi_handle_robot' && scr.name === 'motion_ctrl') {
+          if (tpl.id === 'multi_handle_robot' && hdl.name === 'drive_ctrl' && scr.name === 'main') {
             expect(luaRes.code).toContain('function on_drive_estop(active)');
             expect(luaRes.code).toContain('-- PWM0: 云台偏航');
             expect(luaRes.code).toContain('-- T0: 云台扫描');
@@ -882,7 +1101,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     }
 
     setActiveProjectCapabilities(null);
-    setActiveChannelPoolConfigs({ 'rt-timers': { count: 8, aliases: {} } });
+    setActiveChannelPoolConfigs({ [CAP_RT_TIMERS]: { count: 8, aliases: {} } });
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
 });

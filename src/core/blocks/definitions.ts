@@ -270,7 +270,7 @@ export function registerPolyBlocks(): void {
     }
   }
 
-  // Register all built-in runtime packs (rt-lifecycle, rt-timers), peripheral packs, & custom packs
+  // Register all built-in declarative extension packs (rt, virtual-board, dict-json, clock-timer) & custom packs
   extensionRegistry.ensureInitialized();
 
   blocksRegistered = true;

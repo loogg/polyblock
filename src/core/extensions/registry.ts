@@ -9,14 +9,19 @@ import {
   formatChannelLabel,
   getActiveChannelPoolConfig,
 } from '../blocks/timerConfigBridge';
+import { hasCapability } from '../capabilities/registry';
 import { BUILTIN_EXTENSION_PACKS } from './builtinPacks';
 import type {
+  CategoryTargetSpec,
+  CoreCategoryTarget,
   ExtensionBlockDef,
   ExtensionHatSpec,
   ExtensionSandboxMock,
+  ExtensionSectionSpec,
   HandleChannelPoolSpec,
   PackAttributeBadge,
   PolyExtensionPack,
+  ResolvedPackSection,
   SimWidgetEventTrigger,
   SimWidgetKind,
   SimWidgetSpec,
@@ -25,19 +30,254 @@ import type {
 export const STORAGE_CUSTOM_EXTENSIONS_KEY = 'polyblock.extensions.custom.v1';
 export const DEFAULT_PACK_TOOLBOX_ORDER = 100;
 
+export const CORE_CATEGORY_LABELS: Record<CoreCategoryTarget, string> = {
+  event: '事件',
+  print: '打印',
+  control: '控制',
+  variables: '变量',
+  math: '运算',
+  logic: '逻辑',
+  text: '文本',
+  lists: '列表',
+  functions: '函数',
+};
+
+const VALID_CORE_CATEGORY_TARGETS = new Set<string>(
+  Object.keys(CORE_CATEGORY_LABELS),
+);
+
+function parseCategoryTarget(raw: unknown): CategoryTargetSpec {
+  if (typeof raw === 'string' && VALID_CORE_CATEGORY_TARGETS.has(raw)) {
+    return raw as CoreCategoryTarget;
+  }
+  return 'own';
+}
+
+/**
+ * Normalizes any pack (single-section OR multi-section `sections[]`) into a uniform
+ * list of `ResolvedPackSection` entries so the entire engine & UI treat both identically.
+ */
+export function resolvePackSections(
+  pack: PolyExtensionPack,
+): ResolvedPackSection[] {
+  if (pack.sections && pack.sections.length > 0) {
+    const blockByType = new Map(pack.blocks.map((b) => [b.type, b]));
+    return pack.sections.map((sec) => {
+      const secBlocks = sec.blocks
+        .map((t) => blockByType.get(t))
+        .filter((b): b is ExtensionBlockDef => Boolean(b));
+      return {
+        capId: `${pack.id}.${sec.id}`,
+        sectionId: sec.id,
+        label: sec.label,
+        description: sec.description,
+        visible: sec.visible !== false,
+        categoryTarget: sec.categoryTarget ?? 'own',
+        toolboxOrder:
+          sec.toolboxOrder ?? pack.toolboxOrder ?? DEFAULT_PACK_TOOLBOX_ORDER,
+        color: sec.color ?? pack.color,
+        flyoutButton: sec.flyoutButton,
+        hasRtMonitorUi: Boolean(sec.hasRtMonitorUi),
+        handleChannelPool: sec.handleChannelPool,
+        blocks: secBlocks,
+        isMultiSection: true,
+      };
+    });
+  }
+
+  return [
+    {
+      capId: pack.id,
+      sectionId: 'default',
+      label: pack.categoryLabel,
+      description: pack.description,
+      visible: pack.visible !== false,
+      categoryTarget: pack.categoryTarget ?? 'own',
+      toolboxOrder: pack.toolboxOrder ?? DEFAULT_PACK_TOOLBOX_ORDER,
+      color: pack.color,
+      flyoutButton: pack.flyoutButton,
+      hasRtMonitorUi: Boolean(pack.hasRtMonitorUi),
+      handleChannelPool: pack.handleChannelPool,
+      blocks: pack.blocks,
+      isMultiSection: false,
+    },
+  ];
+}
+
+export function findSectionForBlockType(
+  pack: PolyExtensionPack,
+  blockType: string,
+): ResolvedPackSection | undefined {
+  return resolvePackSections(pack).find((sec) =>
+    sec.blocks.some((b) => b.type === blockType),
+  );
+}
+
+/** Computes whether a pack is fully enabled, partially enabled (fine-grained sections), or disabled. */
+export function getPackEnableState(
+  pack: PolyExtensionPack,
+  enabledCapabilities: string[],
+): {
+  status: 'full' | 'partial' | 'none';
+  enabledCount: number;
+  totalCount: number;
+  enabledSectionCapIds: string[];
+} {
+  const sections = resolvePackSections(pack);
+  if (!sections[0]?.isMultiSection) {
+    const on = enabledCapabilities.includes(pack.id);
+    return {
+      status: on ? 'full' : 'none',
+      enabledCount: on ? 1 : 0,
+      totalCount: 1,
+      enabledSectionCapIds: on ? [pack.id] : [],
+    };
+  }
+
+  const enabledSections = sections.filter((s) =>
+    hasCapability(enabledCapabilities, s.capId),
+  );
+  const status =
+    enabledSections.length === 0
+      ? 'none'
+      : enabledSections.length === sections.length
+        ? 'full'
+        : 'partial';
+  return {
+    status,
+    enabledCount: enabledSections.length,
+    totalCount: sections.length,
+    enabledSectionCapIds: enabledSections.map((s) => s.capId),
+  };
+}
+
+/**
+ * Scheme 1 fine-grained capability toggle helper:
+ * - Toggling whole pack (`"rt"`): full -> none; none/partial -> full (`"rt"`).
+ * - Toggling single section (`"rt.timers"`): flips that section, auto-collapses to `"rt"`
+ *   when all sections become enabled, or strips `"rt"` completely when none remain.
+ */
+export function togglePackOrSectionCapability(
+  capId: string,
+  enabledCapabilities: string[],
+  localPacks?: PolyExtensionPack[],
+): {
+  nextCapabilities: string[];
+  action: 'enabled' | 'disabled';
+  displayName: string;
+} {
+  const dotIdx = capId.indexOf('.');
+  const isSectionToggle = dotIdx > 0;
+  const basePackId = isSectionToggle ? capId.slice(0, dotIdx) : capId;
+  const pack = extensionRegistry.resolvePack(basePackId, localPacks);
+
+  if (!pack || !pack.sections || pack.sections.length === 0) {
+    const exists = enabledCapabilities.includes(capId);
+    const nextCapabilities = exists
+      ? enabledCapabilities.filter((id) => id !== capId)
+      : [...enabledCapabilities, capId];
+    return {
+      nextCapabilities,
+      action: exists ? 'disabled' : 'enabled',
+      displayName: pack?.name ?? capId,
+    };
+  }
+
+  const sections = resolvePackSections(pack);
+  const state = getPackEnableState(pack, enabledCapabilities);
+  const prefix = `${pack.id}.`;
+  const withoutPack = enabledCapabilities.filter(
+    (c) => c !== pack.id && !c.startsWith(prefix),
+  );
+
+  if (!isSectionToggle) {
+    if (state.status === 'full') {
+      return {
+        nextCapabilities: withoutPack,
+        action: 'disabled',
+        displayName: pack.name,
+      };
+    }
+    return {
+      nextCapabilities: [...withoutPack, pack.id],
+      action: 'enabled',
+      displayName: pack.name,
+    };
+  }
+
+  const targetSec = sections.find((s) => s.capId === capId);
+  const displayName = targetSec ? `${pack.name} · ${targetSec.label}` : capId;
+  const curSet = new Set(state.enabledSectionCapIds);
+  const wasOn = curSet.has(capId);
+  if (wasOn) {
+    curSet.delete(capId);
+  } else {
+    curSet.add(capId);
+  }
+
+  let nextCapabilities: string[];
+  if (curSet.size === 0) {
+    nextCapabilities = withoutPack;
+  } else if (curSet.size === sections.length) {
+    nextCapabilities = [...withoutPack, pack.id];
+  } else {
+    const ordered = sections
+      .map((s) => s.capId)
+      .filter((id) => curSet.has(id));
+    nextCapabilities = [...withoutPack, ...ordered];
+  }
+
+  return {
+    nextCapabilities,
+    action: wasOn ? 'disabled' : 'enabled',
+    displayName,
+  };
+}
+
+export function formatSectionPlacement(section: ResolvedPackSection): string {
+  if (!section.visible) return '隐藏';
+  if (section.categoryTarget !== 'own') {
+    return `并入「${CORE_CATEGORY_LABELS[section.categoryTarget]}」`;
+  }
+  return `#${section.toolboxOrder}`;
+}
+
+export function formatPackPlacementSummary(pack: PolyExtensionPack): string {
+  const sections = resolvePackSections(pack);
+  if (sections.length > 1) {
+    return `${sections.length} 个组件`;
+  }
+  const sec = sections[0];
+  if (!sec.visible) return '隐藏';
+  return sec.categoryTarget !== 'own'
+    ? `并入「${CORE_CATEGORY_LABELS[sec.categoryTarget]}」`
+    : `分类序 #${sec.toolboxOrder}`;
+}
+
 /**
  * Derives objective multi-attribute badges from a pack's actual declarative contents
- * (plus optional user-authored `tags`), allowing a single pack to combine peripheral
- * widgets, event callbacks, channel pools, and pure API functions seamlessly.
+ * (across all sections + optional user-authored `tags`).
  */
 export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] {
   const badges: PackAttributeBadge[] = [];
+  const sections = resolvePackSections(pack);
   const widgetCount = pack.simWidgets?.length ?? 0;
   const hasHat = pack.blocks.some((b) => b.kind === 'hat');
-  const hasPool = Boolean(pack.handleChannelPool);
+  const pools = sections
+    .map((s) => s.handleChannelPool)
+    .filter((p): p is HandleChannelPoolSpec => Boolean(p));
+  const hasRtMonitor = sections.some((s) => s.hasRtMonitorUi);
   const hasApiBlocks = pack.blocks.some(
     (b) => b.kind === 'statement' || b.kind === 'value',
   );
+
+  if (sections.length > 1) {
+    badges.push({
+      id: 'sections',
+      label: `${sections.length} 组件`,
+      tone: 'tag',
+    });
+  }
 
   if (widgetCount > 0) {
     badges.push({
@@ -61,16 +301,15 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
     });
   }
 
-  if (hasPool && pack.handleChannelPool) {
-    const p = pack.handleChannelPool;
+  for (const p of pools) {
     badges.push({
-      id: 'pool',
+      id: `pool-${p.configKey}`,
       label: `通道池 ${p.prefix}0~${p.max - 1}`,
       tone: 'pool',
     });
   }
 
-  if (hasApiBlocks && widgetCount === 0 && !hasPool && !pack.hasRtMonitorUi) {
+  if (hasApiBlocks && widgetCount === 0 && pools.length === 0 && !hasRtMonitor) {
     badges.push({
       id: 'lib',
       label: '功能库',
@@ -132,11 +371,16 @@ function renderTemplate(
   block: Blockly.Block,
   lang: 'lua' | 'python',
   pack?: PolyExtensionPack,
+  section?: ResolvedPackSection,
 ): string {
   const argKinds = buildArgKindMap(def);
-  const poolKey = pack?.handleChannelPool?.configKey ?? DEFAULT_TIMER_POOL_KEY;
-  const poolPrefix = pack?.handleChannelPool?.prefix ?? 'T';
-  const poolDefault = pack?.handleChannelPool?.defaultCount ?? 8;
+  const pool =
+    section?.handleChannelPool ??
+    (pack ? findSectionForBlockType(pack, def.type)?.handleChannelPool : undefined) ??
+    pack?.handleChannelPool;
+  const poolKey = pool?.configKey ?? DEFAULT_TIMER_POOL_KEY;
+  const poolPrefix = pool?.prefix ?? 'T';
+  const poolDefault = pool?.defaultCount ?? 8;
 
   return template.replace(
     PLACEHOLDER_RE,
@@ -231,7 +475,10 @@ function renderTemplate(
 function registerSingleBlockInBlockly(
   pack: PolyExtensionPack,
   b: ExtensionBlockDef,
+  section?: ResolvedPackSection,
 ): void {
+  const blockColor = section?.color ?? pack.color;
+  const pool = section?.handleChannelPool ?? pack.handleChannelPool;
   const hasChannelField = (b.args0 ?? []).some(
     (arg) => arg.type === 'field_channel_id',
   );
@@ -248,7 +495,7 @@ function registerSingleBlockInBlockly(
     if (b.blockStyle) {
       jsonDef.style = b.blockStyle;
     } else {
-      jsonDef.colour = pack.color;
+      jsonDef.colour = blockColor;
     }
 
     if (b.kind === 'hat') {
@@ -295,7 +542,6 @@ function registerSingleBlockInBlockly(
         const argName = String(arg.name ?? `ARG${argIdx}`);
 
         if (argType === 'field_channel_id') {
-          const pool = pack.handleChannelPool;
           ensureDummy().appendField(
             createChannelIdField({
               configKey: pool?.configKey ?? DEFAULT_TIMER_POOL_KEY,
@@ -348,7 +594,7 @@ function registerSingleBlockInBlockly(
       if (b.blockStyle) {
         this.setStyle(b.blockStyle);
       } else {
-        this.setColour(pack.color);
+        this.setColour(blockColor);
       }
       this.setTooltip(b.tooltip ?? `${pack.name} · ${b.type}`);
     },
@@ -360,20 +606,18 @@ function getPythonGlobalLine(): string {
   return `  global ${codegenContext.pythonGlobalVarIdents.join(', ')}\n`;
 }
 
-function hoistImports(
-  generator: unknown,
-  packId: string,
-  imports: string[] | undefined,
-): void {
+/**
+ * Pure content-based import hoisting & deduplication across ALL packs and sections.
+ * Zero hardcoded module names: identical trimmed import statements from any pack/section
+ * automatically collapse to a single hoisted definition line.
+ */
+function hoistImports(generator: unknown, imports: string[] | undefined): void {
   if (!imports || imports.length === 0) return;
   const defs = (generator as { definitions_: Record<string, string> }).definitions_;
-  for (const [idx, imp] of imports.entries()) {
-    // Deduplicate common `rt` import identically across rt-lifecycle and rt-timers
-    const key =
-      imp === 'local rt = require("rt")' || imp === 'import rt'
-        ? 'import_rt'
-        : `ext_${packId}_imp_${idx}`;
-    defs[key] = imp;
+  for (const rawImp of imports) {
+    const imp = rawImp.trim();
+    if (!imp) continue;
+    defs[`imp_${imp}`] = imp;
   }
 }
 
@@ -381,16 +625,17 @@ function registerHatGenerators(
   pack: PolyExtensionPack,
   b: ExtensionBlockDef,
   hatSpec: ExtensionHatSpec,
+  section?: ResolvedPackSection,
 ): void {
   const paramsStr = (hatSpec.params ?? []).join(', ');
 
   // --- Lua Hat Generator ---
   luaGenerator.forBlock[b.type] = (block, generator) => {
-    hoistImports(generator, pack.id, hatSpec.importsLua);
+    hoistImports(generator, hatSpec.importsLua);
 
     if (hatSpec.mode === 'singleton') {
       const prelude = hatSpec.preludeLua
-        ? `${renderTemplate(hatSpec.preludeLua, b, block, 'lua', pack)}\n`
+        ? `${renderTemplate(hatSpec.preludeLua, b, block, 'lua', pack, section)}\n`
         : '';
       const body = generator.statementToCode(block, 'BODY');
       if (codegenContext.debugPass) {
@@ -425,13 +670,13 @@ function registerHatGenerators(
       matchingHats.forEach((hatBlk, idx) => {
         const kw = idx === 0 ? 'if' : 'elseif';
         const cond = hatSpec.conditionLua
-          ? renderTemplate(hatSpec.conditionLua, b, hatBlk, 'lua', pack)
+          ? renderTemplate(hatSpec.conditionLua, b, hatBlk, 'lua', pack, section)
           : 'true';
         const comment = hatSpec.branchCommentLua
-          ? renderTemplate(hatSpec.branchCommentLua, b, hatBlk, 'lua', pack)
+          ? renderTemplate(hatSpec.branchCommentLua, b, hatBlk, 'lua', pack, section)
           : '';
         const rawKey = hatSpec.duplicateKeyTemplate
-          ? renderTemplate(hatSpec.duplicateKeyTemplate, b, hatBlk, 'lua', pack)
+          ? renderTemplate(hatSpec.duplicateKeyTemplate, b, hatBlk, 'lua', pack, section)
           : String(idx);
         const safeSuffix = rawKey.replace(/[^A-Za-z0-9_]+/g, '_') || String(idx);
         let fnName = `${fnPrefix}${safeSuffix}`;
@@ -470,10 +715,10 @@ function registerHatGenerators(
     matchingHats.forEach((hatBlk, idx) => {
       const kw = idx === 0 ? 'if' : 'elseif';
       const cond = hatSpec.conditionLua
-        ? renderTemplate(hatSpec.conditionLua, b, hatBlk, 'lua', pack)
+        ? renderTemplate(hatSpec.conditionLua, b, hatBlk, 'lua', pack, section)
         : 'true';
       const comment = hatSpec.branchCommentLua
-        ? renderTemplate(hatSpec.branchCommentLua, b, hatBlk, 'lua', pack)
+        ? renderTemplate(hatSpec.branchCommentLua, b, hatBlk, 'lua', pack, section)
         : '';
       const rawBody = generator.statementToCode(hatBlk, 'BODY');
       const indentedBody = indentLines(rawBody, '  ');
@@ -494,13 +739,13 @@ function registerHatGenerators(
 
   // --- Python Hat Generator ---
   pythonGenerator.forBlock[b.type] = (block, generator) => {
-    hoistImports(generator, pack.id, hatSpec.importsPython);
+    hoistImports(generator, hatSpec.importsPython);
     const defKw = codegenContext.debugPass ? 'async def' : 'def';
     const globalLine = getPythonGlobalLine();
 
     if (hatSpec.mode === 'singleton') {
       const prelude = hatSpec.preludePython
-        ? `${renderTemplate(hatSpec.preludePython, b, block, 'python', pack)}\n`
+        ? `${renderTemplate(hatSpec.preludePython, b, block, 'python', pack, section)}\n`
         : '';
       const body = generator.statementToCode(block, 'BODY');
       const safeBody = body.trim() ? body : '  pass\n';
@@ -535,13 +780,13 @@ function registerHatGenerators(
       matchingHats.forEach((hatBlk, idx) => {
         const kw = idx === 0 ? 'if' : 'elif';
         const cond = hatSpec.conditionPython
-          ? renderTemplate(hatSpec.conditionPython, b, hatBlk, 'python', pack)
+          ? renderTemplate(hatSpec.conditionPython, b, hatBlk, 'python', pack, section)
           : 'True';
         const comment = hatSpec.branchCommentPython
-          ? renderTemplate(hatSpec.branchCommentPython, b, hatBlk, 'python', pack)
+          ? renderTemplate(hatSpec.branchCommentPython, b, hatBlk, 'python', pack, section)
           : '';
         const rawKey = hatSpec.duplicateKeyTemplate
-          ? renderTemplate(hatSpec.duplicateKeyTemplate, b, hatBlk, 'python', pack)
+          ? renderTemplate(hatSpec.duplicateKeyTemplate, b, hatBlk, 'python', pack, section)
           : String(idx);
         const safeSuffix = rawKey.replace(/[^A-Za-z0-9_]+/g, '_') || String(idx);
         let fnName = `${fnPrefix}${safeSuffix}`;
@@ -580,10 +825,10 @@ function registerHatGenerators(
     matchingHats.forEach((hatBlk, idx) => {
       const kw = idx === 0 ? 'if' : 'elif';
       const cond = hatSpec.conditionPython
-        ? renderTemplate(hatSpec.conditionPython, b, hatBlk, 'python', pack)
+        ? renderTemplate(hatSpec.conditionPython, b, hatBlk, 'python', pack, section)
         : 'True';
       const comment = hatSpec.branchCommentPython
-        ? renderTemplate(hatSpec.branchCommentPython, b, hatBlk, 'python', pack)
+        ? renderTemplate(hatSpec.branchCommentPython, b, hatBlk, 'python', pack, section)
         : '';
       const rawBody = generator.statementToCode(hatBlk, 'BODY');
       const indentedBody = rawBody.trim() ? indentLines(rawBody, '  ') : '    pass\n';
@@ -604,19 +849,35 @@ function registerHatGenerators(
 }
 
 function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
+  const sections = resolvePackSections(pack);
+  const sectionByBlockType = new Map<string, ResolvedPackSection>();
+  for (const sec of sections) {
+    for (const blk of sec.blocks) {
+      sectionByBlockType.set(blk.type, sec);
+    }
+  }
+
   for (const b of pack.blocks) {
-    registerSingleBlockInBlockly(pack, b);
+    const ownerSection = sectionByBlockType.get(b.type);
+    registerSingleBlockInBlockly(pack, b, ownerSection);
 
     if (b.kind === 'hat' && b.hat) {
-      registerHatGenerators(pack, b, b.hat);
+      registerHatGenerators(pack, b, b.hat, ownerSection);
       continue;
     }
 
     if (b.lua) {
       const luaSpec = b.lua;
       luaGenerator.forBlock[b.type] = (block, generator) => {
-        hoistImports(generator, pack.id, luaSpec.imports);
-        const rendered = renderTemplate(luaSpec.template, b, block, 'lua', pack);
+        hoistImports(generator, luaSpec.imports);
+        const rendered = renderTemplate(
+          luaSpec.template,
+          b,
+          block,
+          'lua',
+          pack,
+          ownerSection,
+        );
         if (b.kind === 'value') {
           return [rendered, LuaOrder.ATOMIC];
         }
@@ -627,8 +888,15 @@ function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
     if (b.python) {
       const pySpec = b.python;
       pythonGenerator.forBlock[b.type] = (block, generator) => {
-        hoistImports(generator, pack.id, pySpec.imports);
-        const rendered = renderTemplate(pySpec.template, b, block, 'python', pack);
+        hoistImports(generator, pySpec.imports);
+        const rendered = renderTemplate(
+          pySpec.template,
+          b,
+          block,
+          'python',
+          pack,
+          ownerSection,
+        );
         if (b.kind === 'value') {
           return [rendered, PyOrder.ATOMIC];
         }
@@ -644,8 +912,13 @@ function validateEmitEvent(raw: unknown): SimWidgetEventTrigger | undefined {
     throw new Error('emitEvent 必须是对象');
   }
   const obj = raw as Record<string, unknown>;
-  if (typeof obj.eventName !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(obj.eventName)) {
-    throw new Error('emitEvent.eventName 必须是合法的函数名标识符（如 on_button / on_can_rx）');
+  if (
+    typeof obj.eventName !== 'string' ||
+    !/^[A-Za-z_][A-Za-z0-9_]*$/.test(obj.eventName)
+  ) {
+    throw new Error(
+      'emitEvent.eventName 必须是合法的函数名标识符（如 on_button / on_can_rx）',
+    );
   }
   return {
     eventName: obj.eventName,
@@ -720,12 +993,14 @@ function validateSimWidgets(raw: unknown): SimWidgetSpec[] | undefined {
 
 function validateHandleChannelPool(
   raw: unknown,
-  packId: string,
+  defaultKey: string,
 ): HandleChannelPoolSpec | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== 'object') throw new Error('handleChannelPool 必须是对象');
   const obj = raw as Record<string, unknown>;
-  const min = Number.isFinite(Number(obj.min)) ? Math.max(1, Math.trunc(Number(obj.min))) : 1;
+  const min = Number.isFinite(Number(obj.min))
+    ? Math.max(1, Math.trunc(Number(obj.min)))
+    : 1;
   const max = Number.isFinite(Number(obj.max))
     ? Math.max(min, Math.min(32, Math.trunc(Number(obj.max))))
     : 32;
@@ -736,20 +1011,91 @@ function validateHandleChannelPool(
     configKey:
       typeof obj.configKey === 'string' && obj.configKey.trim()
         ? obj.configKey.trim()
-        : packId,
+        : defaultKey,
     label: typeof obj.label === 'string' && obj.label.trim() ? obj.label.trim() : '通道',
     prefix: typeof obj.prefix === 'string' && obj.prefix.trim() ? obj.prefix.trim() : 'CH',
     min,
     max,
     defaultCount,
     ...(Array.isArray(obj.presets)
-      ? { presets: obj.presets.filter((n): n is number => typeof n === 'number' && Number.isFinite(n)) }
+      ? {
+          presets: obj.presets.filter(
+            (n): n is number => typeof n === 'number' && Number.isFinite(n),
+          ),
+        }
       : {}),
     ...(typeof obj.hint === 'string' ? { hint: obj.hint } : {}),
     ...(typeof obj.fieldName === 'string' && obj.fieldName.trim()
       ? { fieldName: obj.fieldName.trim() }
       : {}),
   };
+}
+
+function validateSections(
+  raw: unknown,
+  packId: string,
+  validBlockTypes: Set<string>,
+): ExtensionSectionSpec[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new Error('sections 必须是数组');
+  }
+  if (raw.length === 0) return undefined;
+
+  const out: ExtensionSectionSpec[] = [];
+  const seenIds = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') {
+      throw new Error('sections 中的每一项必须是对象');
+    }
+    const s = item as Record<string, unknown>;
+    if (typeof s.id !== 'string' || !/^[a-zA-Z0-9_-]{1,32}$/.test(s.id)) {
+      throw new Error(
+        '每个 section 的 id 必填，且只能包含字母、数字、横线或下划线（1~32 字符）',
+      );
+    }
+    if (seenIds.has(s.id)) {
+      throw new Error(`扩展包内存在重复的 section id "${s.id}"`);
+    }
+    seenIds.add(s.id);
+    if (typeof s.label !== 'string' || !s.label.trim()) {
+      throw new Error(`section "${s.id}" 缺少非空 label`);
+    }
+    if (!Array.isArray(s.blocks) || s.blocks.length === 0) {
+      throw new Error(`section "${s.id}" 必须至少引用 1 个 block type`);
+    }
+    const blockRefs: string[] = [];
+    for (const ref of s.blocks) {
+      if (typeof ref !== 'string' || !validBlockTypes.has(ref)) {
+        throw new Error(
+          `section "${s.id}" 引用了不存在的积木类型 "${String(ref)}"`,
+        );
+      }
+      blockRefs.push(ref);
+    }
+    const rawOrder = Number(s.toolboxOrder);
+    const pool = validateHandleChannelPool(s.handleChannelPool, `${packId}.${s.id}`);
+    out.push({
+      id: s.id,
+      label: s.label.trim().slice(0, 12),
+      ...(typeof s.description === 'string' ? { description: s.description } : {}),
+      visible: s.visible !== false,
+      categoryTarget: parseCategoryTarget(s.categoryTarget),
+      ...(Number.isFinite(rawOrder)
+        ? { toolboxOrder: Math.max(0, Math.min(9999, Math.round(rawOrder))) }
+        : {}),
+      ...(typeof s.color === 'string' && s.color.startsWith('#')
+        ? { color: s.color }
+        : {}),
+      ...(s.flyoutButton && typeof s.flyoutButton === 'object'
+        ? { flyoutButton: s.flyoutButton as ExtensionSectionSpec['flyoutButton'] }
+        : {}),
+      ...(s.hasRtMonitorUi ? { hasRtMonitorUi: true } : {}),
+      ...(pool ? { handleChannelPool: pool } : {}),
+      blocks: blockRefs,
+    });
+  }
+  return out;
 }
 
 export function validateExtensionPack(raw: unknown): PolyExtensionPack {
@@ -770,10 +1116,12 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
     throw new Error('扩展包必须至少包含 1 个 blocks 积木定义');
   }
 
+  const validBlockTypes = new Set<string>();
   for (const blk of obj.blocks as Array<Record<string, unknown>>) {
     if (typeof blk.type !== 'string' || !blk.type.trim()) {
       throw new Error('每个积木必须包含非空 type 字段');
     }
+    validBlockTypes.add(blk.type);
     if (blk.kind !== 'statement' && blk.kind !== 'value' && blk.kind !== 'hat') {
       throw new Error(`积木 ${blk.type} 的 kind 必须为 "statement"、"value" 或 "hat"`);
     }
@@ -790,7 +1138,9 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
         throw new Error(`事件帽块 ${blk.type} 缺少合法的 hat.eventName`);
       }
       if (hatObj.mode !== 'singleton' && hatObj.mode !== 'dispatch') {
-        throw new Error(`事件帽块 ${blk.type} 的 hat.mode 必须为 "singleton" 或 "dispatch"`);
+        throw new Error(
+          `事件帽块 ${blk.type} 的 hat.mode 必须为 "singleton" 或 "dispatch"`,
+        );
       }
     } else {
       const luaSpec = blk.lua as Record<string, unknown> | undefined;
@@ -806,12 +1156,11 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
 
   const simWidgets = validateSimWidgets(obj.simWidgets);
   const handleChannelPool = validateHandleChannelPool(obj.handleChannelPool, obj.id);
+  const sections = validateSections(obj.sections, obj.id, validBlockTypes);
   const rawOrder = Number(obj.toolboxOrder);
   const toolboxOrder = Number.isFinite(rawOrder)
     ? Math.max(0, Math.min(9999, Math.round(rawOrder)))
-    : obj.packKind === 'runtime'
-      ? 15
-      : DEFAULT_PACK_TOOLBOX_ORDER;
+    : DEFAULT_PACK_TOOLBOX_ORDER;
   const tags = Array.isArray(obj.tags)
     ? obj.tags
         .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
@@ -835,26 +1184,28 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
     description:
       typeof obj.description === 'string' ? obj.description : '用户自定义扩展积木包',
     builtin: Boolean(obj.builtin),
+    ...(obj.visible === false ? { visible: false } : {}),
     toolboxOrder,
     ...(tags && tags.length > 0 ? { tags } : {}),
-    ...(obj.packKind === 'runtime' || obj.packKind === 'peripheral'
-      ? { packKind: obj.packKind }
-      : {}),
-    categoryTarget: obj.categoryTarget === 'event' ? 'event' : 'own',
+    categoryTarget: parseCategoryTarget(obj.categoryTarget),
     ...(obj.flyoutButton && typeof obj.flyoutButton === 'object'
       ? { flyoutButton: obj.flyoutButton as PolyExtensionPack['flyoutButton'] }
       : {}),
     hasRtMonitorUi: Boolean(obj.hasRtMonitorUi),
     hasVirtualBoardUi: Boolean(obj.hasVirtualBoardUi),
     ...(handleChannelPool ? { handleChannelPool } : {}),
+    ...(sections ? { sections } : {}),
     blocks: obj.blocks as ExtensionBlockDef[],
     sandboxMock: obj.sandboxMock as ExtensionSandboxMock | undefined,
     ...(simWidgets ? { simWidgets } : {}),
   };
 }
 
-function buildToolboxBlocksForPack(pack: PolyExtensionPack): ToolboxBlockSpec[] {
-  return pack.blocks.map((b) => {
+function buildToolboxBlocksForSection(
+  pack: PolyExtensionPack,
+  section: ResolvedPackSection,
+): ToolboxBlockSpec[] {
+  return section.blocks.map((b) => {
     const inputs: Record<string, { shadow?: Record<string, unknown> }> = {};
     for (const [argName, sh] of Object.entries(b.shadows ?? {})) {
       inputs[argName] = {
@@ -868,7 +1219,7 @@ function buildToolboxBlocksForPack(pack: PolyExtensionPack): ToolboxBlockSpec[] 
     return {
       kind: 'block',
       type: b.type,
-      keywords: `${pack.name} ${pack.categoryLabel} ${b.keywords ?? ''} ${b.message0}`,
+      keywords: `${pack.name} ${section.label} ${b.keywords ?? ''} ${b.message0}`,
       ...(b.fields ? { fields: b.fields } : {}),
       ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
     };
@@ -1000,57 +1351,84 @@ class ExtensionRegistry {
     return this.packs.get(packId);
   }
 
+  /** Resolves a pack by whole pack ID (`"rt"`) OR section capability ID (`"rt.timers"`). */
   resolvePack(
-    packId: string,
+    capOrPackId: string,
     localPacks?: PolyExtensionPack[],
   ): PolyExtensionPack | undefined {
     this.ensureInitialized();
+    const dotIdx = capOrPackId.indexOf('.');
+    const basePackId = dotIdx > 0 ? capOrPackId.slice(0, dotIdx) : capOrPackId;
     if (localPacks) {
-      const localMatch = localPacks.find((p) => p.id === packId);
+      const localMatch = localPacks.find((p) => p.id === basePackId);
       if (localMatch) return localMatch;
     } else {
-      const activeLocal = this.activeLocalPacks.get(packId);
+      const activeLocal = this.activeLocalPacks.get(basePackId);
       if (activeLocal) return activeLocal;
     }
-    return this.packs.get(packId);
+    return this.packs.get(basePackId);
   }
 
-  findPackForBlockType(blockType: string): PolyExtensionPack | undefined {
-    this.ensureInitialized();
-    for (const pack of this.activeLocalPacks.values()) {
-      if (pack.blocks.some((b) => b.type === blockType)) {
-        return pack;
+  /** Finds the owning pack, resolved section, and block definition for any declarative block type. */
+  findOwnerForBlockType(
+    blockType: string,
+  ):
+    | {
+        pack: PolyExtensionPack;
+        section: ResolvedPackSection;
+        block: ExtensionBlockDef;
       }
-    }
-    for (const pack of this.packs.values()) {
-      if (pack.blocks.some((b) => b.type === blockType)) {
-        return pack;
+    | undefined {
+    this.ensureInitialized();
+    const searchPacks = [
+      ...this.activeLocalPacks.values(),
+      ...this.packs.values(),
+    ];
+    for (const pack of searchPacks) {
+      const blk = pack.blocks.find((b) => b.type === blockType);
+      if (blk) {
+        const sec =
+          findSectionForBlockType(pack, blockType) ?? resolvePackSections(pack)[0];
+        return { pack, section: sec, block: blk };
       }
     }
     return undefined;
+  }
+
+  findPackForBlockType(blockType: string): PolyExtensionPack | undefined {
+    return this.findOwnerForBlockType(blockType)?.pack;
   }
 
   getBlockDef(
     blockType: string,
-  ): { pack: PolyExtensionPack; block: ExtensionBlockDef } | undefined {
-    this.ensureInitialized();
-    for (const pack of this.activeLocalPacks.values()) {
-      const blk = pack.blocks.find((b) => b.type === blockType);
-      if (blk) return { pack, block: blk };
-    }
-    for (const pack of this.packs.values()) {
-      const blk = pack.blocks.find((b) => b.type === blockType);
-      if (blk) return { pack, block: blk };
-    }
-    return undefined;
+  ):
+    | {
+        pack: PolyExtensionPack;
+        section: ResolvedPackSection;
+        block: ExtensionBlockDef;
+      }
+    | undefined {
+    return this.findOwnerForBlockType(blockType);
   }
 
   getHatBlockDef(
     blockType: string,
-  ): { pack: PolyExtensionPack; block: ExtensionBlockDef; hat: ExtensionHatSpec } | undefined {
-    const found = this.getBlockDef(blockType);
+  ):
+    | {
+        pack: PolyExtensionPack;
+        section: ResolvedPackSection;
+        block: ExtensionBlockDef;
+        hat: ExtensionHatSpec;
+      }
+    | undefined {
+    const found = this.findOwnerForBlockType(blockType);
     if (found && found.block.kind === 'hat' && found.block.hat) {
-      return { pack: found.pack, block: found.block, hat: found.block.hat };
+      return {
+        pack: found.pack,
+        section: found.section,
+        block: found.block,
+        hat: found.block.hat,
+      };
     }
     return undefined;
   }
@@ -1060,9 +1438,9 @@ class ExtensionRegistry {
   }
 
   isEventDrivenBlock(blockType: string): boolean {
-    const found = this.getBlockDef(blockType);
+    const found = this.findOwnerForBlockType(blockType);
     if (!found) return false;
-    return found.block.kind === 'hat' || Boolean(found.pack.hasRtMonitorUi);
+    return found.block.kind === 'hat' || found.section.hasRtMonitorUi;
   }
 
   renderHatScopeInfo(block: Blockly.Block): {
@@ -1072,12 +1450,12 @@ class ExtensionRegistry {
   } | null {
     const found = this.getHatBlockDef(block.type);
     if (!found) return null;
-    const { pack, block: def, hat } = found;
+    const { pack, section, block: def, hat } = found;
     const label = hat.scopeLabelTemplate
-      ? renderTemplate(hat.scopeLabelTemplate, def, block, 'lua', pack)
+      ? renderTemplate(hat.scopeLabelTemplate, def, block, 'lua', pack, section)
       : hat.eventName;
     const shortLabel = hat.scopeShortTemplate
-      ? renderTemplate(hat.scopeShortTemplate, def, block, 'lua', pack)
+      ? renderTemplate(hat.scopeShortTemplate, def, block, 'lua', pack, section)
       : hat.eventName;
     return {
       label,
@@ -1097,36 +1475,71 @@ class ExtensionRegistry {
       block,
       'lua',
       found.pack,
+      found.section,
     );
   }
 
-  getEnabledPacks(
+  /**
+   * Resolves all currently enabled sections (respecting both whole-pack IDs like `"rt"`
+   * and fine-grained section IDs like `"rt.timers"`). Deduplicated by `section.capId`.
+   */
+  getEnabledSections(
     enabledIds: string[],
     localPacks?: PolyExtensionPack[],
-  ): PolyExtensionPack[] {
+  ): Array<{ pack: PolyExtensionPack; section: ResolvedPackSection }> {
     this.ensureInitialized();
-    const out: PolyExtensionPack[] = [];
-    const seen = new Set<string>();
+    const out: Array<{ pack: PolyExtensionPack; section: ResolvedPackSection }> = [];
+    const seenCapIds = new Set<string>();
+    const candidatePackIds = new Set<string>();
+
     for (const id of enabledIds) {
-      if (seen.has(id)) continue;
-      const pack = this.resolvePack(id, localPacks);
-      if (pack) {
-        seen.add(id);
-        out.push(pack);
+      const dotIdx = id.indexOf('.');
+      candidatePackIds.add(dotIdx > 0 ? id.slice(0, dotIdx) : id);
+    }
+
+    for (const packId of candidatePackIds) {
+      const pack = this.resolvePack(packId, localPacks);
+      if (!pack) continue;
+      for (const sec of resolvePackSections(pack)) {
+        if (seenCapIds.has(sec.capId)) continue;
+        if (hasCapability(enabledIds, sec.capId)) {
+          seenCapIds.add(sec.capId);
+          out.push({ pack, section: sec });
+        }
       }
     }
     return out;
   }
 
-  /** Returns toolbox blocks from enabled packs that merge into the core `事件` category (e.g. rt-lifecycle). */
-  getEventCategoryBlocks(
+  /** Lists all unique packs that have at least one enabled section. */
+  getEnabledPacks(
+    enabledIds: string[],
+    localPacks?: PolyExtensionPack[],
+  ): PolyExtensionPack[] {
+    const out: PolyExtensionPack[] = [];
+    const seen = new Set<string>();
+    for (const { pack } of this.getEnabledSections(enabledIds, localPacks)) {
+      if (seen.has(pack.id)) continue;
+      seen.add(pack.id);
+      out.push(pack);
+    }
+    return out;
+  }
+
+  /**
+   * Generic core-category block injector: returns toolbox blocks from ALL enabled, visible
+   * pack sections whose declarative `categoryTarget` matches `coreCategoryId`
+   * (`'event' | 'print' | 'control' | 'variables' | 'math' | 'logic' | 'text' | 'lists' | 'functions'`).
+   */
+  getMergedBlocksForCategory(
+    coreCategoryId: CoreCategoryTarget,
     enabledIds: string[],
     localPacks?: PolyExtensionPack[],
   ): ToolboxBlockSpec[] {
     const out: ToolboxBlockSpec[] = [];
-    for (const pack of this.getEnabledPacks(enabledIds, localPacks)) {
-      if (pack.categoryTarget === 'event') {
-        out.push(...buildToolboxBlocksForPack(pack));
+    for (const { pack, section } of this.getEnabledSections(enabledIds, localPacks)) {
+      if (section.visible && section.categoryTarget === coreCategoryId) {
+        out.push(...buildToolboxBlocksForSection(pack, section));
       }
     }
     return out;
@@ -1144,39 +1557,57 @@ class ExtensionRegistry {
       }));
   }
 
-  getChannelPoolPacks(
+  /** Lists all enabled section-level channel pools across all enabled packs. */
+  getChannelPools(
     enabledIds: string[],
     localPacks?: PolyExtensionPack[],
-  ): PolyExtensionPack[] {
-    return this.getEnabledPacks(enabledIds, localPacks).filter((p) =>
-      Boolean(p.handleChannelPool),
-    );
+  ): Array<{
+    pack: PolyExtensionPack;
+    section: ResolvedPackSection;
+    pool: HandleChannelPoolSpec;
+  }> {
+    const out: Array<{
+      pack: PolyExtensionPack;
+      section: ResolvedPackSection;
+      pool: HandleChannelPoolSpec;
+    }> = [];
+    for (const { pack, section } of this.getEnabledSections(enabledIds, localPacks)) {
+      if (section.handleChannelPool) {
+        out.push({ pack, section, pool: section.handleChannelPool });
+      }
+    }
+    return out;
   }
 
   hasRtMonitor(
     enabledIds: string[],
     localPacks?: PolyExtensionPack[],
   ): boolean {
-    return this.getEnabledPacks(enabledIds, localPacks).some((p) =>
-      Boolean(p.hasRtMonitorUi),
+    return this.getEnabledSections(enabledIds, localPacks).some(
+      ({ section }) => section.hasRtMonitorUi,
     );
   }
 
-  /** Converts enabled standalone-category packs (`categoryTarget !== 'event'`) into ordered Blockly toolbox categories. */
+  /**
+   * Converts all enabled, visible standalone sections (`categoryTarget === 'own'`)
+   * into ordered Blockly toolbox categories. Zero hardcoded pack IDs.
+   */
   toCategorySpecs(
     enabledIds: string[],
     localPacks?: PolyExtensionPack[],
   ): BlockCategorySpec[] {
-    return this.getEnabledPacks(enabledIds, localPacks)
-      .filter((pack) => pack.categoryTarget !== 'event')
-      .map((pack) => ({
-        id: pack.id === 'rt-timers' ? 'timers' : `ext_${pack.id}`,
-        label: pack.categoryLabel,
-        color: pack.color,
-        order: pack.toolboxOrder ?? DEFAULT_PACK_TOOLBOX_ORDER,
+    return this.getEnabledSections(enabledIds, localPacks)
+      .filter(({ section }) => section.visible && section.categoryTarget === 'own')
+      .map(({ pack, section }) => ({
+        id: section.isMultiSection
+          ? `ext_${pack.id}_${section.sectionId}`
+          : `ext_${pack.id}`,
+        label: section.label,
+        color: section.color,
+        order: section.toolboxOrder,
         isExtension: true,
-        blocks: buildToolboxBlocksForPack(pack),
-        ...(pack.flyoutButton ? { flyoutButton: pack.flyoutButton } : {}),
+        blocks: buildToolboxBlocksForSection(pack, section),
+        ...(section.flyoutButton ? { flyoutButton: section.flyoutButton } : {}),
       }));
   }
 }

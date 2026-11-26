@@ -140,7 +140,7 @@ export interface SimWidgetSpec {
  * Enables automatic per-handle channel count & alias UI in ProjectSettingsModal plus OOB static checks.
  */
 export interface HandleChannelPoolSpec {
-  /** Key in RuntimeHandle.capabilityConfigs (e.g. 'rt-timers'). */
+  /** Key in RuntimeHandle.capabilityConfigs (e.g. 'rt.timers'). */
   configKey: string;
   /** Display name (e.g. '定时器通道'). */
   label: string;
@@ -165,10 +165,73 @@ export interface PackAttributeBadge {
   tone: 'sim' | 'event' | 'pool' | 'lib' | 'tag';
 }
 
+/** Layer 0 core Blockly toolbox category IDs that any pack section can declaratively merge into. */
+export type CoreCategoryTarget =
+  | 'event'
+  | 'print'
+  | 'control'
+  | 'variables'
+  | 'math'
+  | 'logic'
+  | 'text'
+  | 'lists'
+  | 'functions';
+
+/** Where a pack (or section) places its blocks in the left toolbox: standalone tab or merged into a core category. */
+export type CategoryTargetSpec = 'own' | CoreCategoryTarget;
+
+/**
+ * Declarative sub-section inside a multi-section extension pack (1 Pack = 1 logical module/SDK).
+ * Each section independently controls sidebar visibility, target category (`'own'` or any core category),
+ * sort order, color, flyout button, optional channel pool, and which blocks belong to it.
+ * Projects can toggle the entire pack (`"rt"`) or finely prune individual sections (`"rt.timers"`).
+ */
+export interface ExtensionSectionSpec {
+  /** Section ID unique within its pack (e.g. 'lifecycle', 'timers', 'tick'). Capability ID is `<pack.id>.<section.id>`. */
+  id: string;
+  /** Display label in the sidebar tab (when categoryTarget === 'own') and pack section chips. */
+  label: string;
+  description?: string;
+  /** Whether this section is displayed in the left Blockly toolbox (default: true). */
+  visible?: boolean;
+  /** 'own' creates a standalone toolbox tab (default); or any core category ID to merge blocks into that core tab. */
+  categoryTarget?: CategoryTargetSpec;
+  /** Numeric sort order in the left toolbox when categoryTarget === 'own' (default: pack.toolboxOrder ?? 100). */
+  toolboxOrder?: number;
+  /** Category accent color (default: pack.color). */
+  color?: string;
+  /** Optional toolbox header button inside this section's flyout. */
+  flyoutButton?: { text: string; callbackKey: string };
+  /** Whether this section enables the per-handle RT scheduler monitor card in Simulator tab & event-driven ABI. */
+  hasRtMonitorUi?: boolean;
+  /** Optional per-handle channel pool config owned by this section (e.g. 0..N-1 timer, PWM, or CAN channels). */
+  handleChannelPool?: HandleChannelPoolSpec;
+  /** Ordered list of block `type` IDs from `pack.blocks` belonging to this section. */
+  blocks: string[];
+}
+
+/** Normalized runtime view of a pack section (single-section packs synthesize one default section). */
+export interface ResolvedPackSection {
+  /** Full capability ID: `<pack.id>` for single-section packs, `<pack.id>.<section.id>` for multi-section packs. */
+  capId: string;
+  sectionId: string;
+  label: string;
+  description?: string;
+  visible: boolean;
+  categoryTarget: CategoryTargetSpec;
+  toolboxOrder: number;
+  color: string;
+  flyoutButton?: { text: string; callbackKey: string };
+  hasRtMonitorUi: boolean;
+  handleChannelPool?: HandleChannelPoolSpec;
+  blocks: ExtensionBlockDef[];
+  isMultiSection: boolean;
+}
+
 /**
  * Unified Declarative PolyBlock Extension Pack schema (.polyext.json).
- * Covers scheduling/timers, hardware peripherals, and user C-layer / business APIs
- * in one single declarative manifest format.
+ * 1 Pack = 1 logical module / SDK; optional `sections[]` splits a large SDK into independently
+ * placed, ordered, visible, and prunable toolbox sections without splitting the pack itself.
  */
 export interface PolyExtensionPack {
   format: 'polyblock-extension';
@@ -180,6 +243,8 @@ export interface PolyExtensionPack {
   color: string;
   description: string;
   builtin?: boolean;
+  /** Whether this pack is shown in the left toolbox when single-section (default: true). */
+  visible?: boolean;
   /**
    * Continuous numeric sort order in the left Blockly toolbox.
    * Core categories occupy 10..90 (事件=10, 打印=20, ..., 函数=90);
@@ -188,18 +253,18 @@ export interface PolyExtensionPack {
   toolboxOrder?: number;
   /** Optional custom attribute tags displayed as pills on pack cards (e.g. ["电机", "CAN"]). */
   tags?: string[];
-  /** @deprecated Legacy grouping hint kept only for backward-compat JSON import (maps 'runtime' -> toolboxOrder 15 if unset). */
-  packKind?: 'runtime' | 'peripheral';
-  /** Where blocks appear in the left toolbox: 'own' creates a category tab (default), 'event' merges into 事件. */
-  categoryTarget?: 'own' | 'event';
-  /** Optional toolbox header button inside this pack's category flyout. */
+  /** Where blocks appear in the left toolbox for single-section packs: 'own' (default) or any core category ID. */
+  categoryTarget?: CategoryTargetSpec;
+  /** Optional toolbox header button inside this pack's category flyout (single-section packs). */
   flyoutButton?: { text: string; callbackKey: string };
-  /** Whether this pack enables the per-handle RT scheduler monitor card in Simulator tab & event-driven ABI. */
+  /** Whether this pack enables the per-handle RT scheduler monitor card & event-driven ABI (single-section packs). */
   hasRtMonitorUi?: boolean;
   /** @deprecated Prefer declarative `simWidgets`. */
   hasVirtualBoardUi?: boolean;
-  /** Optional per-handle channel pool config (e.g. 0..N-1 timer, PWM, or CAN channels & aliases). */
+  /** Optional per-handle channel pool config (single-section packs; multi-section packs declare this per section). */
   handleChannelPool?: HandleChannelPoolSpec;
+  /** Optional multi-section layout & fine-grained pruning definitions referencing block types in `blocks`. */
+  sections?: ExtensionSectionSpec[];
   blocks: ExtensionBlockDef[];
   sandboxMock?: ExtensionSandboxMock;
   /** Optional declarative widgets rendered as a dedicated peripheral card in the Simulator tab. */

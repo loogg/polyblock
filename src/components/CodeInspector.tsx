@@ -570,7 +570,7 @@ export function CodeInspector({
             />
           )}
 
-          {/* Per-Handle Runtime & Timer Monitor Card(s) — ONLY when rt-lifecycle or rt-timers is enabled */}
+          {/* Per-Handle Runtime & Timer Monitor Card(s) — ONLY when rt.lifecycle or rt.timers is enabled */}
           {showRtMonitor &&
             monitoredHandles.map((hdl) => {
               const tele =

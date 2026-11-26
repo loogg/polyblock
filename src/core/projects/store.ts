@@ -6,10 +6,12 @@ import {
   normalizeTimerConfig,
 } from '../blocks/timerConfigBridge';
 import {
+  CAP_RT,
   CAP_RT_LIFECYCLE,
   CAP_RT_TICK,
   CAP_RT_TIMERS,
   CAP_VIRTUAL_BOARD,
+  hasCapability,
   targetProfileRegistry,
 } from '../capabilities/registry';
 import {
@@ -41,7 +43,7 @@ import type {
   WorkspaceStoreState,
 } from '../../types/project';
 
-export const STORAGE_STORE_V3_KEY = 'polyblock.store.v3';
+export const STORAGE_STORE_V4_KEY = 'polyblock.store.v4';
 export const STORAGE_STORE_V2_KEY = 'polyblock.store.v2';
 export const STORAGE_LEGACY_V1_KEY = 'polyblock.workspace.v1';
 
@@ -60,7 +62,7 @@ export interface HandleTemplateSpec {
   color?: string;
   autoStart?: boolean;
   timerConfig?: Partial<ProjectTimerConfig>;
-  /** Additional per-handle channel pool configs (e.g. `pwm-servo` isolated from `rt-timers`). */
+  /** Additional per-handle channel pool configs (e.g. `pwm-servo` isolated from `rt.timers`). */
   capabilityConfigs?: Record<string, Partial<ProjectTimerConfig>>;
   scripts: Array<{
     name: string;
@@ -238,15 +240,13 @@ export function setHandleChannelPoolConfig(
 
 export function getAllHandleChannelPoolConfigs(
   handle: RuntimeHandle,
-  channelPoolPacks: PolyExtensionPack[],
+  channelPools: HandleChannelPoolSpec[],
   defaultTimerCount = DEFAULT_TIMER_COUNT,
 ): Record<string, ProjectTimerConfig> {
   const out: Record<string, ProjectTimerConfig> = {
     [CAP_RT_TIMERS]: getHandleTimerConfig(handle, defaultTimerCount),
   };
-  for (const pack of channelPoolPacks) {
-    const pool: HandleChannelPoolSpec | undefined = pack.handleChannelPool;
-    if (!pool) continue;
+  for (const pool of channelPools) {
     const fallback =
       pool.configKey === CAP_RT_TIMERS ? defaultTimerCount : pool.defaultCount;
     out[pool.configKey] = getHandleChannelPoolConfig(
@@ -300,12 +300,16 @@ export function buildExportableProjectJson(
 ): ProjectModel {
   const localPacks = project.localExtensions ?? [];
   const localIds = new Set(localPacks.map((p) => p.id));
+  const seenBundled = new Set<string>();
   const bundled: PolyExtensionPack[] = [];
 
   for (const capId of project.enabledCapabilities) {
-    if (localIds.has(capId)) continue;
-    const globalPack = globalPacks.find((p) => p.id === capId);
+    const dotIdx = capId.indexOf('.');
+    const basePackId = dotIdx > 0 ? capId.slice(0, dotIdx) : capId;
+    if (localIds.has(basePackId) || seenBundled.has(basePackId)) continue;
+    const globalPack = globalPacks.find((p) => p.id === basePackId);
     if (globalPack && !globalPack.builtin) {
+      seenBundled.add(basePackId);
       bundled.push(cloneJson({ ...globalPack, builtin: false }));
     }
   }
@@ -389,12 +393,22 @@ function inferCapabilitiesFromWorkspaces(
   if (raw.includes('"poly_on_button"') || raw.includes('"ext_board_')) {
     inferred.add(CAP_VIRTUAL_BOARD);
   }
+  if (
+    inferred.has(CAP_RT_LIFECYCLE) &&
+    inferred.has(CAP_RT_TIMERS) &&
+    inferred.has(CAP_RT_TICK)
+  ) {
+    inferred.delete(CAP_RT_LIFECYCLE);
+    inferred.delete(CAP_RT_TIMERS);
+    inferred.delete(CAP_RT_TICK);
+    inferred.add(CAP_RT);
+  }
   return Array.from(inferred);
 }
 
 function inferProfileId(caps: string[]): string {
-  const hasRt = caps.includes(CAP_RT_LIFECYCLE) || caps.includes(CAP_RT_TIMERS);
-  const hasVb = caps.includes(CAP_VIRTUAL_BOARD);
+  const hasRt = hasCapability(caps, CAP_RT);
+  const hasVb = hasCapability(caps, CAP_VIRTUAL_BOARD);
   if (hasRt && hasVb) return 'virtual-board-rt';
   if (hasRt) return 'embedded-rt';
   if (hasVb) return 'virtual-board-basic';
@@ -1290,7 +1304,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     language: 'lua',
     targetProfileId: 'virtual-board-rt',
     defaultTimerCount: 8,
-    enabledCapabilities: [CAP_RT_LIFECYCLE, CAP_RT_TIMERS, CAP_RT_TICK, CAP_VIRTUAL_BOARD],
+    enabledCapabilities: [CAP_RT, CAP_VIRTUAL_BOARD],
     difficulty: {
       level: 'L3',
       label: 'L3 进阶 · 事件定时',
@@ -1326,9 +1340,7 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     targetProfileId: 'virtual-board-rt',
     defaultTimerCount: 8,
     enabledCapabilities: [
-      CAP_RT_LIFECYCLE,
-      CAP_RT_TIMERS,
-      CAP_RT_TICK,
+      CAP_RT,
       CAP_VIRTUAL_BOARD,
       'dict-json',
       'clock-timer',
@@ -1486,7 +1498,7 @@ export function instantiateProjectFromTemplate(
     MULTI_SCRIPT_PROJECT_TEMPLATES[0];
   const now = new Date().toISOString();
   const defaultTimerCount = tpl.defaultTimerCount ?? DEFAULT_TIMER_COUNT;
-  const hasTimersCap = tpl.enabledCapabilities.includes(CAP_RT_TIMERS);
+  const hasTimersCap = hasCapability(tpl.enabledCapabilities, CAP_RT_TIMERS);
 
   const handles = tpl.handles.map((hs, idx) =>
     instantiateHandleSpec(hs, idx, defaultTimerCount, hasTimersCap, now),
@@ -1535,7 +1547,7 @@ export function instantiateProjectFromProfile(
   customName?: string,
 ): ProjectModel {
   const now = new Date().toISOString();
-  const hasTimersCap = profile.capabilities.includes(CAP_RT_TIMERS);
+  const hasTimersCap = hasCapability(profile.capabilities, CAP_RT_TIMERS);
   const handle = instantiateHandleSpec(
     {
       name: 'main_vm',
@@ -1640,7 +1652,7 @@ export function migrateProjectV2ToV3(
     color: HANDLE_COLOR_PALETTE[0],
     autoStart: true,
     capabilityConfigs:
-      v2.timerConfig || mergedCaps.includes(CAP_RT_TIMERS)
+      v2.timerConfig || hasCapability(mergedCaps, CAP_RT_TIMERS)
         ? { [CAP_RT_TIMERS]: timerCfg }
         : {},
     entryScriptId: entryId,
@@ -2000,11 +2012,11 @@ export function countProjectScripts(project: ProjectModel): number {
 }
 
 export function loadWorkspaceStore(): WorkspaceStoreState {
-  // 1. Try v3 store
+  // 1. Try current v4 store
   try {
-    const rawV3 = localStorage.getItem(STORAGE_STORE_V3_KEY);
-    if (rawV3) {
-      const parsed = JSON.parse(rawV3) as WorkspaceStoreState;
+    const rawCurrent = localStorage.getItem(STORAGE_STORE_V4_KEY);
+    if (rawCurrent) {
+      const parsed = JSON.parse(rawCurrent) as WorkspaceStoreState;
       if (
         parsed &&
         parsed.version === 3 &&
@@ -2090,7 +2102,7 @@ export function loadWorkspaceStore(): WorkspaceStoreState {
 
 export function saveWorkspaceStore(store: WorkspaceStoreState): void {
   try {
-    localStorage.setItem(STORAGE_STORE_V3_KEY, JSON.stringify(store));
+    localStorage.setItem(STORAGE_STORE_V4_KEY, JSON.stringify(store));
   } catch {
     // ignore storage quota errors
   }
@@ -2138,7 +2150,7 @@ export function addHandleToProject(
     project.handles.map((h) => h.name),
   );
   const scriptId = createId('scr');
-  const hasTimers = project.enabledCapabilities.includes(CAP_RT_TIMERS);
+  const hasTimers = hasCapability(project.enabledCapabilities, CAP_RT_TIMERS);
   const newHandle: RuntimeHandle = {
     id: createId('hdl'),
     name: uniqueName,

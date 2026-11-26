@@ -13,6 +13,7 @@ import {
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
 } from '../blocks/timerConfigBridge';
+import { CAP_RT_TIMERS } from '../capabilities/registry';
 import { extensionRegistry } from '../extensions/registry';
 import type { ExtensionSandboxMock } from '../extensions/types';
 import {
@@ -62,7 +63,7 @@ export function buildHandleScriptModules(
     ...handle.scripts.filter((s) => s.id !== excludeScriptId),
   ];
   const poolCfgs = channelPoolConfigs ?? {
-    'rt-timers': getHandleTimerConfig(handle, defaultTimerCount),
+    [CAP_RT_TIMERS]: getHandleTimerConfig(handle, defaultTimerCount),
   };
 
   for (const script of candidates) {
@@ -145,10 +146,9 @@ export class MultiHandleRunnerOrchestrator {
     this.running = true;
     callbacks.onStatusChange('running');
 
-    const channelPoolPacks = extensionRegistry.getChannelPoolPacks(
-      project.enabledCapabilities,
-      project.localExtensions,
-    );
+    const channelPools = extensionRegistry
+      .getChannelPools(project.enabledCapabilities, project.localExtensions)
+      .map((entry) => entry.pool);
 
     const tasks = handlesToRun.map(async (handle) => {
       const entryScript =
@@ -157,7 +157,7 @@ export class MultiHandleRunnerOrchestrator {
       const timerCfg = getHandleTimerConfig(handle, project.defaultTimerCount);
       const poolCfgs = getAllHandleChannelPoolConfigs(
         handle,
-        channelPoolPacks,
+        channelPools,
         project.defaultTimerCount,
       );
       setActiveHandleScripts(

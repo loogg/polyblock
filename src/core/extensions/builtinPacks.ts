@@ -1,20 +1,91 @@
 import type { PolyExtensionPack } from './types';
 
-export const RT_LIFECYCLE_PACK: PolyExtensionPack = {
+/**
+ * Unified built-in embedded runtime pack (`rt`).
+ * Single C-module pack (`require("rt")` / `import rt`) organized into 3 declarative sections:
+ *  - `rt.lifecycle` -> injected into core `事件` category (`on_run`, `on_stop`, run period/control)
+ *  - `rt.timers`    -> standalone `定时` (#15) category with per-handle `0..31` channel pool
+ *  - `rt.tick`      -> standalone `时钟` (#18) category (`rt.tick`, `rt.ms_to_tick`, `rt.is_expired`)
+ * Projects & board profiles may enable the whole pack (`"rt"`) or finely prune individual sections (`"rt.tick"`).
+ */
+export const RT_PACK: PolyExtensionPack = {
   format: 'polyblock-extension',
   version: 1,
-  id: 'rt-lifecycle',
-  name: '周期事件循环 (on_run / on_stop)',
+  id: 'rt',
+  name: '嵌入式运行时核心包 (rt)',
   packVersion: '1.0.0',
-  categoryLabel: '周期',
-  color: '#e0911f',
+  categoryLabel: '运行',
+  color: '#6366f1',
   description:
-    '为项目启用常驻周期回调 on_run（默认 100ms，可动态调频/启停）与安全停机 on_stop 积木，对应板端 rt 周期调度。',
+    '统一对应嵌入式 C 端 rt 模块：内含「周期事件」「多路定时 (0~31 通道池)」「系统时钟 (rt.tick)」3 个可裁剪组件，各自按声明配置独立决定侧边栏归属与排序。',
   builtin: true,
-  categoryTarget: 'event',
-  tags: ['周期调度'],
-  hasRtMonitorUi: true,
+  toolboxOrder: 15,
+  tags: ['RTOS 核心'],
+  sections: [
+    {
+      id: 'lifecycle',
+      label: '周期事件',
+      description: '常驻周期回调 on_run（默认使能，可动态调频/启停）与安全停机 on_stop',
+      visible: true,
+      categoryTarget: 'event',
+      color: '#e0911f',
+      hasRtMonitorUi: true,
+      blocks: [
+        'poly_on_run',
+        'poly_set_run_period',
+        'poly_run_control',
+        'poly_on_stop',
+      ],
+    },
+    {
+      id: 'timers',
+      label: '定时',
+      description: '每句柄独立整数通道定时器池（0~31 路）、画布就地别名与独立全局 on_timer_N 分发',
+      visible: true,
+      categoryTarget: 'own',
+      toolboxOrder: 15,
+      color: '#6366f1',
+      hasRtMonitorUi: true,
+      flyoutButton: {
+        text: '⚙ 配置本句柄定时器通道',
+        callbackKey: 'OPEN_HANDLE_TIMER_CONFIG',
+      },
+      handleChannelPool: {
+        configKey: 'rt.timers',
+        label: '定时器通道',
+        prefix: 'T',
+        min: 1,
+        max: 32,
+        defaultCount: 8,
+        presets: [4, 8, 16, 32],
+        fieldName: 'TIMER_ID',
+        hint: '每个隔离句柄（独立 lua_State*）独享自己的定时器池与别名，彼此绝不窜扰；在画布上右键任意定时器积木也可就地修改别名。',
+      },
+      blocks: [
+        'poly_on_timer',
+        'poly_start_timer',
+        'poly_stop_timer',
+        'poly_get_timer_value',
+        'poly_is_timer_running',
+      ],
+    },
+    {
+      id: 'tick',
+      label: '时钟',
+      description: '嵌入式系统滴答 rt.tick、毫秒转 tick 与 32 位无符号回绕安全到期判断',
+      visible: true,
+      categoryTarget: 'own',
+      toolboxOrder: 18,
+      color: '#0891b2',
+      blocks: [
+        'poly_rt_tick',
+        'poly_rt_ms_to_tick',
+        'poly_rt_is_expired',
+      ],
+    },
+  ],
   blocks: [
+    // --- Section: lifecycle ---
     {
       type: 'poly_on_run',
       kind: 'hat',
@@ -100,40 +171,8 @@ export const RT_LIFECYCLE_PACK: PolyExtensionPack = {
         keepsAlive: false,
       },
     },
-  ],
-};
 
-export const RT_TIMERS_PACK: PolyExtensionPack = {
-  format: 'polyblock-extension',
-  version: 1,
-  id: 'rt-timers',
-  name: '多路编号定时器 (rt.timer)',
-  packVersion: '1.0.0',
-  categoryLabel: '定时',
-  color: '#6366f1',
-  description:
-    '为项目内每个隔离句柄提供独立的整数通道定时器池（0~31 路）、画布就地别名与顶层零闭包 on_timer(id) 分发。',
-  builtin: true,
-  toolboxOrder: 15,
-  categoryTarget: 'own',
-  tags: ['定时器'],
-  hasRtMonitorUi: true,
-  flyoutButton: {
-    text: '⚙ 配置本句柄定时器通道',
-    callbackKey: 'OPEN_HANDLE_TIMER_CONFIG',
-  },
-  handleChannelPool: {
-    configKey: 'rt-timers',
-    label: '定时器通道',
-    prefix: 'T',
-    min: 1,
-    max: 32,
-    defaultCount: 8,
-    presets: [4, 8, 16, 32],
-    fieldName: 'TIMER_ID',
-    hint: '每个隔离句柄（独立 lua_State*）独享自己的定时器池与别名，彼此绝不窜扰；在画布上右键任意定时器积木也可就地修改别名。',
-  },
-  blocks: [
+    // --- Section: timers ---
     {
       type: 'poly_on_timer',
       kind: 'hat',
@@ -251,24 +290,8 @@ export const RT_TIMERS_PACK: PolyExtensionPack = {
         template: 'rt.is_timer_running({{TIMER_ID:int}})',
       },
     },
-  ],
-};
 
-export const RT_TICK_PACK: PolyExtensionPack = {
-  format: 'polyblock-extension',
-  version: 1,
-  id: 'rt-tick',
-  name: '系统时钟与到期判断 (rt.tick)',
-  packVersion: '1.0.0',
-  categoryLabel: '时钟',
-  color: '#0891b2',
-  description:
-    '提供嵌入式 RTOS 系统滴答（rt.tick）、毫秒转 tick（rt.ms_to_tick）与 32 位回绕安全到期判断（rt.is_expired），不依赖编号定时器通道池，可独立启用。',
-  builtin: true,
-  toolboxOrder: 18,
-  categoryTarget: 'own',
-  tags: ['系统时基'],
-  blocks: [
+    // --- Section: tick ---
     {
       type: 'poly_rt_tick',
       kind: 'value',
@@ -820,9 +843,7 @@ def reset():
 };
 
 export const BUILTIN_EXTENSION_PACKS: PolyExtensionPack[] = [
-  RT_LIFECYCLE_PACK,
-  RT_TIMERS_PACK,
-  RT_TICK_PACK,
+  RT_PACK,
   VIRTUAL_BOARD_PACK,
   DICT_JSON_PACK,
   CLOCK_TIMER_PACK,

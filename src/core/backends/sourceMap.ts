@@ -6,6 +6,7 @@ import {
   getActiveHandleScripts,
   getActiveProjectCapabilities,
 } from '../blocks/timerConfigBridge';
+import { hasCapability } from '../capabilities/registry';
 import { extensionRegistry } from '../extensions/registry';
 import { isValidTopHatType } from './eventMode';
 
@@ -205,25 +206,22 @@ export function analyzeWorkspaceDiagnostics(
       }
     }
 
-    const ownerPack = extensionRegistry.findPackForBlockType(blk.type);
+    const owner = extensionRegistry.findOwnerForBlockType(blk.type);
 
     if (activeCaps !== null) {
-      if (ownerPack && !activeCaps.includes(ownerPack.id)) {
-        const diagId =
-          ownerPack.id === 'rt-timers'
-            ? `cap-missing-timers-${blk.id}`
-            : ownerPack.id === 'rt-lifecycle'
-              ? `cap-missing-lifecycle-${blk.id}`
-              : `cap-missing-ext-${ownerPack.id}-${blk.id}`;
+      if (owner && !hasCapability(activeCaps, owner.section.capId)) {
+        const displayName = owner.section.isMultiSection
+          ? `${owner.pack.name} · ${owner.section.label}`
+          : owner.pack.name;
         diagnostics.push({
-          id: diagId,
-          severity: ownerPack.id === 'rt-lifecycle' ? 'warning' : 'error',
-          message: `当前项目未启用「${ownerPack.name}」，请在项目配置的「能力与外设」中启用后再运行或导出。`,
+          id: `cap-missing-${owner.section.capId}-${blk.id}`,
+          severity: 'error',
+          message: `当前项目未启用「${displayName}」，请在项目配置的「能力与外设」中启用后再运行或导出。`,
           blockId: blk.id,
         });
         continue;
       }
-      if (!ownerPack && blk.type.startsWith('ext_')) {
+      if (!owner && blk.type.startsWith('ext_')) {
         diagnostics.push({
           id: `cap-missing-ext-unknown-${blk.id}`,
           severity: 'error',
@@ -234,18 +232,16 @@ export function analyzeWorkspaceDiagnostics(
       }
     }
 
-    // Channel pool range check (strictly isolated per pool.configKey!)
-    if (ownerPack?.handleChannelPool) {
-      const pool = ownerPack.handleChannelPool;
+    // Channel pool range check (strictly isolated per section pool.configKey!)
+    const pool = owner?.section.handleChannelPool;
+    if (pool) {
       const fieldName = pool.fieldName || 'TIMER_ID';
       if (blk.getField(fieldName)) {
         const poolCfg = getActiveChannelPoolConfig(pool.configKey, pool.defaultCount);
         const cid = Math.trunc(Number(blk.getFieldValue(fieldName) ?? 0));
         if (!Number.isInteger(cid) || cid < 0 || cid >= poolCfg.count) {
-          const diagPrefix =
-            pool.configKey === 'rt-timers' ? 'timer' : `pool-${pool.configKey}`;
           diagnostics.push({
-            id: `${diagPrefix}-oob-${cid}-${blk.id}`,
+            id: `pool-${pool.configKey}-oob-${cid}-${blk.id}`,
             severity: 'error',
             message: `${pool.label} ${pool.prefix}${cid} 超出当前句柄配置范围（0~${poolCfg.count - 1}），请更换通道或在句柄配置中调大通道数。`,
             blockId: blk.id,

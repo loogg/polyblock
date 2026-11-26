@@ -145,16 +145,16 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(res.diagnostics.some((d) => d.id.startsWith('dup-timer-hat-0'))).toBe(true);
     expect(
       res.diagnostics.some(
-        (d) => d.severity === 'error' && d.id.startsWith('timer-oob-9'),
+        (d) => d.severity === 'error' && d.id.startsWith('pool-rt.timers-oob-9'),
       ),
     ).toBe(true);
 
-    // When 'rt-timers' capability is disabled, flag cap-missing-timers diagnostic
-    setActiveProjectCapabilities([]);
+    // When 'rt.timers' section is disabled (even if other rt sections are on), flag cap-missing-rt.timers diagnostic
+    setActiveProjectCapabilities(['rt.lifecycle', 'rt.tick']);
     const resNoCap = backendRegistry.get('lua').generate(ws);
     expect(
       resNoCap.diagnostics.some(
-        (d) => d.severity === 'error' && d.id.startsWith('cap-missing-timers'),
+        (d) => d.severity === 'error' && d.id.startsWith('cap-missing-rt.timers-'),
       ),
     ).toBe(true);
 

@@ -28,6 +28,10 @@ import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../core/extensions/builtinPack
 import {
   derivePackBadges,
   extensionRegistry,
+  formatPackPlacementSummary,
+  formatSectionPlacement,
+  getPackEnableState,
+  resolvePackSections,
 } from '../core/extensions/registry';
 import type {
   HandleChannelPoolSpec,
@@ -153,16 +157,59 @@ export function ProjectSettingsModal({
   }, [onClose]);
 
   const backends = backendRegistry.list();
-  const enabledSet = new Set(project.enabledCapabilities);
   const localPacks = project.localExtensions ?? [];
   const localPackIds = new Set(localPacks.map((p) => p.id));
   const builtinPacks = allExtensionPacks.filter((p) => Boolean(p.builtin));
   const customGlobalPacks = allExtensionPacks.filter((p) => !p.builtin);
   const globalPackIds = new Set(allExtensionPacks.map((p) => p.id));
-  const channelPoolPacks = extensionRegistry.getChannelPoolPacks(
+  const channelPools = extensionRegistry.getChannelPools(
     project.enabledCapabilities,
     project.localExtensions,
   );
+
+  const renderSectionChips = (pack: PolyExtensionPack, disabled = false) => {
+    const sections = resolvePackSections(pack);
+    if (sections.length <= 1) return null;
+    return (
+      <div
+        className="pack-sections-bar compact"
+        role="group"
+        aria-label={`${pack.name} 可裁剪组件`}
+      >
+        <span className="pack-sections-title">组件：</span>
+        {sections.map((sec) => {
+          const secOn = hasCapability(project.enabledCapabilities, sec.capId);
+          const posText = formatSectionPlacement(sec);
+          return (
+            <button
+              key={sec.capId}
+              type="button"
+              disabled={disabled}
+              className={`pack-section-chip ${secOn ? 'active' : ''}`}
+              style={
+                secOn
+                  ? { borderColor: `${sec.color}88`, color: sec.color }
+                  : undefined
+              }
+              title={`${sec.label}（${posText}）${sec.description ? `：${sec.description}` : ''} · 点击单独${secOn ? '停用' : '启用'}`}
+              onClick={() =>
+                onToggleCapabilityForProject(project.id, sec.capId)
+              }
+            >
+              <span
+                className="pack-section-dot"
+                style={{
+                  background: secOn ? sec.color : 'var(--text-muted)',
+                }}
+              />
+              <span>{sec.label}</span>
+              <span className="pack-section-pos">{posText}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
 
   const downloadPackJson = (fileName: string, data: unknown, toastText: string) => {
     const blob = new Blob([JSON.stringify(data, null, 2)], {
@@ -601,15 +648,168 @@ export function ProjectSettingsModal({
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {localPacks.map((pack) => {
-                        const enabled = enabledSet.has(pack.id);
+                        const enableState = getPackEnableState(
+                          pack,
+                          project.enabledCapabilities,
+                        );
                         const overridesGlobal = globalPackIds.has(pack.id);
                         const badges = derivePackBadges(pack);
-                        const orderLabel =
-                          pack.categoryTarget === 'event'
-                            ? '并入「事件」'
-                            : `分类序 #${pack.toolboxOrder ?? DEFAULT_EXTENSION_TOOLBOX_ORDER}`;
+                        const placementLabel = formatPackPlacementSummary(pack);
+                        const toggleBtnClass =
+                          enableState.status === 'full'
+                            ? 'enabled'
+                            : enableState.status === 'partial'
+                              ? 'partial'
+                              : 'disabled';
+                        const toggleBtnText =
+                          enableState.status === 'full'
+                            ? '已启用'
+                            : enableState.status === 'partial'
+                              ? `部分 (${enableState.enabledCount}/${enableState.totalCount})`
+                              : '启用';
                         return (
-                          <div key={pack.id} className="settings-ext-row">
+                          <div key={pack.id} className="settings-ext-row multi">
+                            <div className="settings-ext-row-main">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                                <span
+                                  className="card-icon"
+                                  style={{
+                                    background: pack.color,
+                                    width: 32,
+                                    height: 28,
+                                    fontSize: 10.5,
+                                    borderRadius: 7,
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  {pack.categoryLabel}
+                                </span>
+                                <div style={{ minWidth: 0 }}>
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 6,
+                                      fontWeight: 600,
+                                      fontSize: 12.5,
+                                      flexWrap: 'wrap',
+                                    }}
+                                  >
+                                    <span>{pack.name}</span>
+                                    <span className="count-badge">项目内嵌</span>
+                                    {overridesGlobal && (
+                                      <span
+                                        className="count-badge"
+                                        style={{
+                                          color: 'var(--warning)',
+                                          borderColor: 'var(--warning)',
+                                        }}
+                                      >
+                                        覆盖同名全局包
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                    v{pack.packVersion} · {pack.blocks.length} 个积木 · {placementLabel} · ID: {pack.id}
+                                  </div>
+                                  {badges.length > 0 && (
+                                    <div className="pack-attr-row" style={{ marginTop: 4 }}>
+                                      {badges.map((badge) => (
+                                        <span
+                                          key={badge.id}
+                                          className={`pack-attr-badge tone-${badge.tone}`}
+                                        >
+                                          {badge.label}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                                <button
+                                  type="button"
+                                  className="btn-ghost"
+                                  style={{ padding: '4px 6px' }}
+                                  title="复制一份保存到全局扩展库（供其他项目复用）"
+                                  aria-label={`将 ${pack.name} 保存到全局扩展库`}
+                                  onClick={() => onPromoteLocalExtensionToGlobal(pack)}
+                                >
+                                  <Globe size={13} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-ghost"
+                                  style={{ padding: '4px 6px' }}
+                                  title="导出为独立 .polyext.json"
+                                  aria-label={`导出 ${pack.name}`}
+                                  onClick={() =>
+                                    downloadPackJson(
+                                      `${pack.id}.polyext.json`,
+                                      pack,
+                                      `已导出项目内嵌包 ${pack.id}.polyext.json`,
+                                    )
+                                  }
+                                >
+                                  <Download size={13} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-ghost"
+                                  style={{ padding: '4px 6px', color: 'var(--danger)' }}
+                                  title="从当前项目移除此内嵌包"
+                                  aria-label={`移除项目内嵌包 ${pack.name}`}
+                                  onClick={() => onRemoveLocalExtension(project.id, pack.id)}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`ext-toggle-btn ${toggleBtnClass}`}
+                                  style={{ padding: '4px 10px', fontSize: 11.5 }}
+                                  onClick={() =>
+                                    onToggleCapabilityForProject(project.id, pack.id)
+                                  }
+                                >
+                                  {toggleBtnText}
+                                </button>
+                              </div>
+                            </div>
+                            {renderSectionChips(pack)}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="settings-field-group" style={{ marginTop: 4 }}>
+                  <label className="settings-label">
+                    内置扩展包（{builtinPacks.length} · 统一声明式协议，支持整包或按组件裁剪）
+                  </label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {builtinPacks.map((pack) => {
+                      const enableState = getPackEnableState(
+                        pack,
+                        project.enabledCapabilities,
+                      );
+                      const badges = derivePackBadges(pack);
+                      const placementLabel = formatPackPlacementSummary(pack);
+                      const toggleBtnClass =
+                        enableState.status === 'full'
+                          ? 'enabled'
+                          : enableState.status === 'partial'
+                            ? 'partial'
+                            : 'disabled';
+                      const toggleBtnText =
+                        enableState.status === 'full'
+                          ? '已启用'
+                          : enableState.status === 'partial'
+                            ? `部分 (${enableState.enabledCount}/${enableState.totalCount})`
+                            : '启用';
+                      return (
+                        <div key={pack.id} className="settings-ext-row multi">
+                          <div className="settings-ext-row-main">
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                               <span
                                 className="card-icon"
@@ -625,32 +825,11 @@ export function ProjectSettingsModal({
                                 {pack.categoryLabel}
                               </span>
                               <div style={{ minWidth: 0 }}>
-                                <div
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 6,
-                                    fontWeight: 600,
-                                    fontSize: 12.5,
-                                    flexWrap: 'wrap',
-                                  }}
-                                >
-                                  <span>{pack.name}</span>
-                                  <span className="count-badge">项目内嵌</span>
-                                  {overridesGlobal && (
-                                    <span
-                                      className="count-badge"
-                                      style={{
-                                        color: 'var(--warning)',
-                                        borderColor: 'var(--warning)',
-                                      }}
-                                    >
-                                      覆盖同名全局包
-                                    </span>
-                                  )}
+                                <div style={{ fontWeight: 600, fontSize: 12.5 }}>
+                                  {pack.name}
                                 </div>
                                 <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                  v{pack.packVersion} · {pack.blocks.length} 个积木 · {orderLabel} · ID: {pack.id}
+                                  {pack.blocks.length} 个积木 · {placementLabel} · ID: {pack.id}
                                 </div>
                                 {badges.length > 0 && (
                                   <div className="pack-attr-row" style={{ marginTop: 4 }}>
@@ -666,120 +845,18 @@ export function ProjectSettingsModal({
                                 )}
                               </div>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                              <button
-                                type="button"
-                                className="btn-ghost"
-                                style={{ padding: '4px 6px' }}
-                                title="复制一份保存到全局扩展库（供其他项目复用）"
-                                aria-label={`将 ${pack.name} 保存到全局扩展库`}
-                                onClick={() => onPromoteLocalExtensionToGlobal(pack)}
-                              >
-                                <Globe size={13} />
-                              </button>
-                              <button
-                                type="button"
-                                className="btn-ghost"
-                                style={{ padding: '4px 6px' }}
-                                title="导出为独立 .polyext.json"
-                                aria-label={`导出 ${pack.name}`}
-                                onClick={() =>
-                                  downloadPackJson(
-                                    `${pack.id}.polyext.json`,
-                                    pack,
-                                    `已导出项目内嵌包 ${pack.id}.polyext.json`,
-                                  )
-                                }
-                              >
-                                <Download size={13} />
-                              </button>
-                              <button
-                                type="button"
-                                className="btn-ghost"
-                                style={{ padding: '4px 6px', color: 'var(--danger)' }}
-                                title="从当前项目移除此内嵌包"
-                                aria-label={`移除项目内嵌包 ${pack.name}`}
-                                onClick={() => onRemoveLocalExtension(project.id, pack.id)}
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                              <button
-                                type="button"
-                                className={`ext-toggle-btn ${enabled ? 'enabled' : 'disabled'}`}
-                                style={{ padding: '4px 10px', fontSize: 11.5 }}
-                                onClick={() =>
-                                  onToggleCapabilityForProject(project.id, pack.id)
-                                }
-                              >
-                                {enabled ? '已启用' : '启用'}
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <div className="settings-field-group" style={{ marginTop: 4 }}>
-                  <label className="settings-label">
-                    内置扩展包（{builtinPacks.length} · 统一声明式协议，按需勾选）
-                  </label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {builtinPacks.map((pack) => {
-                      const enabled = enabledSet.has(pack.id);
-                      const badges = derivePackBadges(pack);
-                      const orderLabel =
-                        pack.categoryTarget === 'event'
-                          ? '并入「事件」'
-                          : `分类序 #${pack.toolboxOrder ?? DEFAULT_EXTENSION_TOOLBOX_ORDER}`;
-                      return (
-                        <div key={pack.id} className="settings-ext-row">
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                            <span
-                              className="card-icon"
-                              style={{
-                                background: pack.color,
-                                width: 32,
-                                height: 28,
-                                fontSize: 10.5,
-                                borderRadius: 7,
-                                flexShrink: 0,
-                              }}
+                            <button
+                              type="button"
+                              className={`ext-toggle-btn ${toggleBtnClass}`}
+                              style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
+                              onClick={() =>
+                                onToggleCapabilityForProject(project.id, pack.id)
+                              }
                             >
-                              {pack.categoryLabel}
-                            </span>
-                            <div style={{ minWidth: 0 }}>
-                              <div style={{ fontWeight: 600, fontSize: 12.5 }}>
-                                {pack.name}
-                              </div>
-                              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                {pack.blocks.length} 个积木 · {orderLabel} · ID: {pack.id}
-                              </div>
-                              {badges.length > 0 && (
-                                <div className="pack-attr-row" style={{ marginTop: 4 }}>
-                                  {badges.map((badge) => (
-                                    <span
-                                      key={badge.id}
-                                      className={`pack-attr-badge tone-${badge.tone}`}
-                                    >
-                                      {badge.label}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
+                              {toggleBtnText}
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            className={`ext-toggle-btn ${enabled ? 'enabled' : 'disabled'}`}
-                            style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
-                            onClick={() =>
-                              onToggleCapabilityForProject(project.id, pack.id)
-                            }
-                          >
-                            {enabled ? '已启用' : '启用'}
-                          </button>
+                          {renderSectionChips(pack)}
                         </div>
                       );
                     })}
@@ -825,71 +902,87 @@ export function ProjectSettingsModal({
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {customGlobalPacks.map((pack) => {
-                        const enabled = enabledSet.has(pack.id);
+                        const enableState = getPackEnableState(
+                          pack,
+                          project.enabledCapabilities,
+                        );
                         const overridden = localPackIds.has(pack.id);
                         const badges = derivePackBadges(pack);
-                        const orderLabel =
-                          pack.categoryTarget === 'event'
-                            ? '并入「事件」'
-                            : `分类序 #${pack.toolboxOrder ?? DEFAULT_EXTENSION_TOOLBOX_ORDER}`;
+                        const placementLabel = formatPackPlacementSummary(pack);
+                        const toggleBtnClass =
+                          enableState.status === 'full'
+                            ? 'enabled'
+                            : enableState.status === 'partial'
+                              ? 'partial'
+                              : 'disabled';
+                        const toggleBtnText = overridden
+                          ? '已覆盖'
+                          : enableState.status === 'full'
+                            ? '已启用'
+                            : enableState.status === 'partial'
+                              ? `部分 (${enableState.enabledCount}/${enableState.totalCount})`
+                              : '启用';
                         return (
                           <div
                             key={pack.id}
-                            className="settings-ext-row"
+                            className="settings-ext-row multi"
                             style={overridden ? { opacity: 0.65 } : undefined}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                              <span
-                                className="card-icon"
-                                style={{
-                                  background: pack.color,
-                                  width: 32,
-                                  height: 28,
-                                  fontSize: 10.5,
-                                  borderRadius: 7,
-                                  flexShrink: 0,
-                                }}
-                              >
-                                {pack.categoryLabel}
-                              </span>
-                              <div style={{ minWidth: 0 }}>
-                                <div style={{ fontWeight: 600, fontSize: 12.5 }}>
-                                  {pack.name}
-                                </div>
-                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                  v{pack.packVersion} · {pack.blocks.length} 个积木 · {orderLabel}
-                                  {overridden ? ' · 已被本项目内嵌包覆盖' : ''}
-                                </div>
-                                {badges.length > 0 && (
-                                  <div className="pack-attr-row" style={{ marginTop: 4 }}>
-                                    {badges.map((badge) => (
-                                      <span
-                                        key={badge.id}
-                                        className={`pack-attr-badge tone-${badge.tone}`}
-                                      >
-                                        {badge.label}
-                                      </span>
-                                    ))}
+                            <div className="settings-ext-row-main">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                                <span
+                                  className="card-icon"
+                                  style={{
+                                    background: pack.color,
+                                    width: 32,
+                                    height: 28,
+                                    fontSize: 10.5,
+                                    borderRadius: 7,
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  {pack.categoryLabel}
+                                </span>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontWeight: 600, fontSize: 12.5 }}>
+                                    {pack.name}
                                   </div>
-                                )}
+                                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                    v{pack.packVersion} · {pack.blocks.length} 个积木 · {placementLabel}
+                                    {overridden ? ' · 已被本项目内嵌包覆盖' : ''}
+                                  </div>
+                                  {badges.length > 0 && (
+                                    <div className="pack-attr-row" style={{ marginTop: 4 }}>
+                                      {badges.map((badge) => (
+                                        <span
+                                          key={badge.id}
+                                          className={`pack-attr-badge tone-${badge.tone}`}
+                                        >
+                                          {badge.label}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
+                              <button
+                                type="button"
+                                className={`ext-toggle-btn ${toggleBtnClass}`}
+                                style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
+                                disabled={overridden}
+                                title={
+                                  overridden
+                                    ? '已被上方同名项目内嵌包覆盖，请操作上方条目'
+                                    : undefined
+                                }
+                                onClick={() =>
+                                  onToggleCapabilityForProject(project.id, pack.id)
+                                }
+                              >
+                                {toggleBtnText}
+                              </button>
                             </div>
-                            <button
-                              type="button"
-                              className={`ext-toggle-btn ${enabled ? 'enabled' : 'disabled'}`}
-                              style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
-                              disabled={overridden}
-                              title={
-                                overridden
-                                  ? '已被上方同名项目内嵌包覆盖，请操作上方条目'
-                                  : undefined
-                              }
-                              onClick={() =>
-                                onToggleCapabilityForProject(project.id, pack.id)
-                              }
-                            >
-                              {overridden ? '已覆盖' : enabled ? '已启用' : '启用'}
-                            </button>
+                            {renderSectionChips(pack, overridden)}
                           </div>
                         );
                       })}
@@ -1021,15 +1114,17 @@ export function ProjectSettingsModal({
                     </div>
                   </div>
 
-                  {channelPoolPacks.length > 0 ? (
+                  {channelPools.length > 0 ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 6 }}>
-                      {channelPoolPacks.map((poolPack) => {
-                        const pool = poolPack.handleChannelPool!;
+                      {channelPools.map(({ pack: poolPack, section: poolSection, pool }) => {
                         const poolCfg = readPoolCfg(pool);
                         const rawSlot = aliasSlotsByPool[pool.configKey] ?? '0';
                         const curSlotId =
                           Number(rawSlot) < poolCfg.count ? rawSlot : '0';
                         const curDraft = aliasDraftsByPool[pool.configKey] ?? '';
+                        const ownerLabel = poolSection.isMultiSection
+                          ? `${poolPack.name} · ${poolSection.label}`
+                          : poolPack.name;
                         return (
                           <div
                             key={pool.configKey}
@@ -1055,9 +1150,9 @@ export function ProjectSettingsModal({
                                   className="settings-label"
                                   style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
                                 >
-                                  <Timer size={13} style={{ color: poolPack.color }} />
+                                  <Timer size={13} style={{ color: poolSection.color }} />
                                   <span>
-                                    {poolPack.name} · {pool.label}（{pool.prefix}0 ~{' '}
+                                    {ownerLabel} · {pool.label}（{pool.prefix}0 ~{' '}
                                     {pool.prefix}
                                     {poolCfg.count - 1}）
                                   </span>

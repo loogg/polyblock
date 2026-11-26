@@ -1,5 +1,6 @@
 import * as Blockly from 'blockly';
 import { extensionRegistry } from '../extensions/registry';
+import type { CoreCategoryTarget } from '../extensions/types';
 
 export interface ToolboxBlockSpec {
   kind: 'block';
@@ -343,15 +344,14 @@ function stripKeywords(spec: ToolboxBlockSpec): Record<string, unknown> {
 }
 
 /**
- * Merges Layer 0 core categories (10..90) with all enabled extension categories
- * (`categoryTarget !== 'event'`), stably sorted by numeric `order` ascending.
- * Any pack with `categoryTarget === 'event'` merges cleanly into `事件 (#10)`.
+ * Merges Layer 0 core categories (10..90) with all enabled extension pack sections:
+ * - Sections with `categoryTarget === 'own'` (and `visible !== false`) become standalone tabs sorted by `order`.
+ * - Sections targeting any core category (`'event' | 'print' | 'control' | ...`) merge declaratively into that tab.
  */
 export function getOrderedToolboxCategories(
   enabledCapabilities: string[] = [],
   extraExtensionCategories?: BlockCategorySpec[],
 ): BlockCategorySpec[] {
-  const eventPackBlocks = extensionRegistry.getEventCategoryBlocks(enabledCapabilities);
   const extCats =
     extraExtensionCategories ??
     extensionRegistry.toCategorySpecs(enabledCapabilities);
@@ -360,20 +360,20 @@ export function getOrderedToolboxCategories(
   let seq = 0;
 
   for (const cat of BLOCK_CATEGORIES) {
-    if (cat.id === 'event') {
-      combined.push({
-        cat: {
-          ...cat,
-          blocks:
-            eventPackBlocks.length > 0
-              ? [CORE_EVENT_BLOCKS[0], ...eventPackBlocks, CORE_EVENT_BLOCKS[1]]
-              : CORE_EVENT_BLOCKS,
-        },
-        seq: seq++,
-      });
-    } else {
-      combined.push({ cat, seq: seq++ });
-    }
+    const mergedBlocks = extensionRegistry.getMergedBlocksForCategory(
+      cat.id as CoreCategoryTarget,
+      enabledCapabilities,
+    );
+    combined.push({
+      cat:
+        mergedBlocks.length > 0
+          ? {
+              ...cat,
+              blocks: [...cat.blocks, ...mergedBlocks],
+            }
+          : cat,
+      seq: seq++,
+    });
   }
 
   for (const extCat of extCats) {

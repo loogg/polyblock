@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CAP_RT,
   CAP_RT_LIFECYCLE,
   CAP_RT_TICK,
   CAP_RT_TIMERS,
   CAP_VIRTUAL_BOARD,
+  hasCapability,
   targetProfileRegistry,
 } from '../capabilities/registry';
 import {
@@ -74,8 +76,7 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     expect(mh.targetProfileId).toBe('virtual-board-rt');
     expect(mh.enabledCapabilities).toEqual(
       expect.arrayContaining([
-        CAP_RT_LIFECYCLE,
-        CAP_RT_TIMERS,
+        CAP_RT,
         CAP_VIRTUAL_BOARD,
         'dict-json',
         'clock-timer',
@@ -83,6 +84,9 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
         'pwm-servo',
       ]),
     );
+    expect(hasCapability(mh.enabledCapabilities, CAP_RT_LIFECYCLE)).toBe(true);
+    expect(hasCapability(mh.enabledCapabilities, CAP_RT_TIMERS)).toBe(true);
+    expect(hasCapability(mh.enabledCapabilities, CAP_RT_TICK)).toBe(true);
     expect(mh.localExtensions?.map((p) => p.id)).toEqual(['robot-drive', 'pwm-servo']);
     expect(mh.handles).toHaveLength(3);
     expect(mh.handles.map((h) => h.name)).toEqual([
@@ -103,11 +107,7 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
       targetProfileRegistry.get('embedded-rt'),
     );
     expect(switched.targetProfileId).toBe('embedded-rt');
-    expect(switched.enabledCapabilities).toEqual([
-      CAP_RT_LIFECYCLE,
-      CAP_RT_TIMERS,
-      CAP_RT_TICK,
-    ]);
+    expect(switched.enabledCapabilities).toEqual([CAP_RT]);
     expect(switched.handles).toHaveLength(1);
 
     const updatedHandle = setHandleTimerConfig(switched.handles[0], {

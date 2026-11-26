@@ -37,7 +37,10 @@ import {
   hasCapability,
   targetProfileRegistry,
 } from './core/capabilities/registry';
-import { extensionRegistry } from './core/extensions/registry';
+import {
+  extensionRegistry,
+  togglePackOrSectionCapability,
+} from './core/extensions/registry';
 import {
   applySimDeviceEvent,
   buildDefaultSimState,
@@ -75,7 +78,7 @@ import {
   setHandleChannelPoolConfig,
   setHandleTimerConfig,
   STORAGE_STORE_V2_KEY,
-  STORAGE_STORE_V3_KEY,
+  STORAGE_STORE_V4_KEY,
   updateHandleById,
   updateProjectById,
 } from './core/projects/store';
@@ -243,22 +246,24 @@ export function App() {
   const activeProject = getActiveProject(store);
   const activeHandle = getActiveHandle(activeProject);
   const activeScript = getActiveScript(activeHandle);
-  const activeChannelPoolPacks = useMemo(
+  const activeChannelPools = useMemo(
     () =>
-      extensionRegistry.getChannelPoolPacks(
-        activeProject.enabledCapabilities,
-        activeProject.localExtensions,
-      ),
+      extensionRegistry
+        .getChannelPools(
+          activeProject.enabledCapabilities,
+          activeProject.localExtensions,
+        )
+        .map((entry) => entry.pool),
     [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
   );
   const activeChannelPoolConfigs = useMemo(
     () =>
       getAllHandleChannelPoolConfigs(
         activeHandle,
-        activeChannelPoolPacks,
+        activeChannelPools,
         activeProject.defaultTimerCount,
       ),
-    [activeHandle, activeChannelPoolPacks, activeProject.defaultTimerCount],
+    [activeHandle, activeChannelPools, activeProject.defaultTimerCount],
   );
   const activeTimerConfig =
     activeChannelPoolConfigs[CAP_RT_TIMERS] ??
@@ -465,14 +470,13 @@ export function App() {
       const nextHandle = getActiveHandle(nextProj);
       const nextScript = getActiveScript(nextHandle);
       extensionRegistry.setActiveProjectLocalPacks(nextProj.localExtensions ?? []);
-      const nextPoolPacks = extensionRegistry.getChannelPoolPacks(
-        nextProj.enabledCapabilities,
-        nextProj.localExtensions,
-      );
+      const nextPools = extensionRegistry
+        .getChannelPools(nextProj.enabledCapabilities, nextProj.localExtensions)
+        .map((entry) => entry.pool);
       setActiveChannelPoolConfigs(
         getAllHandleChannelPoolConfigs(
           nextHandle,
-          nextPoolPacks,
+          nextPools,
           nextProj.defaultTimerCount,
         ),
       );
@@ -556,30 +560,29 @@ export function App() {
     (projectId: string, capId: string) => {
       const curProj = storeRef.current.projects.find((p) => p.id === projectId);
       if (!curProj) return;
-      const extPack = extensionRegistry.resolvePack(capId, curProj.localExtensions);
-      const displayName = extPack?.name ?? capId;
-
-      const exists = curProj.enabledCapabilities.includes(capId);
-      const nextCaps = exists
-        ? curProj.enabledCapabilities.filter((id) => id !== capId)
-        : [...curProj.enabledCapabilities, capId];
+      const { nextCapabilities, action, displayName } =
+        togglePackOrSectionCapability(
+          capId,
+          curProj.enabledCapabilities,
+          curProj.localExtensions,
+        );
 
       setStore((prev) =>
         updateProjectById(prev, projectId, (p) => ({
           ...p,
-          enabledCapabilities: nextCaps,
+          enabledCapabilities: nextCapabilities,
           updatedAt: new Date().toISOString(),
         })),
       );
 
       if (projectId === activeProjectIdRef.current) {
-        setActiveProjectCapabilities(nextCaps);
+        setActiveProjectCapabilities(nextCapabilities);
         const ws = workbenchRef.current?.getWorkspace();
         if (ws) regenerateFromWorkspace(ws, languageRef.current);
       }
 
       notify(
-        exists
+        action === 'disabled'
           ? `已从「${curProj.name}」停用「${displayName}」`
           : `已为「${curProj.name}」启用「${displayName}」`,
       );
@@ -639,7 +642,9 @@ export function App() {
       const hasGlobalFallback = Boolean(extensionRegistry.get(packId));
       const nextCaps = hasGlobalFallback
         ? curProj.enabledCapabilities
-        : curProj.enabledCapabilities.filter((id) => id !== packId);
+        : curProj.enabledCapabilities.filter(
+            (id) => id !== packId && !id.startsWith(`${packId}.`),
+          );
 
       setStore((prev) =>
         updateProjectById(prev, projectId, (p) => ({
@@ -1017,10 +1022,9 @@ export function App() {
     (req: ChannelAliasPromptRequest, alias: string) => {
       const proj = getActiveProject(storeRef.current);
       const hdl = getActiveHandle(proj);
-      const poolPack = extensionRegistry
-        .getChannelPoolPacks(proj.enabledCapabilities, proj.localExtensions)
-        .find((p) => p.handleChannelPool?.configKey === req.configKey);
-      const poolSpec = poolPack?.handleChannelPool;
+      const poolSpec = extensionRegistry
+        .getChannelPools(proj.enabledCapabilities, proj.localExtensions)
+        .find((entry) => entry.pool.configKey === req.configKey)?.pool;
       const fallback =
         req.configKey === CAP_RT_TIMERS
           ? proj.defaultTimerCount
@@ -1342,7 +1346,8 @@ export function App() {
 
   const handleResetWorkspace = useCallback(() => {
     stopIfRunning();
-    localStorage.removeItem(STORAGE_STORE_V3_KEY);
+    localStorage.removeItem(STORAGE_STORE_V4_KEY);
+    localStorage.removeItem('polyblock.store.v3');
     localStorage.removeItem(STORAGE_STORE_V2_KEY);
     const freshStore = createDefaultWorkspaceStore();
     setStore(freshStore);

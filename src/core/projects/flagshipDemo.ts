@@ -254,7 +254,7 @@ def is_estop():
  * Embedded custom extension pack #2 for the L4 Flagship Robot project:
  * Pan/Tilt PWM servo pack demonstrating:
  * - Custom `toolboxOrder: 35` (slots cleanly between 控制 #30 and 变量 #40)
- * - Isolated per-handle `handleChannelPool` (`configKey: 'pwm-servo'`, completely independent of `rt-timers`)
+ * - Isolated per-handle `handleChannelPool` (`configKey: 'pwm-servo'`, completely independent of `rt.timers`)
  * - Pack-scoped `simWidgets` angle bars
  */
 export const FLAGSHIP_PWM_SERVO_PACK: PolyExtensionPack = {
