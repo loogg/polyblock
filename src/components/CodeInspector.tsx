@@ -476,7 +476,7 @@ export function CodeInspector({
               }}
               title="点击展开虚拟外设与定时器调度面板"
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              <div className="vboard-mini-items">
                 {miniPreviewWidgets.map(({ pack, widget: w }) => {
                   const val = readPackWidgetValue(simState, pack.id, w);
                   const itemKey = `${pack.id}:${w.key}`;
@@ -488,7 +488,7 @@ export function CodeInspector({
                       <span
                         key={itemKey}
                         title={tip}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        className="vboard-mini-item"
                       >
                         <span
                           className={`vboard-led ${on ? 'on' : ''}`}
@@ -503,7 +503,7 @@ export function CodeInspector({
                               : {}),
                           }}
                         />
-                        {w.label.slice(0, 6)}
+                        <span>{w.label.slice(0, 6)}</span>
                       </span>
                     );
                   }
@@ -513,7 +513,7 @@ export function CodeInspector({
                       <span
                         key={itemKey}
                         title={`${tip}：${tri.labelZh}（三色灯）`}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        className="vboard-mini-item"
                       >
                         <span
                           className="vboard-rgb"
@@ -524,7 +524,7 @@ export function CodeInspector({
                             boxShadow: tri.active ? `0 0 8px ${tri.hex}` : 'none',
                           }}
                         />
-                        {w.label.slice(0, 4)}
+                        <span>{w.label.slice(0, 4)}</span>
                       </span>
                     );
                   }
@@ -535,7 +535,7 @@ export function CodeInspector({
                       <span
                         key={itemKey}
                         title={tip}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        className="vboard-mini-item"
                       >
                         <span
                           className="vboard-rgb"
@@ -546,7 +546,7 @@ export function CodeInspector({
                             boxShadow: isLit ? `0 0 8px ${hex}` : 'none',
                           }}
                         />
-                        {w.label.slice(0, 4)}
+                        <span>{w.label.slice(0, 4)}</span>
                       </span>
                     );
                   }
@@ -554,6 +554,7 @@ export function CodeInspector({
                     <span
                       key={itemKey}
                       title={tip}
+                      className="vboard-mini-item"
                       style={{ fontFamily: 'var(--font-mono)' }}
                     >
                       {String(val ?? 0)}
@@ -564,30 +565,31 @@ export function CodeInspector({
                 {!hasSimPacks &&
                   (hasSchedulerMonitor || hasTimerMonitor) &&
                   !anyEventLoopRunning && (
-                    <span style={{ color: 'var(--text-secondary)' }}>
+                    <span
+                      className="vboard-mini-item"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
                       {hasTimerMonitor ? 'RT 周期与多路定时器' : 'RT 周期调度'}
                     </span>
                   )}
                 {anyEventLoopRunning && (
                   <span
+                    className="vboard-mini-item"
                     style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
                       color: 'var(--success-text)',
                       fontWeight: 600,
                     }}
                   >
                     <span className="rt-pulse-dot" />
-                    {multiHandleRunning
-                      ? `${monitoredHandles.length}句柄并发`
-                      : '事件循环'}
+                    <span>
+                      {multiHandleRunning
+                        ? `${monitoredHandles.length}句柄并发`
+                        : '事件循环'}
+                    </span>
                   </span>
                 )}
               </div>
-              <span style={{ color: 'var(--accent-text)', fontWeight: 600, flexShrink: 0 }}>
-                打开模拟面板 →
-              </span>
+              <span className="vboard-mini-link">模拟面板 →</span>
             </div>
           )}
         </>

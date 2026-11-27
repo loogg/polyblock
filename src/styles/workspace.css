@@ -381,6 +381,31 @@
   background: var(--bg-hover);
 }
 
+.vboard-mini-items {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.vboard-mini-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.35;
+}
+
+.vboard-mini-link {
+  color: var(--accent-text);
+  font-weight: 600;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* Phase 5: Live Event-Loop & Multi-Timer Monitor + Project Timer Config */
 .rt-pulse-dot {
   width: 7px;
