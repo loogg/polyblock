@@ -11,11 +11,11 @@ import type {
   HandleSharedModuleFnEntry,
   HandleSharedModuleVarEntry,
 } from '../core/backends/sharedModule';
-import { highlightCodeLine } from '../core/highlight';
 import {
-  formatInitialValueLua,
-  formatInitialValuePython,
-} from '../core/projects/handleVariables';
+  formatInitialValueForLanguage,
+  LANGUAGE_DIALECTS,
+} from '../core/backends/types';
+import { highlightCodeLine } from '../core/highlight';
 import type {
   ScriptLanguageId,
   VariableInitialValue,
@@ -72,7 +72,8 @@ export function SharedVarsView({
   onBackToCanvas,
 }: SharedVarsViewProps) {
   const lines = source.replace(/\n$/, '').split('\n');
-  const ext = language === 'lua' ? 'lua' : 'py';
+  const dialect = LANGUAGE_DIALECTS[language];
+  const ext = dialect.extension;
 
   const handleInitKindChange = (
     varName: string,
@@ -178,10 +179,10 @@ export function SharedVarsView({
           ) : (
             <div className="shared-vars-grid">
               {variables.map((entry) => {
-                const initLiteral =
-                  language === 'lua'
-                    ? formatInitialValueLua(entry.initialValue)
-                    : formatInitialValuePython(entry.initialValue);
+                const initLiteral = formatInitialValueForLanguage(
+                  entry.initialValue,
+                  language,
+                );
                 return (
                   <div key={entry.name} className="shared-var-card">
                     <div className="shared-var-card-top">
@@ -313,7 +314,7 @@ export function SharedVarsView({
                       定义于 {fn.scriptName}.{ext}
                     </span>
                     {fn.hasReturn && <span className="count-badge">返回值</span>}
-                    {fn.usesSleep && language === 'python' && (
+                    {fn.usesSleep && dialect.explicitAsyncCoroutine && (
                       <span className="count-badge warn">async</span>
                     )}
                     <button

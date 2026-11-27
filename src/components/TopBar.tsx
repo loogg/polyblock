@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
+import { LANGUAGE_DIALECTS } from '../core/backends/types';
 import { countProjectScripts } from '../core/projects/store';
 import type { RunnerStatus } from '../core/runners/types';
 import type {
@@ -208,7 +209,7 @@ export function TopBar({
                       </span>
                       <span className="dropdown-item-label">{p.name}</span>
                       <span className="count-badge">
-                        {p.language === 'lua' ? 'Lua' : 'Py'} · {p.handles.length}句柄
+                        {LANGUAGE_DIALECTS[p.language].compactLabel} · {p.handles.length}句柄
                       </span>
                     </button>
                   );

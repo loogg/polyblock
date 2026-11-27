@@ -1,4 +1,8 @@
 import {
+  LANGUAGE_DIALECTS,
+  normalizeLanguageId,
+} from '../backends/types';
+import {
   DEFAULT_CHANNEL_COUNT,
   MAX_CHANNEL_COUNT,
   MIN_CHANNEL_COUNT,
@@ -72,10 +76,17 @@ export function createBlankModuleWorkspace(): Record<string, unknown> {
   };
 }
 
+const SCRIPT_EXT_STRIP_RE = new RegExp(
+  `\\.(${Object.values(LANGUAGE_DIALECTS)
+    .map((d) => d.extension)
+    .join('|')}|polyblock\\.json|json)$`,
+  'i',
+);
+
 export function sanitizeScriptName(raw: string): string {
   const cleaned = raw
     .trim()
-    .replace(/\.(lua|py|polyblock\.json|json)$/i, '')
+    .replace(SCRIPT_EXT_STRIP_RE, '')
     .replace(/[\\/:*?"<>|\s]+/g, '_')
     .replace(/^_+|_+$/g, '');
   return cleaned || 'script';
@@ -461,31 +472,37 @@ export function instantiateProjectFromProfile(
 function normalizeScriptsArray(
   rawScripts: Array<Record<string, unknown>>,
   now: string,
+  regenerateIds: boolean,
 ): { scripts: ProjectScript[]; idMap: Map<string, string> } {
   const usedNames: string[] = [];
   const idMap = new Map<string, string>();
   const scripts: ProjectScript[] = rawScripts.map((rs, idx) => {
-    const uniqueName = makeUniqueScriptName(
+    const rawName =
       typeof rs.name === 'string'
         ? rs.name
         : idx === 0
           ? 'main'
-          : `script_${idx + 1}`,
-      usedNames,
-    );
-    usedNames.push(uniqueName);
-    const newId = createId('scr');
+          : `script_${idx + 1}`;
+    const name = regenerateIds ? makeUniqueScriptName(rawName, usedNames) : rawName;
+    if (regenerateIds) usedNames.push(name);
+
+    const scriptId =
+      !regenerateIds && typeof rs.id === 'string' ? rs.id : createId('scr');
     if (typeof rs.id === 'string') {
-      idMap.set(rs.id, newId);
+      idMap.set(rs.id, scriptId);
     }
     const scriptInitials = normalizeInitialValuesMap(rs.variableInitialValues);
-    return {
-      id: newId,
-      name: uniqueName,
-      workspace:
-        rs.workspace && typeof rs.workspace === 'object'
+    const workspace =
+      rs.workspace && typeof rs.workspace === 'object'
+        ? regenerateIds
           ? cloneJson(rs.workspace as Record<string, unknown>)
-          : createBlankWorkspace(),
+          : (rs.workspace as Record<string, unknown>)
+        : createBlankWorkspace();
+
+    return {
+      id: scriptId,
+      name,
+      workspace,
       breakpoints: Array.isArray(rs.breakpoints)
         ? rs.breakpoints.filter((b): b is string => typeof b === 'string')
         : [],
@@ -496,74 +513,65 @@ function normalizeScriptsArray(
   return { scripts, idMap };
 }
 
-function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
-  const now = new Date().toISOString();
-  const rawHandles = Array.isArray(raw.handles)
-    ? (raw.handles as Array<Record<string, unknown>>)
-    : [];
+function normalizeProjectHandles(
+  rawHandles: Array<Record<string, unknown>>,
+  now: string,
+  regenerateIds: boolean,
+): { handles: RuntimeHandle[]; handleIdMap: Map<string, string> } {
+  const usedHandleNames: string[] = [];
+  const handleIdMap = new Map<string, string>();
 
-  const handles: RuntimeHandle[] = rawHandles.map((rh, idx) => {
-    const scripts: ProjectScript[] = Array.isArray(rh.scripts)
-      ? (rh.scripts as Array<Record<string, unknown>>).map((rs, sIdx) => {
-          const scriptInitials = normalizeInitialValuesMap(
-            rs.variableInitialValues,
-          );
-          return {
-            id: typeof rs.id === 'string' ? rs.id : createId('scr'),
-            name:
-              typeof rs.name === 'string'
-                ? rs.name
-                : sIdx === 0
-                  ? 'main'
-                  : `script_${sIdx + 1}`,
-            workspace:
-              rs.workspace && typeof rs.workspace === 'object'
-                ? (rs.workspace as Record<string, unknown>)
-                : createBlankWorkspace(),
-            breakpoints: Array.isArray(rs.breakpoints)
-              ? rs.breakpoints.filter((b): b is string => typeof b === 'string')
-              : [],
-            ...(scriptInitials ? { variableInitialValues: scriptInitials } : {}),
-            updatedAt: typeof rs.updatedAt === 'string' ? rs.updatedAt : now,
-          };
-        })
-      : [
-          {
-            id: createId('scr'),
-            name: 'main',
-            workspace: createBlankWorkspace(),
-            breakpoints: [],
-            updatedAt: now,
-          },
-        ];
+  const handles: RuntimeHandle[] = rawHandles.map((rh, hIdx) => {
+    const rawName = typeof rh.name === 'string' ? rh.name : `handle_${hIdx + 1}`;
+    const hName = regenerateIds
+      ? makeUniqueHandleName(rawName, usedHandleNames)
+      : rawName;
+    if (regenerateIds) usedHandleNames.push(hName);
 
-    const existingCapConfigs =
+    const rawScripts =
+      Array.isArray(rh.scripts) && rh.scripts.length > 0
+        ? (rh.scripts as Array<Record<string, unknown>>)
+        : [{ name: 'main', workspace: createBlankWorkspace() }];
+    const { scripts, idMap } = normalizeScriptsArray(rawScripts, now, regenerateIds);
+
+    const mappedEntryId =
+      typeof rh.entryScriptId === 'string' ? idMap.get(rh.entryScriptId) : undefined;
+    const entryId =
+      mappedEntryId && scripts.some((s) => s.id === mappedEntryId)
+        ? mappedEntryId
+        : scripts[0].id;
+
+    const mappedActiveId =
+      !regenerateIds && typeof rh.activeScriptId === 'string'
+        ? idMap.get(rh.activeScriptId)
+        : undefined;
+    const activeId =
+      mappedActiveId && scripts.some((s) => s.id === mappedActiveId)
+        ? mappedActiveId
+        : entryId;
+
+    const handleId =
+      !regenerateIds && typeof rh.id === 'string' ? rh.id : createId('hdl');
+    if (typeof rh.id === 'string') {
+      handleIdMap.set(rh.id, handleId);
+    }
+
+    const capCfgs =
       rh.capabilityConfigs && typeof rh.capabilityConfigs === 'object'
         ? cloneJson(rh.capabilityConfigs as Record<string, unknown>)
         : {};
-
-    const entryId =
-      typeof rh.entryScriptId === 'string' &&
-      scripts.some((s) => s.id === rh.entryScriptId)
-        ? rh.entryScriptId
-        : scripts[0].id;
-    const activeId =
-      typeof rh.activeScriptId === 'string' &&
-      scripts.some((s) => s.id === rh.activeScriptId)
-        ? rh.activeScriptId
-        : entryId;
     const handleInitials = normalizeInitialValuesMap(rh.variableInitialValues);
 
     return {
-      id: typeof rh.id === 'string' ? rh.id : createId('hdl'),
-      name: typeof rh.name === 'string' ? rh.name : `handle_${idx + 1}`,
+      id: handleId,
+      name: hName,
       description: typeof rh.description === 'string' ? rh.description : undefined,
       color:
         typeof rh.color === 'string' && rh.color.startsWith('#')
           ? rh.color
-          : HANDLE_COLOR_PALETTE[idx % HANDLE_COLOR_PALETTE.length],
+          : HANDLE_COLOR_PALETTE[hIdx % HANDLE_COLOR_PALETTE.length],
       autoStart: rh.autoStart !== false,
-      capabilityConfigs: existingCapConfigs,
+      capabilityConfigs: capCfgs,
       sharedVariables: Array.isArray(rh.sharedVariables)
         ? rh.sharedVariables.filter(
             (v): v is string => typeof v === 'string' && v.trim().length > 0,
@@ -581,6 +589,16 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
       updatedAt: typeof rh.updatedAt === 'string' ? rh.updatedAt : now,
     };
   });
+
+  return { handles, handleIdMap };
+}
+
+function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
+  const now = new Date().toISOString();
+  const rawHandles = Array.isArray(raw.handles)
+    ? (raw.handles as Array<Record<string, unknown>>)
+    : [];
+  const { handles } = normalizeProjectHandles(rawHandles, now, false);
 
   const enabledCapabilities = Array.isArray(raw.enabledCapabilities)
     ? raw.enabledCapabilities.filter((c): c is string => typeof c === 'string')
@@ -603,7 +621,7 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
     id: typeof raw.id === 'string' ? raw.id : createId('proj'),
     name: typeof raw.name === 'string' ? raw.name : '未命名项目',
     description: typeof raw.description === 'string' ? raw.description : undefined,
-    language: raw.language === 'python' ? 'python' : 'lua',
+    language: normalizeLanguageId(raw.language),
     targetProfileId: profileId,
     enabledCapabilities,
     localExtensions: normalizeLocalExtensions(raw.localExtensions),
@@ -630,59 +648,7 @@ export function parseImportedProject(
   }
 
   const rawHandles = obj.handles as Array<Record<string, unknown>>;
-
-  const usedHandleNames: string[] = [];
-  const handleIdMap = new Map<string, string>();
-  const handles: RuntimeHandle[] = rawHandles.map((rh, hIdx) => {
-    const hName = makeUniqueHandleName(
-      typeof rh.name === 'string' ? rh.name : `handle_${hIdx + 1}`,
-      usedHandleNames,
-    );
-    usedHandleNames.push(hName);
-    const rawScripts =
-      Array.isArray(rh.scripts) && rh.scripts.length > 0
-        ? (rh.scripts as Array<Record<string, unknown>>)
-        : [{ name: 'main', workspace: createBlankWorkspace() }];
-    const { scripts, idMap } = normalizeScriptsArray(rawScripts, now);
-    const entryId =
-      (typeof rh.entryScriptId === 'string' && idMap.get(rh.entryScriptId)) ||
-      scripts[0].id;
-    const newHandleId = createId('hdl');
-    if (typeof rh.id === 'string') {
-      handleIdMap.set(rh.id, newHandleId);
-    }
-    const capCfgs =
-      rh.capabilityConfigs && typeof rh.capabilityConfigs === 'object'
-        ? cloneJson(rh.capabilityConfigs as Record<string, unknown>)
-        : {};
-    const handleInitials = normalizeInitialValuesMap(rh.variableInitialValues);
-    return {
-      id: newHandleId,
-      name: hName,
-      description: typeof rh.description === 'string' ? rh.description : undefined,
-      color:
-        typeof rh.color === 'string' && rh.color.startsWith('#')
-          ? rh.color
-          : HANDLE_COLOR_PALETTE[hIdx % HANDLE_COLOR_PALETTE.length],
-      autoStart: rh.autoStart !== false,
-      capabilityConfigs: capCfgs,
-      sharedVariables: Array.isArray(rh.sharedVariables)
-        ? rh.sharedVariables.filter(
-            (v): v is string => typeof v === 'string' && v.trim().length > 0,
-          )
-        : [],
-      sharedFunctions: Array.isArray(rh.sharedFunctions)
-        ? rh.sharedFunctions.filter(
-            (v): v is string => typeof v === 'string' && v.trim().length > 0,
-          )
-        : [],
-      ...(handleInitials ? { variableInitialValues: handleInitials } : {}),
-      entryScriptId: entryId,
-      activeScriptId: entryId,
-      scripts,
-      updatedAt: typeof rh.updatedAt === 'string' ? rh.updatedAt : now,
-    };
-  });
+  const { handles, handleIdMap } = normalizeProjectHandles(rawHandles, now, true);
 
   const activeHandleId =
     (typeof obj.activeHandleId === 'string' &&
@@ -711,7 +677,7 @@ export function parseImportedProject(
       existingProjectNames,
     ),
     description: typeof obj.description === 'string' ? obj.description : undefined,
-    language: obj.language === 'python' ? 'python' : 'lua',
+    language: normalizeLanguageId(obj.language),
     targetProfileId,
     enabledCapabilities,
     localExtensions: mergedLocalExtensions,
@@ -1062,45 +1028,6 @@ export function deleteScriptFromHandle(
     scripts: nextScripts,
     updatedAt: now,
   };
-}
-
-// Convenience wrappers operating on the active handle of a project
-export function addScriptToProject(
-  project: ProjectModel,
-  desiredName?: string,
-  workspace?: Record<string, unknown>,
-): ProjectModel {
-  return updateHandleById(project, getActiveHandle(project).id, (h) =>
-    addScriptToHandle(h, desiredName, workspace),
-  );
-}
-
-export function renameScriptInProject(
-  project: ProjectModel,
-  scriptId: string,
-  nextName: string,
-): ProjectModel {
-  return updateHandleById(project, getActiveHandle(project).id, (h) =>
-    renameScriptInHandle(h, scriptId, nextName),
-  );
-}
-
-export function duplicateScriptInProject(
-  project: ProjectModel,
-  scriptId: string,
-): ProjectModel {
-  return updateHandleById(project, getActiveHandle(project).id, (h) =>
-    duplicateScriptInHandle(h, scriptId),
-  );
-}
-
-export function deleteScriptFromProject(
-  project: ProjectModel,
-  scriptId: string,
-): ProjectModel {
-  return updateHandleById(project, getActiveHandle(project).id, (h) =>
-    deleteScriptFromHandle(h, scriptId),
-  );
 }
 
 export function duplicateProjectInStore(

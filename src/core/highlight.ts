@@ -1,4 +1,5 @@
 import type { ScriptLanguageId } from '../types/project';
+import { LANGUAGE_DIALECTS } from './backends/types';
 
 function escapeHtml(text: string): string {
   return text
@@ -7,18 +8,16 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;');
 }
 
-const LUA_KEYWORDS = new Set([
-  'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
-  'goto', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return',
-  'then', 'true', 'until', 'while',
-]);
+const KEYWORD_SETS = new Map<ScriptLanguageId, Set<string>>();
 
-const PYTHON_KEYWORDS = new Set([
-  'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break',
-  'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally',
-  'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal',
-  'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield',
-]);
+function getKeywordSet(lang: ScriptLanguageId): Set<string> {
+  let set = KEYWORD_SETS.get(lang);
+  if (!set) {
+    set = new Set(LANGUAGE_DIALECTS[lang]?.keywords ?? []);
+    KEYWORD_SETS.set(lang, set);
+  }
+  return set;
+}
 
 const BUILTIN_FUNCS = new Set([
   'print', 'tostring', 'tonumber', 'pairs', 'ipairs', 'len', 'str', 'int',
@@ -27,13 +26,14 @@ const BUILTIN_FUNCS = new Set([
 ]);
 
 /**
- * Lightweight, dependency-free syntax highlighter for Lua & Python lines.
+ * Lightweight, dependency-free syntax highlighter driven by LANGUAGE_DIALECTS.
  */
 export function highlightCodeLine(line: string, lang: ScriptLanguageId): string {
   if (!line) return '&nbsp;';
 
-  const commentPrefix = lang === 'lua' ? '--' : '#';
-  const keywords = lang === 'lua' ? LUA_KEYWORDS : PYTHON_KEYWORDS;
+  const dialect = LANGUAGE_DIALECTS[lang];
+  const commentPrefix = dialect?.commentToken ?? '//';
+  const keywords = getKeywordSet(lang);
 
   const tokens: string[] = [];
   let i = 0;

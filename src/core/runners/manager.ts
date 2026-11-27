@@ -48,15 +48,33 @@ export const PLANNED_RUNNER_SLOTS: PlannedRunnerDescriptor[] = [
 
 class RunnerManager {
   private readonly runners = new Map<string, ScriptRunner>();
+  private readonly factories = new Map<ScriptLanguageId, () => ScriptRunner>();
   private activeRunner: ScriptRunner | null = null;
 
   constructor() {
-    this.register(new WasmoonLuaRunner());
-    this.register(new MicroPythonWasmRunner());
+    this.registerFactory('lua', () => new WasmoonLuaRunner());
+    this.registerFactory('python', () => new MicroPythonWasmRunner());
   }
 
   register(runner: ScriptRunner): void {
     this.runners.set(runner.id, runner);
+  }
+
+  registerFactory(
+    language: ScriptLanguageId,
+    factory: () => ScriptRunner,
+  ): void {
+    this.factories.set(language, factory);
+    this.register(factory());
+  }
+
+  /** Creates a fresh isolated ScriptRunner instance (used for multi-handle concurrent runs). */
+  createForLanguage(language: ScriptLanguageId): ScriptRunner {
+    const factory = this.factories.get(language);
+    if (!factory) {
+      throw new Error(`No runner factory registered for language: ${language}`);
+    }
+    return factory();
   }
 
   listBuiltin(): ScriptRunner[] {

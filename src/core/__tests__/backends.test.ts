@@ -2,10 +2,108 @@ import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
-import { PROJECT_TEMPLATES } from '../blocks/templates';
+import {
+  STARTER_DEMO_LOGGER_WORKSPACE,
+  STARTER_STEP_DEBUG_WORKSPACE,
+  STARTER_THRESHOLD_ALARM_WORKSPACE,
+} from '../projects/demos/starterSuite';
 import { highlightCodeLine } from '../highlight';
 import { extractErrorLine, parseStdoutLine } from '../runners/logParser';
 import { WorkerDebugSession } from '../../workers/debugSession';
+
+const LIST_STATS_WORKSPACE: Record<string, unknown> = {
+  blocks: {
+    languageVersion: 0,
+    blocks: [
+      {
+        type: 'poly_on_start',
+        id: 'list_start',
+        x: 36,
+        y: 28,
+        inputs: {
+          BODY: {
+            block: {
+              type: 'variables_set',
+              id: 'set_items',
+              fields: { VAR: { id: 'var_items' } },
+              inputs: {
+                VALUE: {
+                  block: {
+                    type: 'lists_create_with',
+                    id: 'mk_list',
+                    extraState: { itemCount: 3 },
+                    inputs: {
+                      ADD0: { block: { type: 'math_number', id: 'li0', fields: { NUM: 10 } } },
+                      ADD1: { block: { type: 'math_number', id: 'li1', fields: { NUM: 20 } } },
+                      ADD2: { block: { type: 'math_number', id: 'li2', fields: { NUM: 30 } } },
+                    },
+                  },
+                },
+              },
+              next: {
+                block: {
+                  type: 'poly_list_append',
+                  id: 'append_40',
+                  inputs: {
+                    LIST: {
+                      block: {
+                        type: 'variables_get',
+                        id: 'get_items_append',
+                        fields: { VAR: { id: 'var_items' } },
+                      },
+                    },
+                    ITEM: { block: { type: 'math_number', id: 'li3', fields: { NUM: 40 } } },
+                  },
+                  next: {
+                    block: {
+                      type: 'poly_print_kv',
+                      id: 'print_len',
+                      fields: { LABEL: '列表元素数量' },
+                      inputs: {
+                        VALUE: {
+                          block: {
+                            type: 'lists_length',
+                            id: 'len_items',
+                            inputs: {
+                              VALUE: {
+                                block: {
+                                  type: 'variables_get',
+                                  id: 'get_items',
+                                  fields: { VAR: { id: 'var_items' } },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                      next: {
+                        block: {
+                          type: 'poly_log',
+                          id: 'log_list_ok',
+                          fields: { LEVEL: 'OK' },
+                          inputs: {
+                            MESSAGE: {
+                              block: {
+                                type: 'text',
+                                id: 'txt_list_ok',
+                                fields: { TEXT: '列表统计完成' },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ],
+  },
+  variables: [{ name: 'items', id: 'var_items' }],
+};
 
 function createLoadedWorkspace(json: Record<string, unknown>): Blockly.Workspace {
   const ws = new Blockly.Workspace();
@@ -19,7 +117,7 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
   });
 
   it('generates clean Lua 5.4 code with exact SourceMap for default logger template', () => {
-    const ws = createLoadedWorkspace(PROJECT_TEMPLATES[0].workspace);
+    const ws = createLoadedWorkspace(STARTER_DEMO_LOGGER_WORKSPACE);
     const lua = backendRegistry.get('lua');
     const res = lua.generate(ws);
 
@@ -46,7 +144,7 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
   });
 
   it('generates clean Python 3 code with exact SourceMap for default logger template', () => {
-    const ws = createLoadedWorkspace(PROJECT_TEMPLATES[0].workspace);
+    const ws = createLoadedWorkspace(STARTER_DEMO_LOGGER_WORKSPACE);
     const py = backendRegistry.get('python');
     const res = py.generate(ws);
 
@@ -72,8 +170,12 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
   });
 
   it('generates valid Lua & Python for list primitives (zero hidden helper functions) and random alarm templates', () => {
-    for (const tpl of PROJECT_TEMPLATES.slice(1)) {
-      const ws = createLoadedWorkspace(tpl.workspace);
+    for (const workspace of [
+      STARTER_STEP_DEBUG_WORKSPACE,
+      STARTER_THRESHOLD_ALARM_WORKSPACE,
+      LIST_STATS_WORKSPACE,
+    ]) {
+      const ws = createLoadedWorkspace(workspace);
       const luaRes = backendRegistry.get('lua').generate(ws);
       const pyRes = backendRegistry.get('python').generate(ws);
 
@@ -84,7 +186,7 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
       ws.dispose();
     }
 
-    const listWs = createLoadedWorkspace(PROJECT_TEMPLATES[3].workspace);
+    const listWs = createLoadedWorkspace(LIST_STATS_WORKSPACE);
     const listLua = backendRegistry.get('lua').generate(listWs).code;
     const listPy = backendRegistry.get('python').generate(listWs).code;
     expect(listLua).toContain('table.insert(items, 40)');
@@ -158,8 +260,7 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
   });
 
   it('generates unified async coroutine delay code and separate debugCode for step_debug_demo', () => {
-    const stepTpl = PROJECT_TEMPLATES.find((t) => t.id === 'step_debug_demo')!;
-    const ws = createLoadedWorkspace(stepTpl.workspace);
+    const ws = createLoadedWorkspace(STARTER_STEP_DEBUG_WORKSPACE);
 
     const luaRes = backendRegistry.get('lua').generate(ws);
     expect(luaRes.code).toContain('sleep_ms(350)');

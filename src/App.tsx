@@ -25,7 +25,7 @@ import { ScriptLibImportModal } from './components/ScriptLibImportModal';
 import { ScriptTabBar } from './components/ScriptTabBar';
 import { SharedVarsView } from './components/SharedVarsView';
 import { StatusBar } from './components/StatusBar';
-import { TimerAliasModal } from './components/TimerAliasModal';
+import { ChannelAliasModal } from './components/ChannelAliasModal';
 import { TopBar } from './components/TopBar';
 import { buildHandleScriptsMeta } from './core/backends/eventMode';
 import { buildHandleSharedModule } from './core/backends/sharedModule';
@@ -45,10 +45,7 @@ import {
   setActiveScriptVarInitials,
   type ChannelAliasPromptRequest,
 } from './core/blocks/workspaceContextBridge';
-import {
-  CAP_RT_TIMERS,
-  targetProfileRegistry,
-} from './core/capabilities/registry';
+import { targetProfileRegistry } from './core/capabilities/registry';
 import {
   buildProjectTargetBundle,
   buildSingleHandleTargetBundle,
@@ -338,8 +335,13 @@ export function App() {
     () => getAllHandleChannelPoolConfigs(activeHandle, activeChannelPools),
     [activeHandle, activeChannelPools],
   );
-  const activeTimerCount =
-    activeChannelPoolConfigs[CAP_RT_TIMERS]?.count ?? DEFAULT_CHANNEL_COUNT;
+  const activeChannelCounts = useMemo<Record<string, number>>(() => {
+    const out: Record<string, number> = {};
+    for (const [key, cfg] of Object.entries(activeChannelPoolConfigs)) {
+      out[key] = cfg.count;
+    }
+    return out;
+  }, [activeChannelPoolConfigs]);
   const activeModuleResolution = useMemo(
     () =>
       resolveProjectModules({
@@ -2122,7 +2124,7 @@ export function App() {
           breakpoints: allHandleBreakpoints,
           stepDelayMs: speedDelay,
           startInStepMode,
-          timerCount: activeTimerCount,
+          channelCounts: activeChannelCounts,
           mockModules: modResolution.sandboxMountOrder,
           mockInputs: simStateRef.current,
         },
@@ -2199,7 +2201,7 @@ export function App() {
       settings.executionSpeed,
       settings.timeoutMs,
       settings.timeSliceMs,
-      activeTimerCount,
+      activeChannelCounts,
       activeChannelPoolConfigs,
       language,
       activeHandle,
@@ -2985,10 +2987,10 @@ export function App() {
       )}
 
       {aliasModalReq !== null && (
-        <TimerAliasModal
+        <ChannelAliasModal
           handleName={activeHandle.name}
           handleColor={activeHandle.color}
-          timerId={aliasModalReq.channelId}
+          channelId={aliasModalReq.channelId}
           prefix={aliasModalReq.prefix}
           poolLabel={aliasModalReq.label}
           currentAlias={

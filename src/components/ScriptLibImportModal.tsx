@@ -8,6 +8,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { LANGUAGE_DIALECTS } from '../core/backends/types';
 import {
   buildExtensionPackFromScriptLibs,
   scanScriptLibraryFile,
@@ -331,7 +332,7 @@ export function ScriptLibImportModal({
                   {files.map((f) => (
                     <div key={f.fileName} className="lib-file-row">
                       <span className="count-badge">
-                        {f.language === 'lua' ? 'Lua' : 'Python'}
+                        {LANGUAGE_DIALECTS[f.language].shortLabel}
                       </span>
                       <span className="lib-file-name" title={f.fileName}>
                         {f.fileName}

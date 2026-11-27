@@ -5,17 +5,22 @@ import type { ScriptBackendAdapter } from './types';
 
 class BackendRegistry {
   private readonly adapters = new Map<ScriptLanguageId, ScriptBackendAdapter>();
+  private initialized = false;
 
-  constructor() {
+  private ensureInitialized(): void {
+    if (this.initialized) return;
+    this.initialized = true;
     this.register(new LuaBackendAdapter());
     this.register(new PythonBackendAdapter());
   }
 
   register(adapter: ScriptBackendAdapter): void {
+    this.ensureInitialized();
     this.adapters.set(adapter.id, adapter);
   }
 
   get(id: ScriptLanguageId): ScriptBackendAdapter {
+    this.ensureInitialized();
     const found = this.adapters.get(id);
     if (!found) {
       throw new Error(`Unsupported script backend: ${id}`);
@@ -24,6 +29,7 @@ class BackendRegistry {
   }
 
   list(): ScriptBackendAdapter[] {
+    this.ensureInitialized();
     return Array.from(this.adapters.values());
   }
 }

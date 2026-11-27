@@ -21,8 +21,8 @@ export interface RunRequest {
   breakpoints?: string[];
   stepDelayMs?: number;
   startInStepMode?: boolean;
-  /** Project-configured timer channel count (1..32, IDs 0..count-1). */
-  timerCount?: number;
+  /** Per-channel-pool handle capacities keyed by configKey (e.g. `{ "rt.timers": 8 }`). */
+  channelCounts?: Record<string, number>;
   /** Extension sandbox/bundle modules mounted into Lua package.preload / Python sys.modules. */
   mockModules?: ExtensionModuleSource[];
   /** Live interactive simulator inputs (e.g., virtual board temperature / buttons). */

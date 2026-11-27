@@ -11,18 +11,13 @@ import type {
 import { backendRegistry } from '../backends/registry';
 import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { buildHandleSharedModule } from '../backends/sharedModule';
-import {
-  DEFAULT_CHANNEL_COUNT,
-  type CompileContext,
-} from '../blocks/workspaceContextBridge';
+import { type CompileContext } from '../blocks/workspaceContextBridge';
 import { collectHandleSharedVariableNames } from '../projects/handleVariables';
-import { CAP_RT_TIMERS } from '../capabilities/registry';
 import { resolveProjectModules } from '../extensions/moduleResolver';
 import { extensionRegistry } from '../extensions/registry';
 import type { ExtensionModuleSource } from '../extensions/types';
 import { getAllHandleChannelPoolConfigs } from '../projects/store';
-import { WasmoonLuaRunner } from './luaRunner';
-import { MicroPythonWasmRunner } from './pythonRunner';
+import { runnerManager } from './manager';
 import type { RunResult, RunnerStatus, ScriptRunner } from './types';
 
 export function compileScriptHeadless(
@@ -191,10 +186,10 @@ export class MultiHandleRunnerOrchestrator {
         handle.scripts.find((s) => s.id === handle.entryScriptId) ??
         handle.scripts[0];
       const poolCfgs = getAllHandleChannelPoolConfigs(handle, channelPools);
-      const timerCfg = poolCfgs[CAP_RT_TIMERS] ?? {
-        count: DEFAULT_CHANNEL_COUNT,
-        aliases: {},
-      };
+      const channelCounts: Record<string, number> = {};
+      for (const [k, cfg] of Object.entries(poolCfgs)) {
+        channelCounts[k] = cfg.count;
+      }
       const sharedVars = collectHandleSharedVariableNames(handle);
       const scriptMetas = buildHandleScriptsMeta(handle);
       const compiled = compileScriptHeadless(
@@ -242,10 +237,7 @@ export class MultiHandleRunnerOrchestrator {
         };
       }
 
-      const runner: ScriptRunner =
-        project.language === 'lua'
-          ? new WasmoonLuaRunner()
-          : new MicroPythonWasmRunner();
+      const runner: ScriptRunner = runnerManager.createForLanguage(project.language);
       this.activeRunners.set(handle.id, runner);
 
       const result = await runner.run(
@@ -258,7 +250,7 @@ export class MultiHandleRunnerOrchestrator {
           breakpoints: [],
           stepDelayMs,
           startInStepMode: false,
-          timerCount: timerCfg.count,
+          channelCounts,
           mockModules: resolution.sandboxMountOrder,
           mockInputs,
         },

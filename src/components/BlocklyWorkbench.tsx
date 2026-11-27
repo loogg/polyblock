@@ -229,7 +229,7 @@ function registerBreakpointContextMenu(): void {
   };
 
   const aliasMenuItem: Blockly.ContextMenuRegistry.RegistryItem = {
-    id: 'polyblock_edit_timer_alias',
+    id: 'polyblock_edit_channel_alias',
     scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
     weight: -6,
     displayText: (scope) => {

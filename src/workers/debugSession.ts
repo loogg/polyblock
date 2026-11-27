@@ -26,7 +26,7 @@ export type WorkerControlMessage =
       breakpoints: string[];
       stepDelayMs: number;
       startInStepMode?: boolean;
-      timerCount?: number;
+      channelCounts?: Record<string, number>;
       timeSliceMs?: number;
       callbackTimeoutMs?: number;
       mockModules?: WorkerMockModule[];

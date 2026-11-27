@@ -190,7 +190,7 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     breakpoints,
     stepDelayMs,
     startInStepMode,
-    timerCount,
+    channelCounts,
     timeSliceMs,
     callbackTimeoutMs,
     mockModules,
@@ -201,7 +201,7 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
   const post = (payload: Record<string, unknown>) => self.postMessage(payload);
   const scheduler = new WorkerRuntimeScheduler({
     runId,
-    timerCount: timerCount ?? 8,
+    timerCount: channelCounts?.['rt.timers'] ?? 8,
     timeSliceMs: timeSliceMs ?? 20,
     callbackTimeoutMs: callbackTimeoutMs ?? 5000,
     post,

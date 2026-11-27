@@ -2,6 +2,7 @@ import type {
   RuntimeHandle,
   VariableInitialValue,
 } from '../../types/project';
+import { LANGUAGE_DIALECTS } from '../backends/types';
 
 export type VariableScopeKind = 'shared' | 'file';
 
@@ -44,41 +45,6 @@ export function normalizeVariableInitialValue(
   }
 }
 
-export function formatInitialValueLua(init?: VariableInitialValue | null): string {
-  const v = normalizeVariableInitialValue(init);
-  switch (v.kind) {
-    case 'number':
-      return String(v.value);
-    case 'boolean':
-      return v.value ? 'true' : 'false';
-    case 'string':
-      return JSON.stringify(v.value);
-    case 'list':
-    case 'dict':
-      return '{}';
-    default:
-      return 'nil';
-  }
-}
-
-export function formatInitialValuePython(init?: VariableInitialValue | null): string {
-  const v = normalizeVariableInitialValue(init);
-  switch (v.kind) {
-    case 'number':
-      return String(v.value);
-    case 'boolean':
-      return v.value ? 'True' : 'False';
-    case 'string':
-      return JSON.stringify(v.value);
-    case 'list':
-      return '[]';
-    case 'dict':
-      return '{}';
-    default:
-      return 'None';
-  }
-}
-
 export function describeInitialValue(init?: VariableInitialValue | null): string {
   const v = normalizeVariableInitialValue(init);
   switch (v.kind) {
@@ -104,16 +70,11 @@ interface SerializedVarEntry {
 }
 
 const RESERVED_VAR_NAMES = new Set([
-  // Lua keywords
-  'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
-  'goto', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then',
-  'true', 'until', 'while',
-  // Python keywords
-  'False', 'None', 'True', 'as', 'assert', 'async', 'await', 'class',
-  'continue', 'def', 'del', 'elif', 'except', 'finally', 'from', 'global',
-  'import', 'is', 'lambda', 'nonlocal', 'pass', 'raise', 'try', 'with', 'yield',
+  ...Object.values(LANGUAGE_DIALECTS).flatMap((d) => d.keywords),
   // PolyBlock runtime modules
-  'shared', 'rt', 'sys',
+  'shared',
+  'rt',
+  'sys',
 ]);
 
 export function validateSharedVariableName(

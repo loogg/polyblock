@@ -20,24 +20,25 @@ import {
 } from '../capabilities/registry';
 import {
   addHandleToProject,
-  addScriptToProject,
+  addScriptToHandle,
   applyTargetProfileToProject,
   createDefaultWorkspaceStore,
   deleteHandleFromProject,
   deleteProjectFromStore,
-  deleteScriptFromProject,
+  deleteScriptFromHandle,
   DEMO_PROJECT_TEMPLATES,
   duplicateHandleInProject,
   duplicateProjectInStore,
-  duplicateScriptInProject,
+  duplicateScriptInHandle,
   getActiveHandle,
   getHandleChannelPoolConfig,
   instantiateProjectFromTemplate,
   parseImportedProject,
   renameHandleInProject,
-  renameScriptInProject,
+  renameScriptInHandle,
   sanitizeScriptName,
   setHandleChannelPoolConfig,
+  updateHandleById,
 } from '../projects/store';
 import type { WorkspaceStoreState } from '../../types/project';
 
@@ -138,8 +139,10 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     // Cannot delete last remaining handle or last remaining script
     expect(deleteHandleFromProject(proj, proj.handles[0].id).handles).toHaveLength(1);
     expect(
-      getActiveHandle(deleteScriptFromProject(proj, getActiveHandle(proj).scripts[0].id))
-        .scripts,
+      deleteScriptFromHandle(
+        getActiveHandle(proj),
+        getActiveHandle(proj).scripts[0].id,
+      ).scripts,
     ).toHaveLength(1);
 
     // Add, rename, duplicate, delete handle
@@ -155,7 +158,9 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
 
     // Add + rename + duplicate + delete script in active handle
     // Auxiliary script added to an existing handle defaults to blank module canvas (no duplicate `on_start`)
-    proj = addScriptToProject(proj, 'helper');
+    proj = updateHandleById(proj, getActiveHandle(proj).id, (h) =>
+      addScriptToHandle(h, 'helper'),
+    );
     expect(getActiveHandle(proj).scripts).toHaveLength(2);
     expect(getActiveHandle(proj).scripts[1].name).toBe('helper');
     const helperBlocks = (
@@ -165,17 +170,23 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     ).blocks?.blocks;
     expect(helperBlocks).toEqual([]);
 
-    proj = renameScriptInProject(proj, getActiveHandle(proj).scripts[1].id, 'main.lua');
+    proj = updateHandleById(proj, getActiveHandle(proj).id, (h) =>
+      renameScriptInHandle(h, h.scripts[1].id, 'main.lua'),
+    );
     expect(getActiveHandle(proj).scripts[1].name).toBe('main_2');
 
     getActiveHandle(proj).scripts[1].breakpoints = ['blk_1'];
-    proj = duplicateScriptInProject(proj, getActiveHandle(proj).scripts[1].id);
+    proj = updateHandleById(proj, getActiveHandle(proj).id, (h) =>
+      duplicateScriptInHandle(h, h.scripts[1].id),
+    );
     expect(getActiveHandle(proj).scripts).toHaveLength(3);
     expect(getActiveHandle(proj).scripts[2].name).toBe('main_2_copy');
     expect(getActiveHandle(proj).scripts[2].breakpoints).toEqual(['blk_1']);
 
     const oldEntry = getActiveHandle(proj).entryScriptId;
-    proj = deleteScriptFromProject(proj, oldEntry);
+    proj = updateHandleById(proj, getActiveHandle(proj).id, (h) =>
+      deleteScriptFromHandle(h, oldEntry),
+    );
     expect(getActiveHandle(proj).scripts).toHaveLength(2);
     expect(
       getActiveHandle(proj).scripts.some(
@@ -253,7 +264,9 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     // 2. Single-file globals (`total`, `i` in `starter_suite`) stay strictly private to `main`:
     //    adding `script_2` does NOT leak `main`'s single-file vars into `script_2`!
     let proj = instantiateProjectFromTemplate('starter_suite');
-    proj = addScriptToProject(proj, 'script_2');
+    proj = updateHandleById(proj, getActiveHandle(proj).id, (h) =>
+      addScriptToHandle(h, 'script_2'),
+    );
     let hdl = getActiveHandle(proj);
     expect(hdl.scripts.map((s) => s.name)).toEqual(['main', 'script_2']);
     expect(collectHandleSharedVariableNames(hdl)).toEqual([]);

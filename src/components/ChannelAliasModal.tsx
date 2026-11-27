@@ -1,10 +1,10 @@
-import { Timer, X } from 'lucide-react';
+import { Tag, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-interface TimerAliasModalProps {
+interface ChannelAliasModalProps {
   handleName: string;
   handleColor: string;
-  timerId: number;
+  channelId: number;
   prefix?: string;
   poolLabel?: string;
   currentAlias: string;
@@ -12,21 +12,21 @@ interface TimerAliasModalProps {
   onClose: () => void;
 }
 
-export function TimerAliasModal({
+export function ChannelAliasModal({
   handleName,
   handleColor,
-  timerId,
-  prefix = 'T',
-  poolLabel = '定时器通道',
+  channelId,
+  prefix = 'CH',
+  poolLabel = '通道',
   currentAlias,
   onSave,
   onClose,
-}: TimerAliasModalProps) {
+}: ChannelAliasModalProps) {
   const [draft, setDraft] = useState(currentAlias);
 
   useEffect(() => {
     setDraft(currentAlias);
-  }, [timerId, currentAlias]);
+  }, [channelId, currentAlias]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -46,7 +46,7 @@ export function TimerAliasModal({
       className="modal-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label={`设置${poolLabel} ${prefix}${timerId} 别名`}
+      aria-label={`设置${poolLabel} ${prefix}${channelId} 别名`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -54,10 +54,10 @@ export function TimerAliasModal({
       <div className="modal-shell alias-modal">
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-            <Timer size={15} style={{ color: 'var(--accent)' }} />
+            <Tag size={15} style={{ color: 'var(--accent)' }} />
             <span className="modal-title">
               设置{poolLabel} {prefix}
-              {timerId} 别名
+              {channelId} 别名
             </span>
           </div>
           <button
@@ -78,7 +78,7 @@ export function TimerAliasModal({
               <span className="lang-dot" style={{ background: handleColor }} />
               <strong>{handleName}</strong>
             </span>
-            <span className="count-badge">通道 ID {timerId}</span>
+            <span className="count-badge">通道 ID {channelId}</span>
           </div>
 
           <input
@@ -97,7 +97,7 @@ export function TimerAliasModal({
           />
 
           <p className="settings-hint" style={{ margin: 0 }}>
-            仅作用于当前句柄的「{poolLabel}」画布下拉显示与代码尾注，导出脚本始终使用纯整数 ID（<code>{timerId}</code>），与其他通道池及句柄完全隔离。
+            仅作用于当前句柄的「{poolLabel}」画布下拉显示与代码尾注，导出脚本始终使用纯整数 ID（<code>{channelId}</code>），与其他通道池及句柄完全隔离。
           </p>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>

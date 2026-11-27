@@ -8,7 +8,7 @@ import type { ModuleConflictItem } from '../extensions/moduleResolver';
 export const DEFAULT_CHANNEL_COUNT = 8;
 export const MIN_CHANNEL_COUNT = 1;
 export const MAX_CHANNEL_COUNT = 32;
-export const EDIT_TIMER_ALIAS_SENTINEL = '__EDIT_TIMER_ALIAS__';
+export const EDIT_CHANNEL_ALIAS_SENTINEL = '__EDIT_CHANNEL_ALIAS__';
 
 export interface ChannelAliasPromptRequest {
   configKey: string;
@@ -404,7 +404,7 @@ export function buildChannelDropdownOptions(
   }
 
   if (includeEditShortcut) {
-    options.push(['✎ 修改本通道别名...', EDIT_TIMER_ALIAS_SENTINEL]);
+    options.push(['✎ 修改本通道别名...', EDIT_CHANNEL_ALIAS_SENTINEL]);
   }
   return options;
 }

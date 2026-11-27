@@ -9,6 +9,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
+import { LANGUAGE_DIALECTS } from '../../core/backends/types';
 import { targetProfileRegistry } from '../../core/capabilities/registry';
 import { extensionRegistry } from '../../core/extensions/registry';
 import {
@@ -180,9 +181,7 @@ export function ProjectsPage({
                   <span className={`status-pill ${isActive ? 'ok' : 'idle'}`}>
                     {isActive
                       ? '当前打开'
-                      : proj.language === 'lua'
-                        ? 'Lua 5.4'
-                        : 'Python 3'}
+                      : LANGUAGE_DIALECTS[proj.language].displayName}
                   </span>
                 </div>
 
@@ -191,7 +190,7 @@ export function ProjectsPage({
                 )}
 
                 <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                  {profile.name} · {proj.language === 'lua' ? 'Lua 5.4' : 'Python 3'} ·{' '}
+                  {profile.name} · {LANGUAGE_DIALECTS[proj.language].displayName} ·{' '}
                   {proj.handles.length} 句柄 · {totalScripts} 脚本 ·{' '}
                   {proj.enabledCapabilities.length} 能力
                   {(proj.localExtensions?.length ?? 0) > 0
@@ -314,7 +313,7 @@ export function ProjectsPage({
                   </div>
                   <span className="status-pill accent" style={{ flexShrink: 0 }}>
                     {tpl.handles.length} 句柄 · {scriptTotal} 脚本 ·{' '}
-                    {tpl.language === 'lua' ? 'Lua' : 'Python'}
+                    {LANGUAGE_DIALECTS[tpl.language].shortLabel}
                   </span>
                 </div>
                 <p className="card-desc">{tpl.description}</p>

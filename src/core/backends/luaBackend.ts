@@ -18,7 +18,11 @@ import {
   getActiveScriptVarInitials,
   withCompileContext,
 } from '../blocks/workspaceContextBridge';
-import { formatInitialValueLua } from '../projects/handleVariables';
+import {
+  hoistImports,
+  indentLines,
+  renderExtensionTemplate,
+} from '../extensions/templateRenderer';
 import {
   analyzeWorkspaceScopes,
   sanitizeLocalIdent,
@@ -30,11 +34,17 @@ import {
   SENTINEL_START_PREFIX,
 } from './sourceMap';
 import {
+  formatInitialValueForLanguage,
   LANGUAGE_DIALECTS,
   type CompileContext,
   type EntryDispatchBranchSpec,
+  type ExtensionBlockRegisterContext,
+  type ExtensionHatRegisterContext,
   type GeneratedCodeResult,
   type ScriptBackendAdapter,
+  type SharedModuleDocumentInput,
+  type SharedProcCompileInput,
+  type SharedProcCompileOutput,
 } from './types';
 
 let luaGeneratorsRegistered = false;
@@ -773,7 +783,7 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
       sharedFnSet,
     ).map(
       ({ name, ident }) =>
-        `local ${ident} = ${formatInitialValueLua(scriptInitials[name])}`,
+        `local ${ident} = ${formatInitialValueForLanguage(scriptInitials[name], 'lua')}`,
     );
 
     const cleanRouter = buildEntryDispatchRouters(workspace, this, false);
@@ -895,5 +905,291 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
       isEventDriven: eventDriven,
     };
     });
+  }
+
+  registerExtensionBlock(ctx: ExtensionBlockRegisterContext): void {
+    const { pack, section, block: b } = ctx;
+    const luaSpec = b.code?.lua;
+    if (luaSpec) {
+      const luaImports =
+        luaSpec.imports !== undefined ? luaSpec.imports : pack.imports?.lua;
+      luaGenerator.forBlock[b.type] = (block, generator) => {
+        hoistImports(generator, luaImports);
+        const rendered = renderExtensionTemplate(
+          luaSpec.template,
+          b,
+          block,
+          'lua',
+          {
+            resolveValueInput: (blk, argName) =>
+              generator.valueToCode(blk, argName, Order.NONE) || '""',
+            resolveVarField: (blk, argName) =>
+              formatLuaVarRef(String(blk.getFieldValue(argName) || ''), generator, blk),
+          },
+          pack,
+          section,
+        );
+        if (b.kind === 'value') {
+          return [rendered, Order.ATOMIC];
+        }
+        return `${rendered}\n`;
+      };
+    } else {
+      luaGenerator.forBlock[b.type] = () => {
+        if (b.kind === 'value') {
+          return ['nil --[[ 未提供 code.lua.template ]]', Order.ATOMIC];
+        }
+        return `-- [PolyBlock] 积木 "${b.type}" 未提供 code.lua.template\n`;
+      };
+    }
+  }
+
+  registerExtensionHat(ctx: ExtensionHatRegisterContext): void {
+    const { pack, section, block: b, hat: hatSpec, shouldExtractBranches } = ctx;
+    const paramsStr = (hatSpec.params ?? []).join(', ');
+    const branchParamsStr = hatSpec.extractBranchFnPrefix ? '' : paramsStr;
+    const renderHatTpl = (tpl: string, hatBlk: Blockly.Block) =>
+      renderExtensionTemplate(
+        tpl,
+        b,
+        hatBlk,
+        'lua',
+        {
+          resolveValueInput: (blk, argName) =>
+            luaGenerator.valueToCode(blk, argName, Order.NONE) || '""',
+          resolveVarField: (blk, argName) =>
+            formatLuaVarRef(String(blk.getFieldValue(argName) || ''), luaGenerator, blk),
+        },
+        pack,
+        section,
+      );
+
+    luaGenerator.forBlock[b.type] = (block, generator) => {
+      hoistImports(generator, hatSpec.imports?.lua);
+
+      if (hatSpec.mode === 'singleton') {
+        const hoistedLocals = buildLuaHoistedLocalsLine([block], 'BODY', '  ');
+        const body = generator.statementToCode(block, 'BODY');
+        if (codegenContext.debugPass) {
+          return `function ${hatSpec.eventName}(${paramsStr})\n${hoistedLocals}${body}end\n`;
+        }
+        return (
+          `${SENTINEL_START_PREFIX}'${block.id}'__\n` +
+          `function ${hatSpec.eventName}(${paramsStr})\n` +
+          `${hoistedLocals}${body}` +
+          `end\n` +
+          `${SENTINEL_END_PREFIX}'${block.id}'__\n`
+        );
+      }
+
+      const dispatchKey = `${hatSpec.eventName}:${b.type}`;
+      if (codegenContext.emittedDispatchEvents.has(dispatchKey)) return '';
+      codegenContext.emittedDispatchEvents.add(dispatchKey);
+
+      const matchingHats = block.workspace
+        .getTopBlocks(true)
+        .filter((top) => top.type === b.type && !top.isShadow() && top.isEnabled());
+      if (matchingHats.length === 0) return '';
+
+      if (shouldExtractBranches()) {
+        const fnPrefix = hatSpec.extractBranchFnPrefix ?? `${hatSpec.eventName}_`;
+        const usedFnNames = new Set<string>();
+        const fnDefs: string[] = [];
+
+        matchingHats.forEach((hatBlk, idx) => {
+          const comment = hatSpec.branchComment?.lua
+            ? renderHatTpl(hatSpec.branchComment.lua, hatBlk)
+            : '';
+          const rawKey = hatSpec.duplicateKeyTemplate
+            ? renderHatTpl(hatSpec.duplicateKeyTemplate, hatBlk)
+            : String(idx);
+          const safeSuffix = rawKey.replace(/[^A-Za-z0-9_]+/g, '_') || String(idx);
+          let fnName = `${fnPrefix}${safeSuffix}`;
+          let dupIdx = 2;
+          while (usedFnNames.has(fnName)) {
+            fnName = `${fnPrefix}${safeSuffix}_${dupIdx}`;
+            dupIdx += 1;
+          }
+          usedFnNames.add(fnName);
+
+          const hoistedLocals = buildLuaHoistedLocalsLine([hatBlk], 'BODY', '  ');
+          const rawBody = generator.statementToCode(hatBlk, 'BODY');
+          const headerComment = comment.trim() ? `${comment.trim()}\n` : '';
+          if (codegenContext.debugPass) {
+            fnDefs.push(
+              `function ${fnName}(${branchParamsStr})\n${hoistedLocals}${rawBody}end\n`,
+            );
+          } else {
+            fnDefs.push(
+              `${SENTINEL_START_PREFIX}'${hatBlk.id}'__\n` +
+                `${headerComment}` +
+                `function ${fnName}(${branchParamsStr})\n` +
+                `${hoistedLocals}${rawBody}` +
+                `end\n` +
+                `${SENTINEL_END_PREFIX}'${hatBlk.id}'__\n`,
+            );
+          }
+        });
+
+        return `${fnDefs.join('\n')}`;
+      }
+
+      const hoistedInlineLocals = buildLuaHoistedLocalsLine(matchingHats, 'BODY', '  ');
+      const branches: string[] = [];
+      matchingHats.forEach((hatBlk, idx) => {
+        const kw = idx === 0 ? 'if' : 'elseif';
+        const cond = hatSpec.condition?.lua
+          ? renderHatTpl(hatSpec.condition.lua, hatBlk)
+          : this.dialect.boolTrue;
+        const comment = hatSpec.branchComment?.lua
+          ? renderHatTpl(hatSpec.branchComment.lua, hatBlk)
+          : '';
+        const rawBody = generator.statementToCode(hatBlk, 'BODY');
+        const indentedBody = indentLines(rawBody, '  ');
+        if (codegenContext.debugPass) {
+          branches.push(`  ${kw} ${cond} then${comment}\n${indentedBody}`);
+        } else {
+          branches.push(
+            `${SENTINEL_START_PREFIX}'${hatBlk.id}'__\n` +
+              `  ${kw} ${cond} then${comment}\n` +
+              `${indentedBody}` +
+              `${SENTINEL_END_PREFIX}'${hatBlk.id}'__\n`,
+          );
+        }
+      });
+
+      return `function ${hatSpec.eventName}(${paramsStr})\n${hoistedInlineLocals}${branches.join('')}  end\nend\n`;
+    };
+  }
+
+  compileSharedProcedure(input: SharedProcCompileInput): SharedProcCompileOutput {
+    registerLuaBlockGenerators();
+    const ws = new Blockly.Workspace();
+    const isolatedJson: Record<string, unknown> = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [input.blockJson],
+      },
+      variables: input.scriptVariables,
+    };
+
+    try {
+      Blockly.serialization.workspaces.load(isolatedJson, ws);
+      const topBlock = ws.getTopBlocks(false)[0];
+      if (!topBlock) {
+        return {
+          ident: sanitizeLocalIdent(input.name),
+          imports: [],
+          cleanFnCode: '',
+          debugFnCode: '',
+        };
+      }
+
+      const prevPrefix = luaGenerator.STATEMENT_PREFIX;
+      const prevSuffix = luaGenerator.STATEMENT_SUFFIX;
+      const sharedVarIdToAttr = new Map<string, string>();
+      const sharedVarIdents = new Set<string>();
+      const snapEntries: Array<{ label: string; ident: string }> = [];
+
+      let cleanFnCode = '';
+      let debugFnCode = '';
+      let imports: string[] = [];
+      let procIdent = sanitizeLocalIdent(input.name);
+
+      try {
+        luaGenerator.init(ws);
+        for (const v of ws.getVariableMap().getAllVariables()) {
+          const ident = luaGenerator.getVariableName(v.getId());
+          const attr = input.sharedAttrByName.get(v.getName());
+          if (attr) {
+            sharedVarIdToAttr.set(v.getId(), attr);
+            sharedVarIdents.add(ident);
+            snapEntries.push({
+              label: v.getName(),
+              ident: `${input.moduleName}.${attr}`,
+            });
+          }
+        }
+        procIdent = luaGenerator.getProcedureName(input.name);
+        luaGenerator.finish('');
+
+        resetCodegenPassContext({
+          debugPass: false,
+          compilingSharedModule: true,
+          luaSharedModuleName: input.moduleName,
+          luaSharedVarIdToAttr: sharedVarIdToAttr,
+          luaSharedVarIdents: sharedVarIdents,
+        });
+        luaGenerator.STATEMENT_PREFIX = null;
+        luaGenerator.STATEMENT_SUFFIX = null;
+        luaGenerator.init(ws);
+        luaGenerator.blockToCode(topBlock);
+        const defs = (
+          luaGenerator as unknown as { definitions_: Record<string, string> }
+        ).definitions_;
+        imports = Object.entries(defs)
+          .filter(([k]) => !k.startsWith('%') && k !== 'variables')
+          .map(([, v]) => v.trim())
+          .filter(Boolean);
+        cleanFnCode = (defs[`%${procIdent}`] ?? '').trim();
+        luaGenerator.finish('');
+
+        const snapExpr =
+          snapEntries.length === 0
+            ? '{}'
+            : `{ ${snapEntries
+                .map((e) => `[${JSON.stringify(e.label)}] = ${e.ident}`)
+                .join(', ')} }`;
+        resetCodegenPassContext({
+          debugPass: true,
+          compilingSharedModule: true,
+          luaSharedModuleName: input.moduleName,
+          luaSharedVarIdToAttr: sharedVarIdToAttr,
+          luaSharedVarIdents: sharedVarIdents,
+        });
+        luaGenerator.STATEMENT_PREFIX = `__poly_tick(%1, __poly_snap(${snapExpr}))\n`;
+        luaGenerator.STATEMENT_SUFFIX = null;
+        luaGenerator.init(ws);
+        luaGenerator.blockToCode(topBlock);
+        const debugDefs = (
+          luaGenerator as unknown as { definitions_: Record<string, string> }
+        ).definitions_;
+        debugFnCode = (debugDefs[`%${procIdent}`] ?? cleanFnCode).trim();
+        luaGenerator.finish('');
+      } finally {
+        resetCodegenPassContext({ debugPass: false, compilingSharedModule: false });
+        luaGenerator.STATEMENT_PREFIX = prevPrefix;
+        luaGenerator.STATEMENT_SUFFIX = prevSuffix;
+      }
+
+      return { ident: procIdent, imports, cleanFnCode, debugFnCode };
+    } finally {
+      ws.dispose();
+    }
+  }
+
+  formatSharedModuleDocument(input: SharedModuleDocumentInput): {
+    source: string;
+    debugSource: string;
+  } {
+    const varLines = input.variables.map(
+      (v) =>
+        `${input.moduleName}.${v.attr} = ${formatInitialValueForLanguage(v.initialValue, 'lua')}`,
+    );
+    const buildLuaDoc = (fnBodies: string[]) => {
+      const parts: string[] = [
+        `-- 由 PolyBlock 自动生成的同句柄跨文件共享模块（只读）`,
+      ];
+      if (input.importLines.length > 0) parts.push(input.importLines.join('\n'));
+      parts.push(`local ${input.moduleName} = {}`);
+      if (varLines.length > 0) parts.push(varLines.join('\n'));
+      if (fnBodies.length > 0) parts.push(fnBodies.join('\n\n'));
+      parts.push(`return ${input.moduleName}`);
+      return `${parts.join('\n\n')}\n`;
+    };
+    return {
+      source: buildLuaDoc(input.cleanFnBlocks),
+      debugSource: buildLuaDoc(input.debugFnBlocks),
+    };
   }
 }

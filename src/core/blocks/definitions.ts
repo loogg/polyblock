@@ -453,8 +453,6 @@ export function registerPolyBlocks(): void {
     text_length: 'text_blocks',
     lists_create_with: 'list_blocks',
     lists_length: 'list_blocks',
-    lists_getIndex: 'list_blocks',
-    lists_setIndex: 'list_blocks',
     procedures_defnoreturn: 'procedure_blocks',
     procedures_defreturn: 'procedure_blocks',
     procedures_callnoreturn: 'procedure_blocks',

@@ -1,4 +1,4 @@
-import { Check, Code2, Copy, Download, FileCode2, FileJson, X } from 'lucide-react';
+import { Check, Copy, Download, FileCode2, FileJson, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { LANGUAGE_DIALECTS } from '../core/backends/types';
 import { getAllPackBlocks } from '../core/extensions/registry';
@@ -33,8 +33,20 @@ function downloadTextFile(fileName: string, content: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
-/** Lightweight syntax highlighter reusing PolyBlock's existing token palette. */
-function renderHighlightedLine(line: string, kind: 'json' | 'lua' | 'python') {
+const KEYWORD_REGEX_CACHE = new Map<ScriptLanguageId, RegExp>();
+
+function getKeywordRegex(lang: ScriptLanguageId): RegExp {
+  let re = KEYWORD_REGEX_CACHE.get(lang);
+  if (!re) {
+    const kws = LANGUAGE_DIALECTS[lang]?.keywords ?? [];
+    re = new RegExp(`\\b(${kws.join('|')})\\b`, 'g');
+    KEYWORD_REGEX_CACHE.set(lang, re);
+  }
+  return new RegExp(re.source, 'g');
+}
+
+/** Lightweight syntax highlighter reusing PolyBlock's existing token palette via LANGUAGE_DIALECTS. */
+function renderHighlightedLine(line: string, kind: 'json' | ScriptLanguageId) {
   if (kind === 'json') {
     const parts: Array<{ text: string; cls?: string }> = [];
     const re =
@@ -67,18 +79,13 @@ function renderHighlightedLine(line: string, kind: 'json' | 'lua' | 'python') {
     );
   }
 
+  const dialect = LANGUAGE_DIALECTS[kind];
   const trimmed = line.trimStart();
-  if (
-    (kind === 'lua' && trimmed.startsWith('--')) ||
-    (kind === 'python' && trimmed.startsWith('#'))
-  ) {
+  if (dialect && trimmed.startsWith(dialect.commentToken)) {
     return <span className="syn-cmt">{line}</span>;
   }
 
-  const kwRe =
-    kind === 'lua'
-      ? /\b(local|function|end|return|if|then|elseif|else|for|while|do|and|or|not|true|false|nil)\b/g
-      : /\b(def|class|return|import|from|as|if|elif|else|for|while|in|and|or|not|True|False|None|pass)\b/g;
+  const kwRe = getKeywordRegex(kind);
 
   const parts: Array<{ text: string; cls?: string }> = [];
   let last = 0;
@@ -285,8 +292,6 @@ export function ExtensionSourceModal({
               >
                 {t.kind === 'json' ? (
                   <FileJson size={12} />
-                ) : t.kind === 'lua' ? (
-                  <Code2 size={12} />
                 ) : (
                   <FileCode2 size={12} />
                 )}

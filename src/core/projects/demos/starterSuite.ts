@@ -1,8 +1,483 @@
-import { PROJECT_TEMPLATES } from '../../blocks/templates';
 import type { MultiHandleProjectTemplate } from './types';
 
-const tplById = (id: string) =>
-  PROJECT_TEMPLATES.find((t) => t.id === id) ?? PROJECT_TEMPLATES[0];
+export const STARTER_DEMO_LOGGER_WORKSPACE: Record<string, unknown> = {
+  blocks: {
+    languageVersion: 0,
+    blocks: [
+      {
+        type: 'poly_on_start',
+        id: 'start_main',
+        x: 36,
+        y: 28,
+        inputs: {
+          BODY: {
+            block: {
+              type: 'variables_set',
+              id: 'set_total',
+              fields: { VAR: { id: 'var_total' } },
+              inputs: {
+                VALUE: {
+                  block: {
+                    type: 'math_number',
+                    id: 'num_zero',
+                    fields: { NUM: 0 },
+                  },
+                },
+              },
+              next: {
+                block: {
+                  type: 'poly_log',
+                  id: 'log_start',
+                  fields: { LEVEL: 'INFO' },
+                  inputs: {
+                    MESSAGE: {
+                      block: {
+                        type: 'text',
+                        id: 'txt_start',
+                        fields: { TEXT: '任务启动，开始执行 3 轮累加...' },
+                      },
+                    },
+                  },
+                  next: {
+                    block: {
+                      type: 'poly_for_range',
+                      id: 'loop_main',
+                      fields: { VAR: { id: 'var_i' } },
+                      inputs: {
+                        FROM: {
+                          shadow: {
+                            type: 'math_number',
+                            id: 'loop_from',
+                            fields: { NUM: 1 },
+                          },
+                        },
+                        TO: {
+                          shadow: {
+                            type: 'math_number',
+                            id: 'loop_to',
+                            fields: { NUM: 3 },
+                          },
+                        },
+                        BY: {
+                          shadow: {
+                            type: 'math_number',
+                            id: 'loop_by',
+                            fields: { NUM: 1 },
+                          },
+                        },
+                        DO: {
+                          block: {
+                            type: 'math_change',
+                            id: 'add_total',
+                            fields: { VAR: { id: 'var_total' } },
+                            inputs: {
+                              DELTA: {
+                                shadow: {
+                                  type: 'math_number',
+                                  id: 'num_ten',
+                                  fields: { NUM: 10 },
+                                },
+                              },
+                            },
+                            next: {
+                              block: {
+                                type: 'poly_print',
+                                id: 'print_round',
+                                inputs: {
+                                  VALUE: {
+                                    block: {
+                                      type: 'text_join',
+                                      id: 'join_round',
+                                      extraState: { itemCount: 4 },
+                                      inputs: {
+                                        ADD0: {
+                                          block: {
+                                            type: 'text',
+                                            id: 't0',
+                                            fields: { TEXT: '第 ' },
+                                          },
+                                        },
+                                        ADD1: {
+                                          block: {
+                                            type: 'variables_get',
+                                            id: 'get_i',
+                                            fields: { VAR: { id: 'var_i' } },
+                                          },
+                                        },
+                                        ADD2: {
+                                          block: {
+                                            type: 'text',
+                                            id: 't2',
+                                            fields: { TEXT: ' 轮 => total = ' },
+                                          },
+                                        },
+                                        ADD3: {
+                                          block: {
+                                            type: 'variables_get',
+                                            id: 'get_total_loop',
+                                            fields: { VAR: { id: 'var_total' } },
+                                          },
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                      next: {
+                        block: {
+                          type: 'poly_print_kv',
+                          id: 'print_kv_final',
+                          fields: { LABEL: '最终 total' },
+                          inputs: {
+                            VALUE: {
+                              block: {
+                                type: 'variables_get',
+                                id: 'get_total_end',
+                                fields: { VAR: { id: 'var_total' } },
+                              },
+                            },
+                          },
+                          next: {
+                            block: {
+                              type: 'poly_log',
+                              id: 'log_done',
+                              fields: { LEVEL: 'OK' },
+                              inputs: {
+                                MESSAGE: {
+                                  block: {
+                                    type: 'text',
+                                    id: 'txt_done',
+                                    fields: { TEXT: '所有轮次执行完毕！' },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ],
+  },
+  variables: [
+    { name: 'total', id: 'var_total' },
+    { name: 'i', id: 'var_i' },
+  ],
+};
+
+export const STARTER_STEP_DEBUG_WORKSPACE: Record<string, unknown> = {
+  blocks: {
+    languageVersion: 0,
+    blocks: [
+      {
+        type: 'poly_on_start',
+        id: 'dbg_start',
+        x: 36,
+        y: 28,
+        inputs: {
+          BODY: {
+            block: {
+              type: 'variables_set',
+              id: 'dbg_set_sum',
+              fields: { VAR: { id: 'var_sum' } },
+              inputs: {
+                VALUE: {
+                  block: {
+                    type: 'math_number',
+                    id: 'dbg_zero',
+                    fields: { NUM: 0 },
+                  },
+                },
+              },
+              next: {
+                block: {
+                  type: 'poly_log',
+                  id: 'dbg_log_begin',
+                  fields: { LEVEL: 'INFO' },
+                  inputs: {
+                    MESSAGE: {
+                      block: {
+                        type: 'text',
+                        id: 'dbg_txt_begin',
+                        fields: { TEXT: '开始演示：每轮等待 350ms 并累加 sum' },
+                      },
+                    },
+                  },
+                  next: {
+                    block: {
+                      type: 'poly_for_range',
+                      id: 'dbg_loop',
+                      fields: { VAR: { id: 'var_step' } },
+                      inputs: {
+                        FROM: {
+                          shadow: {
+                            type: 'math_number',
+                            id: 'dbg_from',
+                            fields: { NUM: 1 },
+                          },
+                        },
+                        TO: {
+                          shadow: {
+                            type: 'math_number',
+                            id: 'dbg_to',
+                            fields: { NUM: 4 },
+                          },
+                        },
+                        BY: {
+                          shadow: {
+                            type: 'math_number',
+                            id: 'dbg_by',
+                            fields: { NUM: 1 },
+                          },
+                        },
+                        DO: {
+                          block: {
+                            type: 'poly_wait_ms',
+                            id: 'dbg_wait',
+                            inputs: {
+                              MS: {
+                                shadow: {
+                                  type: 'math_number',
+                                  id: 'dbg_ms',
+                                  fields: { NUM: 350 },
+                                },
+                              },
+                            },
+                            next: {
+                              block: {
+                                type: 'math_change',
+                                id: 'dbg_add_sum',
+                                fields: { VAR: { id: 'var_sum' } },
+                                inputs: {
+                                  DELTA: {
+                                    block: {
+                                      type: 'variables_get',
+                                      id: 'dbg_get_step',
+                                      fields: { VAR: { id: 'var_step' } },
+                                    },
+                                  },
+                                },
+                                next: {
+                                  block: {
+                                    type: 'poly_print_kv',
+                                    id: 'dbg_print_sum',
+                                    fields: { LABEL: '当前累计 sum' },
+                                    inputs: {
+                                      VALUE: {
+                                        block: {
+                                          type: 'variables_get',
+                                          id: 'dbg_get_sum',
+                                          fields: { VAR: { id: 'var_sum' } },
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                      next: {
+                        block: {
+                          type: 'poly_log',
+                          id: 'dbg_log_end',
+                          fields: { LEVEL: 'OK' },
+                          inputs: {
+                            MESSAGE: {
+                              block: {
+                                type: 'text',
+                                id: 'dbg_txt_end',
+                                fields: { TEXT: '延时累加演示完成！' },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ],
+  },
+  variables: [
+    { name: 'sum', id: 'var_sum' },
+    { name: 'step', id: 'var_step' },
+  ],
+};
+
+export const STARTER_THRESHOLD_ALARM_WORKSPACE: Record<string, unknown> = {
+  blocks: {
+    languageVersion: 0,
+    blocks: [
+      {
+        type: 'poly_on_start',
+        id: 'alarm_start',
+        x: 36,
+        y: 28,
+        inputs: {
+          BODY: {
+            block: {
+              type: 'poly_log',
+              id: 'alarm_init',
+              fields: { LEVEL: 'INFO' },
+              inputs: {
+                MESSAGE: {
+                  block: {
+                    type: 'text',
+                    id: 'alarm_init_txt',
+                    fields: { TEXT: '开始模拟 5 次传感器采样 (告警阈值 > 70)' },
+                  },
+                },
+              },
+              next: {
+                block: {
+                  type: 'poly_repeat_times',
+                  id: 'alarm_loop',
+                  inputs: {
+                    TIMES: {
+                      shadow: {
+                        type: 'math_number',
+                        id: 'alarm_times',
+                        fields: { NUM: 5 },
+                      },
+                    },
+                    DO: {
+                      block: {
+                        type: 'variables_set',
+                        id: 'set_temp',
+                        fields: { VAR: { id: 'var_temp' } },
+                        inputs: {
+                          VALUE: {
+                            block: {
+                              type: 'math_random_int',
+                              id: 'rand_temp',
+                              inputs: {
+                                FROM: {
+                                  shadow: {
+                                    type: 'math_number',
+                                    id: 'r_from',
+                                    fields: { NUM: 45 },
+                                  },
+                                },
+                                TO: {
+                                  shadow: {
+                                    type: 'math_number',
+                                    id: 'r_to',
+                                    fields: { NUM: 95 },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                        next: {
+                          block: {
+                            type: 'controls_if',
+                            id: 'if_over',
+                            extraState: { hasElse: true },
+                            inputs: {
+                              IF0: {
+                                block: {
+                                  type: 'logic_compare',
+                                  id: 'cmp_over',
+                                  fields: { OP: 'GT' },
+                                  inputs: {
+                                    A: {
+                                      block: {
+                                        type: 'variables_get',
+                                        id: 'get_temp_cmp',
+                                        fields: { VAR: { id: 'var_temp' } },
+                                      },
+                                    },
+                                    B: {
+                                      block: {
+                                        type: 'math_number',
+                                        id: 'num_70',
+                                        fields: { NUM: 70 },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                              DO0: {
+                                block: {
+                                  type: 'poly_log',
+                                  id: 'log_warn',
+                                  fields: { LEVEL: 'WARN' },
+                                  inputs: {
+                                    MESSAGE: {
+                                      block: {
+                                        type: 'text_join',
+                                        id: 'join_warn',
+                                        extraState: { itemCount: 2 },
+                                        inputs: {
+                                          ADD0: {
+                                            block: {
+                                              type: 'text',
+                                              id: 'tw0',
+                                              fields: { TEXT: '温度偏高: ' },
+                                            },
+                                          },
+                                          ADD1: {
+                                            block: {
+                                              type: 'variables_get',
+                                              id: 'get_temp_w',
+                                              fields: { VAR: { id: 'var_temp' } },
+                                            },
+                                          },
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                              ELSE: {
+                                block: {
+                                  type: 'poly_print_kv',
+                                  id: 'print_ok_temp',
+                                  fields: { LABEL: '采样正常 temp' },
+                                  inputs: {
+                                    VALUE: {
+                                      block: {
+                                        type: 'variables_get',
+                                        id: 'get_temp_ok',
+                                        fields: { VAR: { id: 'var_temp' } },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ],
+  },
+  variables: [{ name: 'temp', id: 'var_temp' }],
+};
 
 /** L1 Starter Demo: pure-language zero-extension suite with 3 independent handles. */
 export const STARTER_SUITE_DEMO: MultiHandleProjectTemplate = {
@@ -25,7 +500,7 @@ export const STARTER_SUITE_DEMO: MultiHandleProjectTemplate = {
       color: '#4f46e5',
       autoStart: true,
       scripts: [
-        { name: 'main', isEntry: true, workspace: tplById('demo_logger').workspace },
+        { name: 'main', isEntry: true, workspace: STARTER_DEMO_LOGGER_WORKSPACE },
       ],
     },
     {
@@ -34,7 +509,7 @@ export const STARTER_SUITE_DEMO: MultiHandleProjectTemplate = {
       color: '#0ea5e9',
       autoStart: false,
       scripts: [
-        { name: 'main', isEntry: true, workspace: tplById('step_debug_demo').workspace },
+        { name: 'main', isEntry: true, workspace: STARTER_STEP_DEBUG_WORKSPACE },
       ],
     },
     {
@@ -43,7 +518,7 @@ export const STARTER_SUITE_DEMO: MultiHandleProjectTemplate = {
       color: '#10b981',
       autoStart: false,
       scripts: [
-        { name: 'main', isEntry: true, workspace: tplById('threshold_alarm').workspace },
+        { name: 'main', isEntry: true, workspace: STARTER_THRESHOLD_ALARM_WORKSPACE },
       ],
     },
   ],

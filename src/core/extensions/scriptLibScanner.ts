@@ -1,4 +1,8 @@
 import type { ScriptLanguageId } from '../../types/project';
+import {
+  LANGUAGE_DIALECTS,
+  SUPPORTED_LANGUAGE_IDS,
+} from '../backends/types';
 import type {
   ExtensionBlockDef,
   ExtensionModuleSource,
@@ -273,22 +277,26 @@ export function scanPythonLibraryFunctions(
   return results;
 }
 
+const LIB_FUNCTION_SCANNERS: Record<
+  ScriptLanguageId,
+  (moduleName: string, source: string) => ScannedLibFunction[]
+> = {
+  lua: scanLuaLibraryFunctions,
+  python: scanPythonLibraryFunctions,
+};
+
 export function scanScriptLibraryFile(
   fileName: string,
   source: string,
   fallbackLang: ScriptLanguageId = 'lua',
 ): UploadedScriptLibFile {
   const lower = fileName.toLowerCase();
-  const language: ScriptLanguageId = lower.endsWith('.py')
-    ? 'python'
-    : lower.endsWith('.lua')
-      ? 'lua'
-      : fallbackLang;
+  const matchedLang = SUPPORTED_LANGUAGE_IDS.find((langId) =>
+    lower.endsWith(`.${LANGUAGE_DIALECTS[langId].extension}`),
+  );
+  const language: ScriptLanguageId = matchedLang ?? fallbackLang;
   const moduleName = deriveModuleNameFromFileName(fileName);
-  const scannedFunctions =
-    language === 'python'
-      ? scanPythonLibraryFunctions(moduleName, source)
-      : scanLuaLibraryFunctions(moduleName, source);
+  const scannedFunctions = LIB_FUNCTION_SCANNERS[language](moduleName, source);
 
   return {
     fileName,

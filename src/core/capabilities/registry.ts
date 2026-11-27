@@ -1,4 +1,5 @@
 import type { TargetProfile } from '../../types/project';
+import { normalizeLanguageId } from '../backends/types';
 
 /** Unified built-in `rt` runtime pack & its fine-grained section capability IDs. */
 export const CAP_RT = 'rt';
@@ -116,7 +117,7 @@ export function validateTargetProfile(raw: unknown): TargetProfile {
     name: obj.name.trim(),
     description:
       typeof obj.description === 'string' ? obj.description : '用户自定义目标板型规格',
-    defaultLanguage: obj.defaultLanguage === 'python' ? 'python' : 'lua',
+    defaultLanguage: normalizeLanguageId(obj.defaultLanguage),
     maxHandles: Number.isFinite(maxHandlesNum)
       ? Math.max(1, Math.min(16, Math.trunc(maxHandlesNum)))
       : 8,

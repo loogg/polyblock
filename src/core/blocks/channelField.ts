@@ -2,7 +2,7 @@ import * as Blockly from 'blockly';
 import {
   buildChannelDropdownOptions,
   DEFAULT_CHANNEL_COUNT,
-  EDIT_TIMER_ALIAS_SENTINEL,
+  EDIT_CHANNEL_ALIAS_SENTINEL,
   MAX_CHANNEL_COUNT,
   triggerChannelAliasPrompt,
 } from './workspaceContextBridge';
@@ -54,7 +54,7 @@ export class ChannelIdFieldDropdown extends Blockly.FieldDropdown {
   }
 
   protected override doClassValidation_(newValue?: string): string | null {
-    if (newValue === EDIT_TIMER_ALIAS_SENTINEL) {
+    if (newValue === EDIT_CHANNEL_ALIAS_SENTINEL) {
       const curRaw = this.getValue();
       const curId = curRaw && /^\d+$/.test(curRaw) ? Number(curRaw) : 0;
       const req = {
