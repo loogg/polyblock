@@ -1309,4 +1309,109 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     setActiveChannelPoolConfigs({ [CAP_RT_TIMERS]: { count: 8, aliases: {} } });
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
+
+  it('derives declarative runtime monitor summary from section runtimeMonitor metadata with zero pack-ID hardcoding', () => {
+    expect(extensionRegistry.getRuntimeMonitorSummary([])).toEqual({
+      hasSchedulerMonitor: false,
+      hasTimerMonitor: false,
+      timerPoolConfigKey: null,
+    });
+
+    expect(extensionRegistry.getRuntimeMonitorSummary([CAP_RT])).toEqual({
+      hasSchedulerMonitor: true,
+      hasTimerMonitor: true,
+      timerPoolConfigKey: CAP_RT_TIMERS,
+    });
+
+    expect(extensionRegistry.getRuntimeMonitorSummary([CAP_RT_LIFECYCLE])).toEqual({
+      hasSchedulerMonitor: true,
+      hasTimerMonitor: false,
+      timerPoolConfigKey: null,
+    });
+
+    expect(extensionRegistry.getRuntimeMonitorSummary([CAP_RT_TIMERS])).toEqual({
+      hasSchedulerMonitor: false,
+      hasTimerMonitor: true,
+      timerPoolConfigKey: CAP_RT_TIMERS,
+    });
+
+    expect(extensionRegistry.getRuntimeMonitorSummary([CAP_RT_TICK])).toEqual({
+      hasSchedulerMonitor: false,
+      hasTimerMonitor: false,
+      timerPoolConfigKey: null,
+    });
+
+    // Custom pack declaring runtimeMonitor: 'timers' + custom channel-pool configKey
+    const customTimerPack = validateExtensionPack({
+      format: 'polyblock-extension',
+      version: 1,
+      id: 'custom-rtos',
+      name: '自定义 RTOS 扩展',
+      packVersion: '1.0.0',
+      iconLabel: 'RTOS',
+      color: '#6366f1',
+      description: '自定义定时器与调度监控',
+      sections: [
+        {
+          id: 'sched',
+          label: '调度',
+          runtimeMonitor: 'scheduler',
+          blocks: [
+            {
+              type: 'ext_custom_rtos_yield',
+              kind: 'statement',
+              message0: '让出调度',
+              code: { lua: { template: 'rtos.yield()' } },
+            },
+          ],
+        },
+        {
+          id: 'hw_timers',
+          label: '硬定时',
+          runtimeMonitor: 'timers',
+          handleConfigs: [
+            {
+              kind: 'channel-pool',
+              configKey: 'custom.hw_timers',
+              label: '硬件定时通道',
+              prefix: 'HT',
+              min: 1,
+              max: 16,
+              defaultCount: 4,
+            },
+          ],
+          blocks: [
+            {
+              type: 'ext_custom_rtos_timer',
+              kind: 'statement',
+              message0: '启动硬定时 %1',
+              args0: [{ type: 'field_channel_id', name: 'TID' }],
+              code: { lua: { template: 'rtos.timer({{TID:int}})' } },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(
+      extensionRegistry.getRuntimeMonitorSummary(['custom-rtos'], [customTimerPack]),
+    ).toEqual({
+      hasSchedulerMonitor: true,
+      hasTimerMonitor: true,
+      timerPoolConfigKey: 'custom.hw_timers',
+    });
+
+    // Validator rejects invalid runtimeMonitor values
+    expect(() =>
+      validateExtensionPack({
+        ...customTimerPack,
+        sections: [
+          {
+            ...customTimerPack.sections[0],
+            runtimeMonitor: 'invalid_kind',
+          },
+        ],
+      }),
+    ).toThrow(/runtimeMonitor/);
+  });
 });

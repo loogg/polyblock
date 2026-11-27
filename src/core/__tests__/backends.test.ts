@@ -1,15 +1,36 @@
 import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { backendRegistry } from '../backends/registry';
+import { BaseScriptBackend } from '../backends/baseBackend';
+import {
+  formatSharedVarRef,
+  resetCodegenPassContext,
+} from '../backends/codegenContext';
+import {
+  formatSupportedExtensionsLabel,
+  getSupportedScriptAcceptAttr,
+  LANGUAGE_DIALECTS,
+  stripScriptExtension,
+  SUPPORTED_LANGUAGE_IDS,
+} from '../backends/types';
 import { registerPolyBlocks } from '../blocks/definitions';
 import {
   STARTER_DEMO_LOGGER_WORKSPACE,
   STARTER_STEP_DEBUG_WORKSPACE,
   STARTER_THRESHOLD_ALARM_WORKSPACE,
 } from '../projects/demos/starterSuite';
+import { instantiateProjectFromTemplate } from '../projects/store';
 import { highlightCodeLine } from '../highlight';
 import { extractErrorLine, parseStdoutLine } from '../runners/logParser';
+import {
+  PLANNED_RUNNER_SLOTS,
+  RunnerManager,
+  runnerManager,
+} from '../runners/manager';
+import { MultiHandleRunnerOrchestrator } from '../runners/multiHandleManager';
+import type { ScriptLanguageId } from '../../types/project';
 import { WorkerDebugSession } from '../../workers/debugSession';
+import { WorkerProtocolHost } from '../../workers/workerProtocolHost';
 
 const LIST_STATS_WORKSPACE: Record<string, unknown> = {
   blocks: {
@@ -395,5 +416,170 @@ describe('Log parser & syntax highlighter', () => {
     expect(html).toContain('<span class="syn-kw">if</span>');
     expect(html).toContain('&lt; <span class="syn-num">10</span>');
     expect(html).toContain('<span class="syn-cmt">-- &lt;tag&gt;</span>');
+  });
+});
+
+describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocolHost', () => {
+  it('exposes accentGradient and dynamic script extension helpers from LANGUAGE_DIALECTS', () => {
+    for (const lang of SUPPORTED_LANGUAGE_IDS) {
+      expect(LANGUAGE_DIALECTS[lang].accentGradient).toMatch(/^linear-gradient\(/);
+    }
+    expect(getSupportedScriptAcceptAttr()).toBe('.lua,.py');
+    expect(formatSupportedExtensionsLabel()).toBe('.lua / .py');
+    expect(stripScriptExtension('main.lua')).toBe('main');
+    expect(stripScriptExtension('helpers.PY')).toBe('helpers');
+    expect(stripScriptExtension('utils.crc16.lua')).toBe('utils.crc16');
+    expect(stripScriptExtension('readme.md')).toBe('readme.md');
+  });
+
+  it('implements Lua and Python backends via BaseScriptBackend and unifies formatSharedVarRef', () => {
+    expect(backendRegistry.get('lua')).toBeInstanceOf(BaseScriptBackend);
+    expect(backendRegistry.get('python')).toBeInstanceOf(BaseScriptBackend);
+
+    const fakeGen = { getVariableName: (id: string) => `local_${id}` };
+    try {
+      resetCodegenPassContext({
+        debugPass: false,
+        compilingSharedModule: false,
+        sharedModuleName: 'shared',
+        sharedVarIdToAttr: new Map([['v1', 'counter']]),
+        sharedVarIdents: new Set(['counter']),
+      });
+      expect(
+        formatSharedVarRef('v1', fakeGen, undefined, { bareAttrInSharedModule: false }),
+      ).toBe('shared.counter');
+      expect(
+        formatSharedVarRef('v2', fakeGen, undefined, { bareAttrInSharedModule: false }),
+      ).toBe('local_v2');
+
+      resetCodegenPassContext({
+        debugPass: false,
+        compilingSharedModule: true,
+        sharedModuleName: 'shared',
+        sharedVarIdToAttr: new Map([['v1', 'counter']]),
+        sharedVarIdents: new Set(['counter']),
+      });
+      expect(
+        formatSharedVarRef('v1', fakeGen, undefined, { bareAttrInSharedModule: false }),
+      ).toBe('shared.counter');
+      expect(
+        formatSharedVarRef('v1', fakeGen, undefined, { bareAttrInSharedModule: true }),
+      ).toBe('counter');
+    } finally {
+      resetCodegenPassContext({ debugPass: false });
+    }
+  });
+
+  it('supports findForLanguage / hasRunnerForLanguage and graceful multi-handle fallback for export-only languages', async () => {
+    const manager = new RunnerManager();
+    expect(manager.hasRunnerForLanguage('lua')).toBe(true);
+    expect(manager.hasRunnerForLanguage('python')).toBe(true);
+    expect(manager.findForLanguage('lua')?.id).toBe('browser-lua-wasmoon');
+    expect(manager.findForLanguage('python')?.id).toBe('browser-python-micropython');
+
+    const exportOnlyLang = 'c' as ScriptLanguageId;
+    expect(manager.findForLanguage(exportOnlyLang)).toBeNull();
+    expect(manager.hasRunnerForLanguage(exportOnlyLang)).toBe(false);
+    expect(() => manager.getForLanguage(exportOnlyLang)).toThrow(
+      /No runner registered for language/,
+    );
+
+    for (const slot of PLANNED_RUNNER_SLOTS) {
+      expect(slot.supportedLanguages).toEqual([...SUPPORTED_LANGUAGE_IDS]);
+    }
+
+    // Verify MultiHandleRunnerOrchestrator returns a structured error instead of throwing
+    expect(runnerManager.findForLanguage(exportOnlyLang)).toBeNull();
+    const project = {
+      ...instantiateProjectFromTemplate('blank_project'),
+      language: exportOnlyLang,
+    };
+    const logs: Array<{ level: string; message: string }> = [];
+    const statuses: string[] = [];
+    const orchestrator = new MultiHandleRunnerOrchestrator();
+    const results = await orchestrator.runAllHandles(
+      {
+        project,
+        timeoutMs: 1000,
+        stepDelayMs: 0,
+        mockInputs: {},
+      },
+      {
+        onHandleLog: (_hdl, level, message) => logs.push({ level, message }),
+        onDeviceEvent: () => {},
+        onHandleTelemetry: () => {},
+        onStatusChange: (s) => statuses.push(s),
+      },
+    );
+
+    expect(orchestrator.isRunning()).toBe(false);
+    expect(results).toHaveLength(1);
+    expect(results[0].result.ok).toBe(false);
+    expect(results[0].result.errorMessage).toContain('未注册浏览器沙箱 Runner');
+    expect(logs.some((l) => l.level === 'error' && l.message.includes('仅支持代码导出'))).toBe(
+      true,
+    );
+    expect(statuses).toContain('ready');
+  });
+
+  it('routes worker control messages, pack-scoped sim state, and DONE/ERROR lifecycle in WorkerProtocolHost', async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    const host = new WorkerProtocolHost((payload) => posted.push(payload));
+
+    await host.handleMessage(
+      {
+        type: 'RUN',
+        runId: 'run-1',
+        code: '',
+        wasmUrl: 'mock.wasm',
+        breakpoints: [],
+        stepDelayMs: 0,
+        mockInputs: { 'pack-a::temp': 26 },
+      },
+      async (ctx) => {
+        expect(ctx.getScopedState('pack-a', 'temp')).toBe(26);
+        ctx.emitScopedState('pack-a', 'oled:append', 'Line 1');
+        ctx.emitScopedState('pack-a', 'oled:append', 'Line 2');
+        expect(ctx.getScopedState('pack-a', 'oled')).toEqual(['Line 1', 'Line 2']);
+        ctx.emitScopedState('pack-a', 'oled:clear', true);
+        expect(ctx.getScopedState('pack-a', 'oled')).toEqual([]);
+        ctx.emitScopedState('pack-a', 'global:vbus', 24);
+        expect(ctx.getScopedState('pack-b', 'global:vbus')).toBe(24);
+        ctx.emitCustomEvent('on_button', ['A', true]);
+        ctx.session.setFinalVars(JSON.stringify({ x: '42' }));
+      },
+    );
+
+    expect(host.getActiveSession()).toBeNull();
+    expect(host.getActiveScheduler()).toBeNull();
+    expect(posted.some((m) => m.type === 'CUSTOM_EVENT' && m.eventName === 'on_button')).toBe(
+      true,
+    );
+    expect(
+      posted.some(
+        (m) =>
+          m.type === 'DONE' &&
+          m.runId === 'run-1' &&
+          (m.vars as Record<string, string>)?.x === '42',
+      ),
+    ).toBe(true);
+
+    posted.length = 0;
+    await host.handleMessage(
+      {
+        type: 'RUN',
+        runId: 'run-2',
+        code: '',
+        wasmUrl: 'mock.wasm',
+        breakpoints: [],
+        stepDelayMs: 0,
+      },
+      async () => {
+        throw new Error('boom');
+      },
+    );
+    expect(
+      posted.some((m) => m.type === 'ERROR' && m.runId === 'run-2' && m.message === 'boom'),
+    ).toBe(true);
   });
 });

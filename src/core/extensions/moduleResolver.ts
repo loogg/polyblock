@@ -1,4 +1,5 @@
 import type { ScriptLanguageId } from '../../types/project';
+import { SUPPORTED_LANGUAGE_IDS } from '../backends/types';
 import { hasCapability } from '../capabilities/registry';
 import { extensionRegistry } from './registry';
 import type { ExtensionModuleSource, PolyExtensionPack } from './types';
@@ -106,21 +107,33 @@ export interface ResolveProjectModulesInput {
   }>;
 }
 
+const IMPORT_MODULE_NAME_EXTRACTORS: Record<
+  ScriptLanguageId,
+  (line: string) => string | null
+> = {
+  lua: (line) => {
+    const m = /require\s*\(\s*["']([^"']+)["']\s*\)/.exec(line);
+    return m?.[1]?.trim() || null;
+  },
+  python: (line) => {
+    const m = /^\s*(?:import|from)\s+([A-Za-z_][A-Za-z0-9_.]*)/.exec(line);
+    return m?.[1]?.trim() || null;
+  },
+};
+
 /**
- * Extracts all module names referenced in `pack.imports` (e.g. `require("crc16")` or `import crc16`)
+ * Extracts all module names referenced in `pack.imports` across all registered script languages
  * so editors/validators can verify hand-written JSON matches attached `libs[]` / `sandboxMock`.
  */
 export function extractImportedModuleNames(pack: PolyExtensionPack): string[] {
   const names = new Set<string>();
-  const luaImports = pack.imports?.lua ?? [];
-  for (const line of luaImports) {
-    const m = /require\s*\(\s*["']([^"']+)["']\s*\)/.exec(line);
-    if (m?.[1]) names.add(m[1].trim());
-  }
-  const pyImports = pack.imports?.python ?? [];
-  for (const line of pyImports) {
-    const m = /^\s*(?:import|from)\s+([A-Za-z_][A-Za-z0-9_.]*)/.exec(line);
-    if (m?.[1]) names.add(m[1].trim());
+  for (const lang of SUPPORTED_LANGUAGE_IDS) {
+    const lines = pack.imports?.[lang] ?? [];
+    const extract = IMPORT_MODULE_NAME_EXTRACTORS[lang];
+    for (const line of lines) {
+      const modName = extract(line);
+      if (modName) names.add(modName);
+    }
   }
   return Array.from(names);
 }

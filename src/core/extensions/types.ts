@@ -225,6 +225,9 @@ export type CoreCategoryTarget =
 /** Where a section places its blocks in the left toolbox: `'own'` (standalone tab, default) or any core category ID. */
 export type CategoryTargetSpec = 'own' | CoreCategoryTarget;
 
+/** Declarative runtime telemetry monitor cards bound to a section (`'scheduler'` | `'timers'`). */
+export type RuntimeMonitorKind = 'scheduler' | 'timers';
+
 /**
  * Single-track declarative section inside a PolyBlock extension pack (1 Pack = 1 logical module/SDK).
  * Every pack has at least 1 section, with blocks nested directly inside their owning section.
@@ -244,6 +247,8 @@ export interface ExtensionSectionSpec {
   toolboxOrder?: number;
   /** Category accent color (default: pack.color). */
   color?: string;
+  /** Optional declarative runtime monitor telemetry binding (`'scheduler'` or `'timers'`). */
+  runtimeMonitor?: RuntimeMonitorKind;
   /** Extensible per-handle resource configs owned by this section (e.g. channel-pool, future UART/CAN fields). */
   handleConfigs?: HandleConfigSpec[];
   /** Blocks belonging to this section (defined directly inline — zero duplicate ID lists). */
@@ -261,6 +266,7 @@ export interface ResolvedPackSection {
   categoryTarget: CategoryTargetSpec;
   toolboxOrder: number;
   color: string;
+  runtimeMonitor?: RuntimeMonitorKind;
   handleConfigs: ResolvedHandleChannelPoolSpec[];
   /** Convenience reference to the primary `kind: 'channel-pool'` entry in `handleConfigs`, if any. */
   channelPool?: ResolvedHandleChannelPoolSpec;

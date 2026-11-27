@@ -1,4 +1,5 @@
 import type { ScriptLanguageId } from '../../types/project';
+import { extensionRegistry } from '../extensions/registry';
 import { LuaBackendAdapter } from './luaBackend';
 import { PythonBackendAdapter } from './pythonBackend';
 import type { ScriptBackendAdapter } from './types';
@@ -17,6 +18,7 @@ class BackendRegistry {
   register(adapter: ScriptBackendAdapter): void {
     this.ensureInitialized();
     this.adapters.set(adapter.id, adapter);
+    extensionRegistry.attachBackend(adapter);
   }
 
   get(id: ScriptLanguageId): ScriptBackendAdapter {

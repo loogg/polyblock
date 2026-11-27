@@ -1,11 +1,13 @@
 import type { ScriptLanguageId } from '../../types/project';
 import {
   LANGUAGE_DIALECTS,
+  stripScriptExtension,
   SUPPORTED_LANGUAGE_IDS,
 } from '../backends/types';
 import type {
   ExtensionBlockDef,
   ExtensionModuleSource,
+  ExtensionPackImports,
   PolyExtensionPack,
 } from './types';
 
@@ -32,9 +34,7 @@ export interface UploadedScriptLibFile {
 }
 
 export function deriveModuleNameFromFileName(fileName: string): string {
-  const base = fileName
-    .trim()
-    .replace(/\.(lua|py)$/i, '')
+  const base = stripScriptExtension(fileName.trim())
     .replace(/[^A-Za-z0-9_.-]+/g, '_')
     .replace(/^[._-]+|[._-]+$/g, '');
   return base || 'custom_lib';
@@ -319,9 +319,28 @@ export interface BuildPackFromLibsOptions {
   functions: ScannedLibFunction[];
 }
 
+const LIB_LANGUAGE_BINDINGS: Record<
+  ScriptLanguageId,
+  {
+    formatImport: (mod: string) => string;
+    formatCall: (mod: string, fn: string, args: string[]) => string;
+  }
+> = {
+  lua: {
+    formatImport: (mod) =>
+      `local ${mod.replace(/[^A-Za-z0-9_]/g, '_')} = require("${mod}")`,
+    formatCall: (mod, fn, args) =>
+      `${mod.replace(/[^A-Za-z0-9_]/g, '_')}.${fn}(${args.join(', ')})`,
+  },
+  python: {
+    formatImport: (mod) => `import ${mod}`,
+    formatCall: (mod, fn, args) => `${mod}.${fn}(${args.join(', ')})`,
+  },
+};
+
 /**
  * Generates a clean, valid single-track `.polyext.json` (`PolyExtensionPack`) from uploaded
- * `.lua` / `.py` script files and user-reviewed candidate functions.
+ * script library files and user-reviewed candidate functions across all supported languages.
  */
 export function buildExtensionPackFromScriptLibs(
   opts: BuildPackFromLibsOptions,
@@ -344,7 +363,7 @@ export function buildExtensionPackFromScriptLibs(
     throw new Error('请至少勾选 1 个已启用扫描的函数以生成积木');
   }
 
-  // Merge uploaded files by moduleName (supports pairing `crc16.lua` + `crc16.py` under one moduleName!)
+  // Merge uploaded files by moduleName (supports pairing multi-language sources under one moduleName)
   const libMap = new Map<string, ExtensionModuleSource>();
   for (const f of opts.files) {
     const existing = libMap.get(f.moduleName) ?? {
@@ -360,15 +379,20 @@ export function buildExtensionPackFromScriptLibs(
 
   // Determine which modules & languages are actually provided by uploaded files
   const usedModuleNames = Array.from(new Set(selectedFns.map((f) => f.moduleName)));
-  const luaModules = usedModuleNames.filter((mn) => Boolean(libMap.get(mn)?.sources.lua));
-  const pyModules = usedModuleNames.filter((mn) => Boolean(libMap.get(mn)?.sources.python));
-  const luaImports = luaModules.map(
-    (mn) => `local ${mn.replace(/[^A-Za-z0-9_]/g, '_')} = require("${mn}")`,
-  );
-  const pyImports = pyModules.map((mn) => `import ${mn}`);
+  const importsMap: ExtensionPackImports = {};
+  let hasAnyImports = false;
+  for (const lang of SUPPORTED_LANGUAGE_IDS) {
+    const binding = LIB_LANGUAGE_BINDINGS[lang];
+    const langModules = usedModuleNames.filter((mn) =>
+      Boolean(libMap.get(mn)?.sources[lang]),
+    );
+    if (langModules.length > 0) {
+      importsMap[lang] = langModules.map((mn) => binding.formatImport(mn));
+      hasAnyImports = true;
+    }
+  }
 
   const blocks: ExtensionBlockDef[] = selectedFns.map((fn) => {
-    const safeModIdent = fn.moduleName.replace(/[^A-Za-z0-9_]/g, '_');
     const blockType = `ext_${safeId.replace(/-/g, '_')}_${fn.moduleName.replace(/[^A-Za-z0-9_]/g, '_')}_${fn.funcName}`;
     const args0: Array<Record<string, unknown>> = [];
     const shadows: Record<string, { type: 'math_number' | 'text'; value: number | string }> = {};
@@ -386,15 +410,19 @@ export function buildExtensionPackFromScriptLibs(
     const msgBase = fn.label.trim() || `${fn.moduleName}.${fn.funcName}`;
     const message0 =
       paramParts.length > 0 ? `${msgBase} ${paramParts.join(' ')}` : msgBase;
-    const callExpr = `${safeModIdent}.${fn.funcName}(${callPlaceholders.join(', ')})`;
-    const pyCallExpr = `${fn.moduleName}.${fn.funcName}(${callPlaceholders.join(', ')})`;
     const modEntry = libMap.get(fn.moduleName);
-    const hasLua = Boolean(modEntry?.sources.lua);
-    const hasPy = Boolean(modEntry?.sources.python);
-    const code: ExtensionBlockDef['code'] = {
-      ...(hasLua ? { lua: { template: callExpr } } : {}),
-      ...(hasPy ? { python: { template: pyCallExpr } } : {}),
-    };
+    const code: NonNullable<ExtensionBlockDef['code']> = {};
+    for (const lang of SUPPORTED_LANGUAGE_IDS) {
+      if (modEntry?.sources[lang]) {
+        code[lang] = {
+          template: LIB_LANGUAGE_BINDINGS[lang].formatCall(
+            fn.moduleName,
+            fn.funcName,
+            callPlaceholders,
+          ),
+        };
+      }
+    }
 
     return {
       type: blockType,
@@ -410,13 +438,9 @@ export function buildExtensionPackFromScriptLibs(
     };
   });
 
-  const importsObj: PolyExtensionPack['imports'] =
-    luaImports.length > 0 || pyImports.length > 0
-      ? {
-          ...(luaImports.length > 0 ? { lua: luaImports } : {}),
-          ...(pyImports.length > 0 ? { python: pyImports } : {}),
-        }
-      : undefined;
+  const importsObj: PolyExtensionPack['imports'] = hasAnyImports
+    ? importsMap
+    : undefined;
 
   return {
     $schema: './schemas/polyext.schema.json',

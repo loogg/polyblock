@@ -1,24 +1,8 @@
 import * as Blockly from 'blockly';
 import { Order, pythonGenerator } from 'blockly/python';
 import {
-  buildPythonGlobalLineForBlocks,
-  buildPythonHoistedLocalsLine,
-  codegenContext,
-  computeAsyncFunctionNames,
-  formatPythonVarRef,
-  resetCodegenPassContext,
-} from './codegenContext';
-import {
-  buildEntryDispatchRouters,
-  hasExternalKeepAliveHat,
-  isEventDrivenWorkspace,
-  resolveHandleSharedInfo,
-} from './eventMode';
-import {
-  getActiveHandleScripts,
   getActiveHandleSharedFunctions,
   getActiveScriptVarInitials,
-  withCompileContext,
 } from '../blocks/workspaceContextBridge';
 import {
   hoistImports,
@@ -26,30 +10,112 @@ import {
   renderExtensionTemplate,
 } from '../extensions/templateRenderer';
 import {
-  analyzeWorkspaceScopes,
-  sanitizeLocalIdent,
-} from './scopeAnalysis';
+  BaseScriptBackend,
+  type BlocklyGeneratorLike,
+  type DebugAssemblyInput,
+  type DebugPassPreparation,
+  type WorkspacePassAnalysis,
+} from './baseBackend';
 import {
-  analyzeWorkspaceDiagnostics,
-  extractSourceMap,
+  codegenContext,
+  collectNestedPolyLocalIdents,
+  formatSharedVarRef,
+  type CodegenPassContextOptions,
+} from './codegenContext';
+import { sanitizeLocalIdent } from './scopeAnalysis';
+import {
   SENTINEL_END_PREFIX,
   SENTINEL_START_PREFIX,
 } from './sourceMap';
 import {
   formatInitialValueForLanguage,
   LANGUAGE_DIALECTS,
-  type CompileContext,
   type EntryDispatchBranchSpec,
-  type ExtensionBlockRegisterContext,
   type ExtensionHatRegisterContext,
-  type GeneratedCodeResult,
-  type ScriptBackendAdapter,
   type SharedModuleDocumentInput,
-  type SharedProcCompileInput,
-  type SharedProcCompileOutput,
 } from './types';
 
 let pythonGeneratorsRegistered = false;
+
+const PY_VAR_WRITE_BLOCK_TYPES = new Set<string>([
+  'variables_set',
+  'math_change',
+  'text_append',
+  'poly_for_range',
+  'controls_for',
+  'controls_forEach',
+]);
+
+function formatPythonVarRef(
+  varId: string,
+  generator: { getVariableName(id: string): string },
+  block?: Blockly.Block,
+): string {
+  return formatSharedVarRef(varId, generator, block, {
+    bareAttrInSharedModule: true,
+  });
+}
+
+/**
+ * Computes Python function-top `  msg = None\n` pre-declarations ONLY for nested `poly_local_set`
+ * variables, matching Lua's `local msg` hoisting so missing `else` branches never throw UnboundLocalError.
+ */
+function buildPythonHoistedLocalsLine(
+  rootBlocks: Blockly.Block[],
+  bodyInputName = 'BODY',
+  indent = '  ',
+): string {
+  const hoisted = collectNestedPolyLocalIdents(rootBlocks, bodyInputName, false);
+  if (hoisted.length === 0) return '';
+  return hoisted.map((ident) => `${indent}${ident} = None\n`).join('');
+}
+
+/**
+ * Generates a precise Python `  global a, b\n` declaration ONLY for module-level variables
+ * that are actually assigned/rebound inside the given hat/procedure block body (and strictly excludes
+ * formal parameter names to prevent `SyntaxError: name 'x' is parameter and global`).
+ */
+function buildPythonGlobalLineForBlocks(
+  rootBlocks: Blockly.Block[],
+  generator: { getVariableName(id: string): string },
+  excludeParams: string[] = [],
+  bodyInputName = 'BODY',
+): string {
+  const allowedGlobals = codegenContext.compilingSharedModule
+    ? Array.from(codegenContext.sharedVarIdToAttr.values())
+    : codegenContext.globalVarIdents;
+  if (allowedGlobals.length === 0) return '';
+  const paramSet = new Set(excludeParams);
+  const mutatedIdents = new Set<string>();
+
+  for (const root of rootBlocks) {
+    const bodyRoot = root.getInputTargetBlock(bodyInputName);
+    if (!bodyRoot) continue;
+    for (const blk of bodyRoot.getDescendants(false)) {
+      if (blk.isShadow() || !blk.isEnabled()) continue;
+      if (!PY_VAR_WRITE_BLOCK_TYPES.has(blk.type)) continue;
+      const varId = blk.getFieldValue('VAR');
+      if (!varId) continue;
+      const varIdStr = String(varId);
+      if (codegenContext.compilingSharedModule) {
+        const attr = codegenContext.sharedVarIdToAttr.get(varIdStr);
+        if (attr && !paramSet.has(attr)) {
+          mutatedIdents.add(attr);
+        }
+      } else {
+        if (codegenContext.sharedVarIdToAttr.has(varIdStr)) continue;
+        const ident = generator.getVariableName(varIdStr);
+        if (ident && !paramSet.has(ident)) {
+          mutatedIdents.add(ident);
+        }
+      }
+    }
+  }
+
+  const ordered = allowedGlobals.filter((ident) => mutatedIdents.has(ident));
+  if (ordered.length === 0) return '';
+  return `  global ${ordered.join(', ')}\n`;
+}
 
 /** Converts a 1-based list index expression into clean 0-based Python index (`1` -> `0`, `k` -> `int(k) - 1`). */
 function formatPyZeroBasedIndex(rawIdx: string): string {
@@ -71,8 +137,8 @@ export function registerPythonBlockGenerators(): void {
   const origInit = pythonGenerator.init.bind(pythonGenerator);
   pythonGenerator.init = (workspace: Blockly.Workspace) => {
     origInit(workspace);
-    const sharedIdents = codegenContext.pythonSharedVarIdents;
-    const usedIdents = codegenContext.pythonUsedVarIdents;
+    const sharedIdents = codegenContext.sharedVarIdents;
+    const usedIdents = codegenContext.usedVarIdents;
     const scriptInitials = getActiveScriptVarInitials();
     const identToVarName = new Map<string, string>();
     for (const v of workspace.getVariableMap().getAllVariables()) {
@@ -422,7 +488,7 @@ export function registerPythonBlockGenerators(): void {
 
           const shouldBeAsync =
             codegenContext.debugPass ||
-            codegenContext.pythonAsyncFnNames.has(rawName);
+            codegenContext.asyncFnNames.has(rawName);
           if (shouldBeAsync) {
             nextCode = nextCode.replace(/(^|\n)def /, '$1async def ');
           }
@@ -444,9 +510,9 @@ export function registerPythonBlockGenerators(): void {
     isShared: boolean,
     asExpr: boolean,
   ): string => {
-    const isAsyncClean = codegenContext.pythonAsyncFnNames.has(rawName);
+    const isAsyncClean = codegenContext.asyncFnNames.has(rawName);
     if (isShared && !codegenContext.compilingSharedModule) {
-      const modName = codegenContext.pythonSharedModuleName || 'shared';
+      const modName = codegenContext.sharedModuleName || 'shared';
       codegenContext.usedSharedModule = true;
       if (codegenContext.debugPass) {
         const callArgs = argsStr
@@ -502,7 +568,7 @@ export function registerPythonBlockGenerators(): void {
     }
     const out = formatPyProcCall(rawName, fnIdent, args.join(', '), isShared, true);
     const needsAtomic =
-      codegenContext.debugPass || codegenContext.pythonAsyncFnNames.has(rawName);
+      codegenContext.debugPass || codegenContext.asyncFnNames.has(rawName);
     return [out, needsAtomic ? Order.ATOMIC : Order.FUNCTION_CALL];
   };
 
@@ -533,7 +599,7 @@ export function registerPythonBlockGenerators(): void {
     ).sharedFnMeta_;
     const needsAtomic =
       codegenContext.debugPass ||
-      Boolean(meta?.fnName && codegenContext.pythonAsyncFnNames.has(meta.fnName));
+      Boolean(meta?.fnName && codegenContext.asyncFnNames.has(meta.fnName));
     return [
       emitPySharedFnCall(block, generator, true),
       needsAtomic ? Order.ATOMIC : Order.FUNCTION_CALL,
@@ -633,7 +699,10 @@ if 'on_stop' in globals() and callable(on_stop):
 `;
 }
 
-export class PythonBackendAdapter implements ScriptBackendAdapter {
+const PY_DEBUG_STATEMENT_PREFIX =
+  `await _poly_tick(%1, _poly_snap(locals(), globals()))\n`;
+
+export class PythonBackendAdapter extends BaseScriptBackend<void> {
   readonly id = 'python' as const;
   readonly name = 'Python';
   readonly version = '3';
@@ -644,217 +713,95 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
     '标准 Python 3 脚本生成器，支持 Style A1 只读 shared 模块、单线程 async 协程 ABI 与伴生脚本断点调试。';
   readonly dialect = LANGUAGE_DIALECTS.python;
 
-  formatDispatchRouter(
-    eventName: string,
-    branches: EntryDispatchBranchSpec[],
-    debugPass: boolean,
-  ): { autoImports: string[]; code: string } {
-    if (branches.length === 0) return { autoImports: [], code: '' };
-    const paramsStr = (branches[0].params ?? []).join(', ');
-    const defKw = debugPass ? 'async def' : 'def';
-    const hasSibling = branches.some((br) => !br.isLocal);
-    const lines: string[] = [];
-    branches.forEach((br, idx) => {
-      const kw = idx === 0 ? 'if' : 'elif';
-      const cond = br.condition.python ?? this.dialect.boolTrue;
-      const comment = br.comment.python ?? '';
-      const callArgs = br.passParams ? paramsStr : '';
-      const srcTag = br.isLocal
-        ? ''
-        : comment
-          ? ` (${br.scriptName}.py)`
-          : `  # ${br.scriptName}.py`;
-      if (br.isLocal) {
-        const callExpr = debugPass
-          ? `await ${br.fnName}(${callArgs})`
-          : `${br.fnName}(${callArgs})`;
-        lines.push(`  ${kw} ${cond}:${comment}${srcTag}\n    ${callExpr}`);
-      } else {
-        const modKey = JSON.stringify(sanitizeLocalIdent(br.scriptName));
-        if (debugPass) {
-          lines.push(
-            `  ${kw} ${cond}:${comment}${srcTag}\n` +
-              `    _m = sys.modules.get(${modKey})\n` +
-              `    if _m and hasattr(_m, ${JSON.stringify(br.fnName)}):\n` +
-              `      _ret = getattr(_m, ${JSON.stringify(br.fnName)})(${callArgs})\n` +
-              `      if hasattr(_ret, 'send'):\n` +
-              `        await _ret`,
-          );
-        } else {
-          lines.push(
-            `  ${kw} ${cond}:${comment}${srcTag}\n` +
-              `    _m = sys.modules.get(${modKey})\n` +
-              `    if _m and hasattr(_m, ${JSON.stringify(br.fnName)}):\n` +
-              `      _m.${br.fnName}(${callArgs})`,
-          );
-        }
-      }
-    });
-    return {
-      autoImports: hasSibling ? ['import sys'] : [],
-      code: `${defKw} ${eventName}(${paramsStr}):\n${lines.join('\n')}\n`,
-    };
+  protected readonly bareAttrInSharedModule = true;
+  protected readonly orderNone = Order.NONE;
+  protected readonly orderAtomic = Order.ATOMIC;
+  protected readonly topLevelDebugTickRe = /^await _poly_tick\(/;
+
+  protected ensureGeneratorsRegistered(): void {
+    registerPythonBlockGenerators();
   }
 
-  generate(
-    workspace: Blockly.Workspace,
-    context?: CompileContext,
-  ): GeneratedCodeResult {
-    return withCompileContext(context, () => {
-    registerPythonBlockGenerators();
+  protected getGenerator(): BlocklyGeneratorLike {
+    return pythonGenerator;
+  }
 
-    const prevPrefix = pythonGenerator.STATEMENT_PREFIX;
-    const prevSuffix = pythonGenerator.STATEMENT_SUFFIX;
-    const eventDriven = isEventDrivenWorkspace(workspace);
-    const keepAliveExternal = hasExternalKeepAliveHat(workspace);
+  protected formatFileHeader(eventDriven: boolean): string {
+    return eventDriven
+      ? `# 由 PolyBlock 自动生成 (Target: Python 3 · Async Coroutine Event ABI)\n`
+      : `# 由 PolyBlock 自动生成 (Target: Python 3 · Async Coroutine ABI)\n`;
+  }
 
-    // --- Pass 1: Clean display/export/board-download code + SourceMap ---
-    pythonGenerator.STATEMENT_PREFIX = `${SENTINEL_START_PREFIX}%1__\n`;
-    pythonGenerator.STATEMENT_SUFFIX = `${SENTINEL_END_PREFIX}%1__\n`;
+  protected formatSharedModuleImport(moduleName: string): string {
+    return `import ${moduleName}`;
+  }
 
-    const handleScripts = getActiveHandleScripts();
-    const sharedInfo = resolveHandleSharedInfo(handleScripts);
-    const sharedAttrByName = new Map(
-      sharedInfo.entries.map((e) => [e.name, e.attr]),
-    );
-    const sharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
-    const externalAsyncSharedFns = new Set<string>();
-    for (const s of handleScripts) {
-      for (const fn of s.declaredFunctions ?? []) {
-        if (fn.usesSleep) externalAsyncSharedFns.add(fn.name);
-      }
-    }
-    const asyncFnNames = computeAsyncFunctionNames(
-      workspace,
-      externalAsyncSharedFns,
-    );
-
-    let rawClean = '';
-    let usedSharedClean = false;
-    const varEntries: Array<[string, string]> = [];
-    const varIdToIdent = new Map<string, string>();
+  protected buildPassContextOptions(
+    debugPass: boolean,
+    analysis: WorkspacePassAnalysis,
+  ): CodegenPassContextOptions {
     const sharedVarIdToAttr = new Map<string, string>();
     const sharedVarIdents = new Set<string>();
-    const sharedSnapEntries: Array<[string, string]> = [];
     const nonSharedVarIdents: string[] = [];
     const usedVarIdents = new Set<string>();
 
-    const isInsideSharedFunction = (blk: Blockly.Block): boolean => {
-      const root = blk.getRootBlock();
-      if (
-        root.type === 'procedures_defnoreturn' ||
-        root.type === 'procedures_defreturn'
-      ) {
-        return sharedFnSet.has(String(root.getFieldValue('NAME') || '').trim());
+    for (const v of analysis.variables) {
+      if (!v.used) continue;
+      usedVarIdents.add(v.ident);
+      if (v.sharedAttr && analysis.sharedModuleName) {
+        sharedVarIdToAttr.set(v.id, v.sharedAttr);
+        sharedVarIdents.add(v.ident);
+      } else {
+        nonSharedVarIdents.push(v.ident);
       }
-      return false;
+    }
+
+    return {
+      debugPass,
+      globalVarIdents: nonSharedVarIdents,
+      sharedModuleName: analysis.sharedModuleName,
+      sharedVarIdToAttr,
+      sharedVarIdents,
+      usedVarIdents,
+      asyncFnNames: analysis.asyncFnNames,
     };
+  }
 
-    try {
-      resetCodegenPassContext({ debugPass: false });
-      pythonGenerator.init(workspace);
-      const usedVarIds = new Set<string>();
-      for (const blk of workspace.getAllBlocks(false)) {
-        if (blk.isShadow() || !blk.isEnabled()) continue;
-        if (isInsideSharedFunction(blk)) continue;
-        if (blk.getField('VAR')) {
-          const vId = blk.getFieldValue('VAR');
-          if (vId) usedVarIds.add(String(vId));
-        }
-      }
-      for (const v of workspace.getVariableMap().getAllVariables()) {
-        const ident = pythonGenerator.getVariableName(v.getId());
-        varEntries.push([v.getName(), ident]);
-        varIdToIdent.set(v.getId(), ident);
-        if (usedVarIds.has(v.getId())) {
-          usedVarIdents.add(ident);
-        }
-        const sharedAttr = sharedAttrByName.get(v.getName());
-        if (sharedAttr && sharedInfo.moduleName && usedVarIds.has(v.getId())) {
-          sharedVarIdToAttr.set(v.getId(), sharedAttr);
-          sharedVarIdents.add(ident);
-          sharedSnapEntries.push([v.getName(), sharedAttr]);
-        } else if (usedVarIds.has(v.getId())) {
-          nonSharedVarIdents.push(ident);
-        }
-      }
-      resetCodegenPassContext({
-        debugPass: false,
-        pythonGlobalVarIdents: nonSharedVarIdents,
-        pythonSharedModuleName: sharedInfo.moduleName,
-        pythonSharedVarIdToAttr: sharedVarIdToAttr,
-        pythonSharedVarIdents: sharedVarIdents,
-        pythonUsedVarIdents: usedVarIdents,
-        pythonAsyncFnNames: asyncFnNames,
-      });
-      rawClean = pythonGenerator.workspaceToCode(workspace);
-      usedSharedClean = codegenContext.usedSharedModule;
-    } finally {
-      resetCodegenPassContext({ debugPass: false });
-      pythonGenerator.STATEMENT_PREFIX = prevPrefix;
-      pythonGenerator.STATEMENT_SUFFIX = prevSuffix;
-    }
+  protected prepareDebugPass(): DebugPassPreparation<void> {
+    return {
+      statementPrefix: PY_DEBUG_STATEMENT_PREFIX,
+      meta: undefined,
+    };
+  }
 
-    const { scopes: variableScopes, allLocalEntries } = analyzeWorkspaceScopes(
-      workspace,
-      varIdToIdent,
-    );
-
-    const cleanRouter = buildEntryDispatchRouters(workspace, this, false);
-    const cleanPrependLines: string[] = [];
-    if (usedSharedClean && sharedInfo.moduleName) {
-      cleanPrependLines.push(`import ${sharedInfo.moduleName}`);
-    }
-    for (const imp of cleanRouter.autoImports) {
-      if (!rawClean.includes(imp) && !cleanPrependLines.includes(imp)) {
-        cleanPrependLines.push(imp);
-      }
-    }
-    const mergedCleanBody = [
-      cleanPrependLines.join('\n'),
-      rawClean.trim(),
-      cleanRouter.routerCode.trim(),
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-
-    const header = eventDriven
-      ? `# 由 PolyBlock 自动生成 (Target: Python 3 · Async Coroutine Event ABI)\n`
-      : `# 由 PolyBlock 自动生成 (Target: Python 3 · Async Coroutine ABI)\n`;
-    const combinedClean = mergedCleanBody
-      ? `${header}${mergedCleanBody}\n`
-      : `${header}# 请从左侧拖入积木开始编排`;
-    const { code, sourceMap, lineToBlock } = extractSourceMap(combinedClean);
-
-    // --- Pass 2: Instrumented single-track coroutine sandbox debug code ---
-    let debugBody = '';
-    let usedSharedDebug = false;
-    try {
-      resetCodegenPassContext({
-        debugPass: true,
-        pythonGlobalVarIdents: nonSharedVarIdents,
-        pythonSharedModuleName: sharedInfo.moduleName,
-        pythonSharedVarIdToAttr: sharedVarIdToAttr,
-        pythonSharedVarIdents: sharedVarIdents,
-        pythonUsedVarIdents: usedVarIdents,
-        pythonAsyncFnNames: asyncFnNames,
-      });
-      pythonGenerator.STATEMENT_PREFIX = `await _poly_tick(%1, _poly_snap(locals(), globals()))\n`;
-      pythonGenerator.STATEMENT_SUFFIX = null;
-      debugBody = pythonGenerator.workspaceToCode(workspace);
-      usedSharedDebug = codegenContext.usedSharedModule;
-    } finally {
-      resetCodegenPassContext({ debugPass: false });
-      pythonGenerator.STATEMENT_PREFIX = prevPrefix;
-      pythonGenerator.STATEMENT_SUFFIX = prevSuffix;
-    }
+  protected assembleDebugOutputs(
+    input: DebugAssemblyInput<void>,
+  ): { debugCode: string; moduleDebugCode: string } {
+    const {
+      fullDebugBody,
+      companionDebugBody,
+      keepAliveExternal,
+      usedSharedDebug,
+      sharedModuleName,
+      analysis,
+      allLocalEntries,
+    } = input;
 
     const activeSharedModName =
-      usedSharedDebug && sharedInfo.moduleName ? sharedInfo.moduleName : '';
+      usedSharedDebug && sharedModuleName ? sharedModuleName : '';
 
-    const snapVarEntries: Array<[string, string]> = varEntries.filter(
-      ([, ident]) => !sharedVarIdents.has(ident),
-    );
+    const sharedVarIdents = new Set<string>();
+    const sharedSnapEntries: Array<[string, string]> = [];
+    for (const v of analysis.variables) {
+      if (v.used && v.sharedAttr && sharedModuleName) {
+        sharedVarIdents.add(v.ident);
+        sharedSnapEntries.push([v.label, v.sharedAttr]);
+      }
+    }
+
+    const snapVarEntries: Array<[string, string]> = analysis.variables
+      .filter((v) => !sharedVarIdents.has(v.ident))
+      .map((v) => [v.label, v.ident]);
     const seenPyLabels = new Set([
       ...snapVarEntries.map(([label]) => label),
       ...sharedSnapEntries.map(([label]) => label),
@@ -989,29 +936,6 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       ``,
     ].join('\n');
 
-    const debugRouter = buildEntryDispatchRouters(workspace, this, true);
-    const debugPrependLines: string[] = [];
-    if (usedSharedDebug && sharedInfo.moduleName) {
-      debugPrependLines.push(`import ${sharedInfo.moduleName}`);
-    }
-    for (const imp of debugRouter.autoImports) {
-      if (!debugBody.includes(imp) && !debugPrependLines.includes(imp)) {
-        debugPrependLines.push(imp);
-      }
-    }
-    const fullDebugBody = [
-      debugPrependLines.join('\n'),
-      debugBody.trim(),
-      debugRouter.routerCode.trim(),
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-
-    const companionDebugBody = fullDebugBody
-      .split('\n')
-      .filter((line) => !/^await _poly_tick\(/.test(line))
-      .join('\n');
-
     const driver = buildPythonEventLoopDriver(keepAliveExternal);
     const debugCode = fullDebugBody
       ? `${debugPrelude}${fullDebugBody}\n${driver}\n_poly.final_snap(_poly_snap(locals(), globals()))\n`
@@ -1019,60 +943,63 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
     const moduleDebugCode = companionDebugBody.trim()
       ? `${companionDebugPrelude}${companionDebugBody}\n`
       : '';
-
-    return {
-      language: this.id,
-      code,
-      debugCode,
-      moduleDebugCode,
-      sourceMap,
-      lineToBlock,
-      diagnostics: analyzeWorkspaceDiagnostics(workspace, 'python'),
-      blockCount: workspace
-        .getAllBlocks(false)
-        .filter((b) => !b.isShadow()).length,
-      variableNames: varEntries.map(([label]) => label),
-      variableScopes,
-      isEventDriven: eventDriven,
-    };
-    });
+    return { debugCode, moduleDebugCode };
   }
 
-  registerExtensionBlock(ctx: ExtensionBlockRegisterContext): void {
-    const { pack, section, block: b } = ctx;
-    const pySpec = b.code?.python;
-    if (pySpec) {
-      const pyImports =
-        pySpec.imports !== undefined ? pySpec.imports : pack.imports?.python;
-      pythonGenerator.forBlock[b.type] = (block, generator) => {
-        hoistImports(generator, pyImports);
-        const rendered = renderExtensionTemplate(
-          pySpec.template,
-          b,
-          block,
-          'python',
-          {
-            resolveValueInput: (blk, argName) =>
-              generator.valueToCode(blk, argName, Order.NONE) || '""',
-            resolveVarField: (blk, argName) =>
-              formatPythonVarRef(String(blk.getFieldValue(argName) || ''), generator, blk),
-          },
-          pack,
-          section,
-        );
-        if (b.kind === 'value') {
-          return [rendered, Order.ATOMIC];
+  protected getSharedProcDebugStatementPrefix(): string {
+    return PY_DEBUG_STATEMENT_PREFIX;
+  }
+
+  formatDispatchRouter(
+    eventName: string,
+    branches: EntryDispatchBranchSpec[],
+    debugPass: boolean,
+  ): { autoImports: string[]; code: string } {
+    if (branches.length === 0) return { autoImports: [], code: '' };
+    const paramsStr = (branches[0].params ?? []).join(', ');
+    const defKw = debugPass ? 'async def' : 'def';
+    const hasSibling = branches.some((br) => !br.isLocal);
+    const lines: string[] = [];
+    branches.forEach((br, idx) => {
+      const kw = idx === 0 ? 'if' : 'elif';
+      const cond = br.condition.python ?? this.dialect.boolTrue;
+      const comment = br.comment.python ?? '';
+      const callArgs = br.passParams ? paramsStr : '';
+      const srcTag = br.isLocal
+        ? ''
+        : comment
+          ? ` (${br.scriptName}.py)`
+          : `  # ${br.scriptName}.py`;
+      if (br.isLocal) {
+        const callExpr = debugPass
+          ? `await ${br.fnName}(${callArgs})`
+          : `${br.fnName}(${callArgs})`;
+        lines.push(`  ${kw} ${cond}:${comment}${srcTag}\n    ${callExpr}`);
+      } else {
+        const modKey = JSON.stringify(sanitizeLocalIdent(br.scriptName));
+        if (debugPass) {
+          lines.push(
+            `  ${kw} ${cond}:${comment}${srcTag}\n` +
+              `    _m = sys.modules.get(${modKey})\n` +
+              `    if _m and hasattr(_m, ${JSON.stringify(br.fnName)}):\n` +
+              `      _ret = getattr(_m, ${JSON.stringify(br.fnName)})(${callArgs})\n` +
+              `      if hasattr(_ret, 'send'):\n` +
+              `        await _ret`,
+          );
+        } else {
+          lines.push(
+            `  ${kw} ${cond}:${comment}${srcTag}\n` +
+              `    _m = sys.modules.get(${modKey})\n` +
+              `    if _m and hasattr(_m, ${JSON.stringify(br.fnName)}):\n` +
+              `      _m.${br.fnName}(${callArgs})`,
+          );
         }
-        return `${rendered}\n`;
-      };
-    } else {
-      pythonGenerator.forBlock[b.type] = () => {
-        if (b.kind === 'value') {
-          return ['None  # 未提供 code.python.template', Order.ATOMIC];
-        }
-        return `# [PolyBlock] 积木 "${b.type}" 未提供 code.python.template\n`;
-      };
-    }
+      }
+    });
+    return {
+      autoImports: hasSibling ? ['import sys'] : [],
+      code: `${defKw} ${eventName}(${paramsStr}):\n${lines.join('\n')}\n`,
+    };
   }
 
   registerExtensionHat(ctx: ExtensionHatRegisterContext): void {
@@ -1135,26 +1062,12 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       if (matchingHats.length === 0) return '';
 
       if (shouldExtractBranches()) {
-        const fnPrefix = hatSpec.extractBranchFnPrefix ?? `${hatSpec.eventName}_`;
-        const usedFnNames = new Set<string>();
-        const fnDefs: string[] = [];
-
-        matchingHats.forEach((hatBlk, idx) => {
-          const comment = hatSpec.branchComment?.python
-            ? renderHatTpl(hatSpec.branchComment.python, hatBlk)
-            : '';
-          const rawKey = hatSpec.duplicateKeyTemplate
-            ? renderHatTpl(hatSpec.duplicateKeyTemplate, hatBlk)
-            : String(idx);
-          const safeSuffix = rawKey.replace(/[^A-Za-z0-9_]+/g, '_') || String(idx);
-          let fnName = `${fnPrefix}${safeSuffix}`;
-          let dupIdx = 2;
-          while (usedFnNames.has(fnName)) {
-            fnName = `${fnPrefix}${safeSuffix}_${dupIdx}`;
-            dupIdx += 1;
-          }
-          usedFnNames.add(fnName);
-
+        const extracted = this.resolveExtractedHatBranches(
+          matchingHats,
+          hatSpec,
+          renderHatTpl,
+        );
+        const fnDefs = extracted.map(({ block: hatBlk, fnName, comment }) => {
           const rawBody = generator.statementToCode(hatBlk, 'BODY');
           const branchGlobalLine = buildPythonGlobalLineForBlocks(
             [hatBlk],
@@ -1169,18 +1082,15 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
           const safeBody = rawBody.trim() ? rawBody : '  pass\n';
           const headerComment = comment.trim() ? `${comment.trim()}\n` : '';
           if (codegenContext.debugPass) {
-            fnDefs.push(
-              `${defKw} ${fnName}(${branchParamsStr}):\n${branchGlobalLine}${branchHoistedLocals}${safeBody}\n`,
-            );
-          } else {
-            fnDefs.push(
-              `${SENTINEL_START_PREFIX}'${hatBlk.id}'__\n` +
-                `${headerComment}` +
-                `${defKw} ${fnName}(${branchParamsStr}):\n` +
-                `${branchGlobalLine}${branchHoistedLocals}${safeBody}` +
-                `${SENTINEL_END_PREFIX}'${hatBlk.id}'__\n`,
-            );
+            return `${defKw} ${fnName}(${branchParamsStr}):\n${branchGlobalLine}${branchHoistedLocals}${safeBody}\n`;
           }
+          return (
+            `${SENTINEL_START_PREFIX}'${hatBlk.id}'__\n` +
+            `${headerComment}` +
+            `${defKw} ${fnName}(${branchParamsStr}):\n` +
+            `${branchGlobalLine}${branchHoistedLocals}${safeBody}` +
+            `${SENTINEL_END_PREFIX}'${hatBlk.id}'__\n`
+          );
         });
 
         return `${fnDefs.join('\n')}`;
@@ -1223,109 +1133,6 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
 
       return `${defKw} ${hatSpec.eventName}(${paramsStr}):\n${dispatchGlobalLine}${dispatchHoistedLocals}${branches.join('')}\n`;
     };
-  }
-
-  compileSharedProcedure(input: SharedProcCompileInput): SharedProcCompileOutput {
-    registerPythonBlockGenerators();
-    const ws = new Blockly.Workspace();
-    const isolatedJson: Record<string, unknown> = {
-      blocks: {
-        languageVersion: 0,
-        blocks: [input.blockJson],
-      },
-      variables: input.scriptVariables,
-    };
-
-    try {
-      Blockly.serialization.workspaces.load(isolatedJson, ws);
-      const topBlock = ws.getTopBlocks(false)[0];
-      if (!topBlock) {
-        return {
-          ident: sanitizeLocalIdent(input.name),
-          imports: [],
-          cleanFnCode: '',
-          debugFnCode: '',
-        };
-      }
-
-      const prevPrefix = pythonGenerator.STATEMENT_PREFIX;
-      const prevSuffix = pythonGenerator.STATEMENT_SUFFIX;
-      const sharedVarIdToAttr = new Map<string, string>();
-      const sharedVarIdents = new Set<string>();
-      let cleanFnCode = '';
-      let debugFnCode = '';
-      let imports: string[] = [];
-      let procIdent = sanitizeLocalIdent(input.name);
-
-      try {
-        resetCodegenPassContext({ debugPass: false, compilingSharedModule: true });
-        pythonGenerator.init(ws);
-        for (const v of ws.getVariableMap().getAllVariables()) {
-          const ident = pythonGenerator.getVariableName(v.getId());
-          const attr = input.sharedAttrByName.get(v.getName());
-          if (attr) {
-            sharedVarIdToAttr.set(v.getId(), attr);
-            sharedVarIdents.add(ident);
-          }
-        }
-        procIdent = pythonGenerator.getProcedureName(input.name);
-        pythonGenerator.finish('');
-        const asyncNames = computeAsyncFunctionNames(ws, input.allAsyncSharedFnNames);
-
-        resetCodegenPassContext({
-          debugPass: false,
-          compilingSharedModule: true,
-          pythonSharedModuleName: input.moduleName,
-          pythonSharedVarIdToAttr: sharedVarIdToAttr,
-          pythonSharedVarIdents: sharedVarIdents,
-          pythonAsyncFnNames: asyncNames,
-        });
-        pythonGenerator.STATEMENT_PREFIX = null;
-        pythonGenerator.STATEMENT_SUFFIX = null;
-        pythonGenerator.init(ws);
-        pythonGenerator.blockToCode(topBlock);
-        const defs = (
-          pythonGenerator as unknown as { definitions_: Record<string, string> }
-        ).definitions_;
-        imports = Object.entries(defs)
-          .filter(
-            ([k]) =>
-              !k.startsWith('%') &&
-              k !== 'variables' &&
-              k !== 'import_poly_shared',
-          )
-          .map(([, v]) => v.trim())
-          .filter(Boolean);
-        cleanFnCode = (defs[`%${procIdent}`] ?? '').trim();
-        pythonGenerator.finish('');
-
-        resetCodegenPassContext({
-          debugPass: true,
-          compilingSharedModule: true,
-          pythonSharedModuleName: input.moduleName,
-          pythonSharedVarIdToAttr: sharedVarIdToAttr,
-          pythonSharedVarIdents: sharedVarIdents,
-          pythonAsyncFnNames: asyncNames,
-        });
-        pythonGenerator.STATEMENT_PREFIX = `await _poly_tick(%1, _poly_snap(locals(), globals()))\n`;
-        pythonGenerator.STATEMENT_SUFFIX = null;
-        pythonGenerator.init(ws);
-        pythonGenerator.blockToCode(topBlock);
-        const debugDefs = (
-          pythonGenerator as unknown as { definitions_: Record<string, string> }
-        ).definitions_;
-        debugFnCode = (debugDefs[`%${procIdent}`] ?? cleanFnCode).trim();
-        pythonGenerator.finish('');
-      } finally {
-        resetCodegenPassContext({ debugPass: false, compilingSharedModule: false });
-        pythonGenerator.STATEMENT_PREFIX = prevPrefix;
-        pythonGenerator.STATEMENT_SUFFIX = prevSuffix;
-      }
-
-      return { ident: procIdent, imports, cleanFnCode, debugFnCode };
-    } finally {
-      ws.dispose();
-    }
   }
 
   formatSharedModuleDocument(input: SharedModuleDocumentInput): {
