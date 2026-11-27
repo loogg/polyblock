@@ -1,10 +1,9 @@
 import * as Blockly from 'blockly';
 import {
   buildChannelDropdownOptions,
-  DEFAULT_TIMER_COUNT,
-  DEFAULT_TIMER_POOL_KEY,
+  DEFAULT_CHANNEL_COUNT,
   EDIT_TIMER_ALIAS_SENTINEL,
-  MAX_TIMER_COUNT,
+  MAX_CHANNEL_COUNT,
   triggerChannelAliasPrompt,
 } from './timerConfigBridge';
 
@@ -30,11 +29,11 @@ export class ChannelIdFieldDropdown extends Blockly.FieldDropdown {
   private pendingValue: string | null = null;
 
   constructor(opts: ChannelFieldOptions = {}) {
-    const configKey = opts.configKey || DEFAULT_TIMER_POOL_KEY;
-    const prefix = opts.prefix || 'T';
-    const poolLabel = opts.label || '定时器通道';
-    const defaultCount = opts.defaultCount ?? DEFAULT_TIMER_COUNT;
-    const maxCount = opts.maxCount ?? MAX_TIMER_COUNT;
+    const configKey = opts.configKey || 'default';
+    const prefix = opts.prefix || 'CH';
+    const poolLabel = opts.label || '通道';
+    const defaultCount = opts.defaultCount ?? DEFAULT_CHANNEL_COUNT;
+    const maxCount = opts.maxCount ?? MAX_CHANNEL_COUNT;
 
     super(function (this: Blockly.FieldDropdown) {
       const self = this as ChannelIdFieldDropdown;

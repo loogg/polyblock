@@ -49,7 +49,8 @@ export const RT_PACK: PolyExtensionPack = {
             scopeLabelTemplate: 'on_run (周期运行)',
             scopeShortTemplate: 'on_run',
             scopeCategory: 'lifecycle',
-            keepsAlive: true,
+            // Managed by periodic `hasRun && runActive` scheduler, not as an always-on external IRQ listener
+            keepsAlive: false,
           },
         },
         {
@@ -75,19 +76,19 @@ export const RT_PACK: PolyExtensionPack = {
               type: 'field_dropdown',
               name: 'ACTION',
               options: [
-                ['启动', 'start'],
-                ['停止', 'stop'],
+                ['启动', 'start_run'],
+                ['停止', 'stop_run'],
               ],
             },
           ],
           inputsInline: true,
           blockStyle: 'event_stmt_blocks',
-          fields: { ACTION: 'stop' },
+          fields: { ACTION: 'stop_run' },
           tooltip:
             '在运行时启动或暂停周期运行调度（默认使能为 1，对应 rt.start_run / rt.stop_run）。',
           keywords: '启动 停止 暂停 on_run 周期运行 start_run stop_run',
-          lua: { template: 'rt.{{ACTION:action_run}}()' },
-          python: { template: 'rt.{{ACTION:action_run}}()' },
+          lua: { template: 'rt.{{ACTION}}()' },
+          python: { template: 'rt.{{ACTION}}()' },
         },
         {
           type: 'poly_on_stop',

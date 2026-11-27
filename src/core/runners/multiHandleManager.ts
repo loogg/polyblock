@@ -1,5 +1,6 @@
 import * as Blockly from 'blockly';
 import type {
+  ChannelPoolConfig,
   DiagnosticItem,
   LogLevel,
   ProjectModel,
@@ -11,6 +12,7 @@ import { backendRegistry } from '../backends/registry';
 import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { buildHandleSharedModule } from '../backends/sharedModule';
 import {
+  DEFAULT_CHANNEL_COUNT,
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
   setActiveHandleSharedFunctions,
@@ -23,10 +25,7 @@ import { CAP_RT_TIMERS } from '../capabilities/registry';
 import { resolveProjectModules } from '../extensions/moduleResolver';
 import { extensionRegistry } from '../extensions/registry';
 import type { ExtensionModuleSource } from '../extensions/types';
-import {
-  getAllHandleChannelPoolConfigs,
-  getHandleTimerConfig,
-} from '../projects/store';
+import { getAllHandleChannelPoolConfigs } from '../projects/store';
 import { WasmoonLuaRunner } from './luaRunner';
 import { MicroPythonWasmRunner } from './pythonRunner';
 import type { RunResult, RunnerStatus, ScriptRunner } from './types';
@@ -34,7 +33,7 @@ import type { RunResult, RunnerStatus, ScriptRunner } from './types';
 export function compileScriptHeadless(
   workspaceJson: Record<string, unknown>,
   language: ScriptLanguageId,
-  channelPoolConfigs: Record<string, ReturnType<typeof getHandleTimerConfig>>,
+  channelPoolConfigs: Record<string, ChannelPoolConfig>,
 ): {
   code: string;
   debugCode: string;
@@ -69,16 +68,13 @@ export function buildHandleScriptModules(
   handle: RuntimeHandle,
   excludeScriptId: string,
   language: ScriptLanguageId,
-  defaultTimerCount = 8,
-  channelPoolConfigs?: Record<string, ReturnType<typeof getHandleTimerConfig>>,
+  channelPoolConfigs: Record<string, ChannelPoolConfig> = {},
   liveScriptOverride?: { scriptId: string; workspace: Record<string, unknown> },
   useDebugCompanion = true,
 ): ExtensionModuleSource[] {
   const modules: ExtensionModuleSource[] = [];
   const candidates = handle.scripts.filter((s) => s.id !== excludeScriptId);
-  const poolCfgs = channelPoolConfigs ?? {
-    [CAP_RT_TIMERS]: getHandleTimerConfig(handle, defaultTimerCount),
-  };
+  const poolCfgs = channelPoolConfigs;
   const effectiveHandle: RuntimeHandle = liveScriptOverride
     ? {
         ...handle,
@@ -199,12 +195,11 @@ export class MultiHandleRunnerOrchestrator {
       const entryScript =
         handle.scripts.find((s) => s.id === handle.entryScriptId) ??
         handle.scripts[0];
-      const timerCfg = getHandleTimerConfig(handle, project.defaultTimerCount);
-      const poolCfgs = getAllHandleChannelPoolConfigs(
-        handle,
-        channelPools,
-        project.defaultTimerCount,
-      );
+      const poolCfgs = getAllHandleChannelPoolConfigs(handle, channelPools);
+      const timerCfg = poolCfgs[CAP_RT_TIMERS] ?? {
+        count: DEFAULT_CHANNEL_COUNT,
+        aliases: {},
+      };
       setActiveChannelPoolConfigs(poolCfgs);
       setActiveHandleSharedVariables(collectHandleSharedVariableNames(handle));
       setActiveHandleSharedVarInitials(handle.variableInitialValues);
@@ -221,7 +216,6 @@ export class MultiHandleRunnerOrchestrator {
         handle,
         entryScript.id,
         project.language,
-        project.defaultTimerCount,
         poolCfgs,
       );
       setActiveHandleScripts(scriptMetas, entryScript.id);

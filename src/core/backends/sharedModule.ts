@@ -2,7 +2,7 @@ import * as Blockly from 'blockly';
 import { luaGenerator } from 'blockly/lua';
 import { pythonGenerator } from 'blockly/python';
 import type {
-  ProjectTimerConfig,
+  ChannelPoolConfig,
   RuntimeHandle,
   ScriptLanguageId,
   VariableInitialValue,
@@ -345,7 +345,7 @@ function compileSingleSharedProc(
 export function buildHandleSharedModule(
   handle: RuntimeHandle,
   language: ScriptLanguageId,
-  channelPoolConfigs?: Record<string, Partial<ProjectTimerConfig>>,
+  channelPoolConfigs?: Record<string, Partial<ChannelPoolConfig>>,
   liveScriptOverride?: { scriptId: string; workspace: Record<string, unknown> },
 ): HandleSharedModuleResult | null {
   const effectiveHandle: RuntimeHandle = liveScriptOverride

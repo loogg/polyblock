@@ -58,9 +58,9 @@ export interface VariableScopeNode {
   variables: ScopedVariableItem[];
 }
 
-/** Per-handle timer capability config stored under handle.capabilityConfigs['rt.timers']. */
-export interface ProjectTimerConfig {
-  /** Number of available timer channels for this handle (1..32, default 8 -> IDs 0..7). */
+/** Per-handle declarative channel-pool config stored under handle.capabilityConfigs[configKey]. */
+export interface ChannelPoolConfig {
+  /** Number of available channels for this handle (e.g. 1..32 -> IDs 0..count-1). */
   count: number;
   /** Optional friendly labels keyed by stringified integer ID (e.g. "0": "心跳灯"). */
   aliases: Record<string, string>;
@@ -75,7 +75,8 @@ export interface TargetProfile {
   description: string;
   defaultLanguage: ScriptLanguageId;
   maxHandles: number;
-  defaultTimerCount: number;
+  /** Optional per-channel-pool default count overrides keyed by pool configKey (e.g. `{ "rt.timers": 16 }`). */
+  defaultChannelCounts?: Record<string, number>;
   /** Default enabled capability IDs (pack IDs like `"rt"` or section IDs like `"rt.timers"`). */
   capabilities: string[];
   builtin?: boolean;
@@ -99,7 +100,7 @@ export interface RuntimeTelemetry {
   runActive: boolean;
   runPeriodMs: number;
   runCount: number;
-  hasOnButton: boolean;
+  hasExternalEvents: boolean;
   startCoState?: StartCoroutineState;
   timeSliceMs?: number;
   timers: RuntimeTimerTelemetry[];
@@ -177,8 +178,6 @@ export interface ProjectModel {
    * loading without polluting their global library.
    */
   bundledExtensions?: PolyExtensionPack[];
-  /** Project default timer channel count when rt.timers is enabled (1..32). */
-  defaultTimerCount: number;
   activeHandleId: string;
   handles: RuntimeHandle[];
   createdAt: string;

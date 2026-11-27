@@ -13,7 +13,8 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { getHandleTimerConfig } from '../core/projects/store';
+import type { ResolvedHandleChannelPoolSpec } from '../core/extensions/types';
+import { formatHandleChannelPoolsSummary } from '../core/projects/store';
 import type { ProjectScript, RuntimeHandle } from '../types/project';
 
 interface ScriptTabBarProps {
@@ -23,8 +24,7 @@ interface ScriptTabBarProps {
   activeScriptId: string;
   entryScriptId: string;
   extension: string;
-  hasTimersCapability: boolean;
-  defaultTimerCount: number;
+  channelPools: ResolvedHandleChannelPoolSpec[];
   showExplorer: boolean;
   disabled?: boolean;
   sharedModuleTab?: {
@@ -54,8 +54,7 @@ export function ScriptTabBar({
   activeScriptId,
   entryScriptId,
   extension,
-  hasTimersCapability,
-  defaultTimerCount,
+  channelPools,
   showExplorer,
   disabled = false,
   sharedModuleTab = null,
@@ -122,7 +121,7 @@ export function ScriptTabBar({
   const menuScript = menuState
     ? scripts.find((s) => s.id === menuState.scriptId) ?? null
     : null;
-  const activeHandleTimer = getHandleTimerConfig(activeHandle, defaultTimerCount);
+  const activePoolSummary = formatHandleChannelPoolsSummary(activeHandle, channelPools);
 
   return (
     <div
@@ -153,7 +152,7 @@ export function ScriptTabBar({
             setMenuState(null);
           }}
           title={`当前隔离句柄：${activeHandle.name}（共 ${handles.length} 个句柄${
-            hasTimersCapability ? ` · 定时器 0~${activeHandleTimer.count - 1}` : ''
+            activePoolSummary ? ` · ${activePoolSummary}` : ''
           }），点击切换或新建`}
           aria-label="切换或管理运行句柄"
         >
@@ -174,7 +173,7 @@ export function ScriptTabBar({
               项目内隔离句柄 ({handles.length} 个独立 VM)
             </div>
             {handles.map((h) => {
-              const hTimer = getHandleTimerConfig(h, defaultTimerCount);
+              const hPoolSummary = formatHandleChannelPoolsSummary(h, channelPools);
               return (
                 <button
                   key={h.id}
@@ -193,7 +192,7 @@ export function ScriptTabBar({
                   <span className="dropdown-item-label">{h.name}</span>
                   <span className="count-badge">
                     {h.scripts.length} 脚本
-                    {hasTimersCapability ? ` · T0~${hTimer.count - 1}` : ''}
+                    {hPoolSummary ? ` · ${hPoolSummary}` : ''}
                   </span>
                 </button>
               );

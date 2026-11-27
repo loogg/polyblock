@@ -25,11 +25,12 @@ import {
 } from '../core/extensions/simState';
 import type {
   PolyExtensionPack,
+  ResolvedHandleChannelPoolSpec,
   SimStateMap,
   SimWidgetSpec,
 } from '../core/extensions/types';
 import { highlightCodeLine } from '../core/highlight';
-import { getHandleTimerConfig } from '../core/projects/store';
+import { getHandleChannelPoolConfig } from '../core/projects/store';
 import type { RunnerStatus } from '../core/runners/types';
 import type {
   RuntimeHandle,
@@ -51,7 +52,7 @@ interface CodeInspectorProps {
   variables: Record<string, string>;
   errorLine: number | null;
   enabledCapabilities: string[];
-  defaultTimerCount: number;
+  channelPools: ResolvedHandleChannelPoolSpec[];
   simPacks: PolyExtensionPack[];
   simState: SimStateMap;
   projectHandles: RuntimeHandle[];
@@ -87,7 +88,7 @@ export function CodeInspector({
   variables,
   errorLine,
   enabledCapabilities,
-  defaultTimerCount,
+  channelPools,
   simPacks,
   simState,
   projectHandles,
@@ -583,7 +584,16 @@ export function CodeInspector({
               const hRunning =
                 (runnerStatus === 'running' || runnerStatus === 'paused') &&
                 Boolean(tele?.eventLoopActive);
-              const hdlTimerCfg = getHandleTimerConfig(hdl, defaultTimerCount);
+              const timerPoolSpec = channelPools.find(
+                (p) => p.configKey === CAP_RT_TIMERS,
+              );
+              const hdlTimerCfg = getHandleChannelPoolConfig(
+                hdl,
+                CAP_RT_TIMERS,
+                timerPoolSpec?.defaultCount,
+                timerPoolSpec?.min,
+                timerPoolSpec?.max,
+              );
 
               return (
                 <div

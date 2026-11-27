@@ -14,7 +14,7 @@ import {
 } from '../extensions/builtinPacks';
 import { extensionRegistry } from '../extensions/registry';
 import {
-  getHandleTimerConfig,
+  getHandleChannelPoolConfig,
   instantiateProjectFromTemplate,
 } from '../projects/store';
 import {
@@ -125,9 +125,7 @@ async function runLuaDebugInWasmoon(
         scheduler.syncHandlers(Boolean(r), Boolean(t), Boolean(b)),
     );
     lua.global.set('__poly_sim_set', () => {});
-    lua.global.set('__poly_device_emit', () => {});
     lua.global.set('__poly_sim_get', (k: unknown) => (k === 'temp' ? 28 : false));
-    lua.global.set('__poly_mock_input', (k: unknown) => (k === 'temp' ? 28 : false));
     lua.global.set('__poly_co_sleep', (ms: unknown) =>
       scheduler.onStartCoSleep(ms),
     );
@@ -364,9 +362,7 @@ describe('Real WASM Runtime Integration (Lua 5.4 & MicroPython + Coroutine Schem
         luaEvents.push({ kind: String(kind), value });
       };
       const getLua = (key: string) => (key === 'temp' ? 48 : false);
-      lua.global.set('__poly_device_emit', emitLua);
       lua.global.set('__poly_sim_set', emitLua);
-      lua.global.set('__poly_mock_input', getLua);
       lua.global.set('__poly_sim_get', getLua);
       lua.global.set('print', (...args: unknown[]) => {
         luaLogs.push(args.map(String).join(' '));
@@ -445,7 +441,10 @@ sys.modules["board"] = _m
   it('executes event-driven 3-shot timer (on_start -> on_timer(0) x3 -> on_stop) in BOTH Wasmoon Lua 5.4 and MicroPython WASM', async () => {
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles.find((h) => h.name === 'oneshot_vm')!;
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, getHandleTimerConfig(hdl));
+    setActiveChannelPoolConfig(
+      CAP_RT_TIMERS,
+      getHandleChannelPoolConfig(hdl, CAP_RT_TIMERS),
+    );
     const oneshotScript = hdl.scripts[0];
     const ws = new Blockly.Workspace();
     Blockly.serialization.workspaces.load(oneshotScript.workspace, ws);
@@ -607,7 +606,7 @@ sys.modules["board"] = _m
     expect(luaGen.code).toContain('sleep_ms(45)');
 
     const triggerButtonAndStop = (sched: WorkerRuntimeScheduler) => {
-      setTimeout(() => sched.onMockInputsDelta({ btnA: false }, { btnA: true }), 60);
+      setTimeout(() => sched.enqueueEvent('on_button', ['A', true]), 60);
       setTimeout(() => sched.requestGracefulStop(), 160);
     };
 
@@ -932,7 +931,10 @@ sys.modules["board"] = _m
   it('loads split timers.lua/py + Style A1 shared.lua/py and dispatches on_timer_0 / on_timer_1 in BOTH Wasmoon Lua 5.4 & MicroPython WASM', async () => {
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles[0];
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, getHandleTimerConfig(hdl));
+    setActiveChannelPoolConfig(
+      CAP_RT_TIMERS,
+      getHandleChannelPoolConfig(hdl, CAP_RT_TIMERS),
+    );
     setActiveHandleSharedVariables(hdl.sharedVariables ?? []);
     const metas = buildHandleScriptsMeta(hdl);
 
@@ -974,7 +976,7 @@ sys.modules["board"] = _m
       ],
       onReady: (sched) => {
         // Press Button A -> triggers T1 (400ms x 3) handled in timers.lua's on_timer_1()
-        setTimeout(() => sched.onMockInputsDelta({ btnA: false }, { btnA: true }), 80);
+        setTimeout(() => sched.enqueueEvent('on_button', ['A', true]), 80);
         setTimeout(() => sched.requestGracefulStop(), 650);
       },
     });
@@ -992,7 +994,7 @@ sys.modules["board"] = _m
         { name: 'timers', pythonSource: timersModDebugPy, lazyVfs: true },
       ],
       onReady: (sched) => {
-        setTimeout(() => sched.onMockInputsDelta({ btnA: false }, { btnA: true }), 80);
+        setTimeout(() => sched.enqueueEvent('on_button', ['A', true]), 80);
         setTimeout(() => sched.requestGracefulStop(), 650);
       },
     });

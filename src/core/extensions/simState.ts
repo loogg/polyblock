@@ -141,9 +141,8 @@ function findMaxLines(fullOrRawKey: string, packs: PolyExtensionPack[]): number 
 }
 
 /**
- * Applies a worker DEVICE_EVENT (`__poly_sim_set` / `__poly_device_emit`) into the
- * shared simulator state map and returns both the next map and the exact key patch
- * to broadcast to all concurrent handle Workers.
+ * Applies a worker DEVICE_EVENT (`__poly_sim_set`) into the shared simulator state map
+ * and returns both the next map and the exact key patch to broadcast to concurrent Workers.
  */
 export function applySimDeviceEvent(
   prev: SimStateMap,
@@ -154,28 +153,12 @@ export function applySimDeviceEvent(
   let targetKey = kind;
   let mode: 'set' | 'append' | 'clear' = 'set';
 
-  if (kind === 'oled_clear') {
-    targetKey = qualifySimKey('virtual-board', 'oled');
-    mode = 'clear';
-  } else if (kind === 'oled_show') {
-    targetKey = qualifySimKey('virtual-board', 'oled');
-    mode = 'append';
-  } else if (kind.endsWith(':clear')) {
+  if (kind.endsWith(':clear')) {
     targetKey = kind.slice(0, -6);
     mode = 'clear';
   } else if (kind.endsWith(':append')) {
     targetKey = kind.slice(0, -7);
     mode = 'append';
-  }
-
-  if (!targetKey.includes('::') && !targetKey.startsWith(GLOBAL_SIM_KEY_PREFIX)) {
-    // If an unqualified legacy key matches a unique widget in an enabled pack, normalize it
-    for (const p of packs) {
-      if ((p.simWidgets ?? []).some((w) => w.key === targetKey)) {
-        targetKey = qualifySimKey(p.id, targetKey);
-        break;
-      }
-    }
   }
 
   let nextVal: unknown;

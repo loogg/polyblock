@@ -171,11 +171,7 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     return;
   }
   if (msg.type === 'UPDATE_MOCK_INPUTS') {
-    const prev = currentMockInputs;
     currentMockInputs = { ...currentMockInputs, ...msg.mockInputs };
-    if (activeScheduler?.runId === msg.runId) {
-      activeScheduler.onMockInputsDelta(prev, currentMockInputs);
-    }
     return;
   }
   if (msg.type === 'EMIT_EVENT') {
@@ -263,9 +259,6 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
         if (!packId || rawKey.startsWith('global:') || rawKey.includes('::')) {
           return rawKey;
         }
-        if (rawKey === 'oled_clear' || rawKey === 'oled_show') {
-          return rawKey;
-        }
         return `${packId}::${rawKey}`;
       };
 
@@ -275,14 +268,7 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
         value: unknown,
       ) => {
         const k = qualifyKey(packId, String(rawKind));
-        if (k === 'oled_clear') {
-          currentMockInputs['virtual-board::oled'] = [];
-        } else if (k === 'oled_show') {
-          const prev = Array.isArray(currentMockInputs['virtual-board::oled'])
-            ? (currentMockInputs['virtual-board::oled'] as string[])
-            : [];
-          currentMockInputs['virtual-board::oled'] = [...prev, String(value)].slice(-8);
-        } else if (k.endsWith(':clear')) {
+        if (k.endsWith(':clear')) {
           currentMockInputs[k.slice(0, -6)] = [];
         } else if (k.endsWith(':append')) {
           const base = k.slice(0, -7);
@@ -309,12 +295,10 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
         emitScopedState(undefined, kind, value);
       const getSimState = (key: string) => getScopedState(undefined, key);
 
-      engine.global.set('__poly_device_emit', emitDeviceState);
       engine.global.set('__poly_sim_set', emitDeviceState);
       engine.global.set('__poly_sim_set_scoped', (packId: string, kind: string, value: unknown) =>
         emitScopedState(String(packId), kind, value),
       );
-      engine.global.set('__poly_mock_input', getSimState);
       engine.global.set('__poly_sim_get', getSimState);
       engine.global.set('__poly_sim_get_scoped', (packId: string, key: string) =>
         getScopedState(String(packId), key),
@@ -419,9 +403,7 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
               local _pid = ${safePackId}
               local _env = setmetatable({
                 __poly_sim_set = function(k, v) return __poly_sim_set_scoped(_pid, k, v) end,
-                __poly_device_emit = function(k, v) return __poly_sim_set_scoped(_pid, k, v) end,
                 __poly_sim_get = function(k) return __poly_sim_get_scoped(_pid, k) end,
-                __poly_mock_input = function(k) return __poly_sim_get_scoped(_pid, k) end,
               }, { __index = _G })
               local chunk, err = load(${safeSrc}, "@" .. ${safeModName}, "t", _env)
               if not chunk then error(err) end

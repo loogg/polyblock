@@ -10,7 +10,8 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { buildHandleSharedModule } from '../core/backends/sharedModule';
-import { getHandleTimerConfig } from '../core/projects/store';
+import type { ResolvedHandleChannelPoolSpec } from '../core/extensions/types';
+import { formatHandleChannelPoolsSummary } from '../core/projects/store';
 import type { ProjectModel, ScriptLanguageId } from '../types/project';
 
 interface ProjectExplorerProps {
@@ -20,8 +21,7 @@ interface ProjectExplorerProps {
   language: ScriptLanguageId;
   extension: string;
   viewingSharedModule?: boolean;
-  hasTimersCapability: boolean;
-  defaultTimerCount: number;
+  channelPools: ResolvedHandleChannelPoolSpec[];
   disabled?: boolean;
   onSelectHandleScript: (handleId: string, scriptId: string) => void;
   onSelectHandleSharedModule?: (handleId: string) => void;
@@ -38,8 +38,7 @@ export function ProjectExplorer({
   language,
   extension,
   viewingSharedModule = false,
-  hasTimersCapability,
-  defaultTimerCount,
+  channelPools,
   disabled = false,
   onSelectHandleScript,
   onSelectHandleSharedModule,
@@ -107,9 +106,9 @@ export function ProjectExplorer({
                 <span className="explorer-handle-name" title={handle.name}>
                   {handle.name}
                 </span>
-                {hasTimersCapability && (
+                {channelPools.length > 0 && (
                   <span className="explorer-handle-meta">
-                    0~{getHandleTimerConfig(handle, defaultTimerCount).count - 1}
+                    {formatHandleChannelPoolsSummary(handle, channelPools)}
                   </span>
                 )}
                 <div

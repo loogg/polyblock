@@ -25,7 +25,6 @@ import {
   DEFAULT_EXTENSION_TOOLBOX_ORDER,
 } from '../core/blocks/catalog';
 import {
-  CAP_RT_TIMERS,
   hasCapability,
   SAMPLE_CUSTOM_BOARD_TEMPLATE,
   targetProfileRegistry,
@@ -54,8 +53,8 @@ import {
   getHandleChannelPoolConfig,
 } from '../core/projects/store';
 import type {
+  ChannelPoolConfig,
   ProjectModel,
-  ProjectTimerConfig,
   RuntimeHandle,
   ScriptLanguageId,
   TargetProfile,
@@ -78,7 +77,6 @@ interface ProjectSettingsModalProps {
       name?: string;
       description?: string;
       language?: ScriptLanguageId;
-      defaultTimerCount?: number;
     },
   ) => void;
   onApplyTargetProfile: (projectId: string, profileId: string) => void;
@@ -93,10 +91,9 @@ interface ProjectSettingsModalProps {
     patch: {
       autoStart?: boolean;
       description?: string;
-      timerConfig?: ProjectTimerConfig;
       channelPoolUpdate?: {
         configKey: string;
-        config: ProjectTimerConfig;
+        config: ChannelPoolConfig;
         min?: number;
         max?: number;
       };
@@ -161,7 +158,6 @@ export function ProjectSettingsModal({
 
   const selectedHandle: RuntimeHandle =
     project.handles.find((h) => h.id === selectedHandleId) ?? project.handles[0];
-  const hasTimers = hasCapability(project.enabledCapabilities, CAP_RT_TIMERS);
   const activeProfile = targetProfileRegistry.get(project.targetProfileId);
 
   useEffect(() => {
@@ -288,17 +284,14 @@ export function ProjectSettingsModal({
     setAttachTargetPackId(null);
   };
 
-  const readPoolCfg = (pool: ResolvedHandleChannelPoolSpec): ProjectTimerConfig => {
-    const fallback =
-      pool.configKey === CAP_RT_TIMERS ? project.defaultTimerCount : pool.defaultCount;
-    return getHandleChannelPoolConfig(
+  const readPoolCfg = (pool: ResolvedHandleChannelPoolSpec): ChannelPoolConfig =>
+    getHandleChannelPoolConfig(
       selectedHandle,
       pool.configKey,
-      fallback,
+      pool.defaultCount,
       pool.min,
       pool.max,
     );
-  };
 
   const handleSetPoolCount = (pool: ResolvedHandleChannelPoolSpec, nextCount: number) => {
     if (!selectedHandle) return;
@@ -579,36 +572,6 @@ export function ProjectSettingsModal({
                     ))}
                   </div>
                 </div>
-
-                {hasTimers && (
-                  <div className="settings-field-group">
-                    <label className="settings-label">新建句柄默认定时器通道数</label>
-                    <p className="settings-hint">
-                      新建隔离句柄时默认分配的定时器通道数（1~32 路，各句柄仍可在「运行句柄」中独立调整）。
-                    </p>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {[4, 8, 16, 32].map((preset) => (
-                        <button
-                          key={preset}
-                          type="button"
-                          className={
-                            project.defaultTimerCount === preset
-                              ? 'btn-primary'
-                              : 'btn-outline'
-                          }
-                          style={{ padding: '4px 10px', fontSize: 12 }}
-                          onClick={() =>
-                            onUpdateProjectMeta(project.id, {
-                              defaultTimerCount: preset,
-                            })
-                          }
-                        >
-                          {preset} 路
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 

@@ -19,7 +19,6 @@ export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
       '仅启用纯语言通用积木与 on_start 入口，隐藏定时器与虚拟板模拟界面，适合算法、日志与通用逻辑编排。',
     defaultLanguage: 'lua',
     maxHandles: 4,
-    defaultTimerCount: 8,
     capabilities: [],
     builtin: true,
   },
@@ -32,7 +31,6 @@ export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
       '启用完整嵌入式运行时核心包 rt（周期事件 + 每句柄独立多路定时器 + 系统时钟 tick），不含演示外设，适合按需挂载自家硬件扩展包。',
     defaultLanguage: 'lua',
     maxHandles: 8,
-    defaultTimerCount: 8,
     capabilities: [CAP_RT],
     builtin: true,
   },
@@ -45,7 +43,6 @@ export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
       '完整演示多句柄并发 + 嵌入式运行时核心包 rt（周期 / 定时 / 时钟）+ 示例虚拟板外设（LED / 三色灯 / OLED / 温度 / 按键回调）。',
     defaultLanguage: 'lua',
     maxHandles: 8,
-    defaultTimerCount: 8,
     capabilities: [CAP_RT, CAP_VIRTUAL_BOARD],
     builtin: true,
   },
@@ -58,7 +55,6 @@ export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
       '仅启用示例虚拟硬件外设包，不含 rt 运行时周期与定时器，演示不同项目的差异化能力装配。',
     defaultLanguage: 'python',
     maxHandles: 4,
-    defaultTimerCount: 8,
     capabilities: [CAP_VIRTUAL_BOARD],
     builtin: true,
   },
@@ -73,7 +69,9 @@ export const SAMPLE_CUSTOM_BOARD_TEMPLATE: TargetProfile = {
     '演示如何通过纯 JSON 定义目标设备规格：Lua 5.4、最多 8 个隔离句柄、启用 rt（也可按 rt.lifecycle / rt.timers / rt.tick 细粒度裁剪）。',
   defaultLanguage: 'lua',
   maxHandles: 8,
-  defaultTimerCount: 16,
+  defaultChannelCounts: {
+    [CAP_RT_TIMERS]: 16,
+  },
   capabilities: [CAP_RT],
 };
 
@@ -92,7 +90,25 @@ export function validateTargetProfile(raw: unknown): TargetProfile {
     throw new Error('板型必须包含 capabilities 数组');
   }
   const maxHandlesNum = Number(obj.maxHandles);
-  const timerNum = Number(obj.defaultTimerCount);
+  let defaultChannelCounts: Record<string, number> | undefined;
+  if (
+    obj.defaultChannelCounts &&
+    typeof obj.defaultChannelCounts === 'object' &&
+    !Array.isArray(obj.defaultChannelCounts)
+  ) {
+    const cleaned: Record<string, number> = {};
+    for (const [k, v] of Object.entries(
+      obj.defaultChannelCounts as Record<string, unknown>,
+    )) {
+      const n = Number(v);
+      if (k.trim() && Number.isFinite(n)) {
+        cleaned[k.trim()] = Math.max(1, Math.min(64, Math.trunc(n)));
+      }
+    }
+    if (Object.keys(cleaned).length > 0) {
+      defaultChannelCounts = cleaned;
+    }
+  }
   return {
     format: 'polyblock-board',
     version: 1,
@@ -104,9 +120,7 @@ export function validateTargetProfile(raw: unknown): TargetProfile {
     maxHandles: Number.isFinite(maxHandlesNum)
       ? Math.max(1, Math.min(16, Math.trunc(maxHandlesNum)))
       : 8,
-    defaultTimerCount: Number.isFinite(timerNum)
-      ? Math.max(1, Math.min(32, Math.trunc(timerNum)))
-      : 8,
+    ...(defaultChannelCounts ? { defaultChannelCounts } : {}),
     capabilities: obj.capabilities.filter((c): c is string => typeof c === 'string'),
     builtin: Boolean(obj.builtin),
   };

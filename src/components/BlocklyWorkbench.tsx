@@ -45,7 +45,7 @@ import {
   setActiveProjectCapabilities,
   type ChannelAliasPromptRequest,
 } from '../core/blocks/timerConfigBridge';
-import type { ProjectTimerConfig, ThemeMode } from '../types/project';
+import type { ChannelPoolConfig, ThemeMode } from '../types/project';
 import type {
   HandleVariableMutation,
   VariableScopeKind,
@@ -180,7 +180,7 @@ interface BlocklyWorkbenchProps {
   breakpoints: string[];
   enabledCapabilities: string[];
   extraCategories: BlockCategorySpec[];
-  channelPoolConfigs: Record<string, ProjectTimerConfig>;
+  channelPoolConfigs: Record<string, ChannelPoolConfig>;
   onWorkspaceChange: (workspace: Blockly.WorkspaceSvg) => void;
   onHandleVariableEvent?: (mutation: HandleVariableMutation) => void;
   onRequestCreateVariable?: (initialScope: VariableScopeKind) => void;

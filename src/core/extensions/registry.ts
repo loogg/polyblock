@@ -12,7 +12,7 @@ import {
 import type { BlockCategorySpec, ToolboxBlockSpec } from '../blocks/catalog';
 import { createChannelIdField } from '../blocks/channelField';
 import {
-  DEFAULT_TIMER_POOL_KEY,
+  DEFAULT_CHANNEL_COUNT,
   formatChannelLabel,
   getActiveChannelPoolConfig,
   getActiveHandleScriptId,
@@ -438,9 +438,9 @@ function renderTemplate(
   const pool =
     section?.channelPool ??
     (pack ? findSectionForBlockType(pack, def.type)?.channelPool : undefined);
-  const poolKey = pool?.configKey ?? DEFAULT_TIMER_POOL_KEY;
-  const poolPrefix = pool?.prefix ?? 'T';
-  const poolDefault = pool?.defaultCount ?? 8;
+  const poolKey = pool?.configKey ?? 'default';
+  const poolPrefix = pool?.prefix ?? 'CH';
+  const poolDefault = pool?.defaultCount ?? DEFAULT_CHANNEL_COUNT;
 
   return template.replace(
     PLACEHOLDER_RE,
@@ -499,9 +499,6 @@ function renderTemplate(
           ? '按下'
           : '释放';
       }
-      if (mod === 'action_run') {
-        return rawValue === 'stop' ? 'stop_run' : 'start_run';
-      }
       if (mod === 'channel_comment_lua') {
         const tid = Math.trunc(Number(rawValue || 0));
         const alias = getActiveChannelPoolConfig(poolKey, poolDefault).aliases[
@@ -539,9 +536,9 @@ function renderTemplateFromRawFields(
   section: ResolvedPackSection,
 ): string {
   const pool = section.channelPool;
-  const poolKey = pool?.configKey ?? DEFAULT_TIMER_POOL_KEY;
-  const poolPrefix = pool?.prefix ?? 'T';
-  const poolDefault = pool?.defaultCount ?? 8;
+  const poolKey = pool?.configKey ?? 'default';
+  const poolPrefix = pool?.prefix ?? 'CH';
+  const poolDefault = pool?.defaultCount ?? DEFAULT_CHANNEL_COUNT;
 
   return template.replace(
     PLACEHOLDER_RE,
@@ -685,10 +682,10 @@ function registerSingleBlockInBlockly(
         if (argType === 'field_channel_id') {
           ensureDummy().appendField(
             createChannelIdField({
-              configKey: pool?.configKey ?? DEFAULT_TIMER_POOL_KEY,
-              prefix: pool?.prefix ?? 'T',
+              configKey: pool?.configKey ?? 'default',
+              prefix: pool?.prefix ?? 'CH',
               label: pool?.label ?? '通道',
-              defaultCount: pool?.defaultCount ?? 8,
+              defaultCount: pool?.defaultCount ?? DEFAULT_CHANNEL_COUNT,
               maxCount: pool?.max ?? 32,
             }),
             argName,

@@ -14,11 +14,6 @@ interface TimerSlot {
   running: boolean;
 }
 
-interface QueuedButtonEvent {
-  key: 'A' | 'B';
-  pressed: boolean;
-}
-
 interface QueuedCustomEvent {
   eventName: string;
   args: unknown[];
@@ -67,7 +62,7 @@ export class WorkerRuntimeScheduler {
 
   private hasOnRun = false;
   private hasOnTimer = false;
-  private hasOnButton = false;
+  private hasExternalEvents = false;
   private eventLoopActive = false;
 
   // --- `on_start` coroutine scheduling state (mirrors C ScriptCtx co_state / wake_at) ---
@@ -81,9 +76,8 @@ export class WorkerRuntimeScheduler {
   private activeCallbackName: string | null = null;
   private callbackStartedAt = 0;
 
-  // --- Timers & external event queues ---
+  // --- Timers & declarative external event queue ---
   private timers = new Map<number, TimerSlot>();
-  private buttonQueue: QueuedButtonEvent[] = [];
   private customEventQueue: QueuedCustomEvent[] = [];
   private lastCustomEvent: QueuedCustomEvent | null = null;
   private lastPeriodicKey: string | null = null;
@@ -241,11 +235,11 @@ export class WorkerRuntimeScheduler {
     hasStart: boolean,
     hasOnRun: boolean,
     hasOnTimer: boolean,
-    hasOnButton: boolean,
+    hasExternalEvents: boolean,
   ): boolean {
     this.hasOnRun = Boolean(hasOnRun);
     this.hasOnTimer = Boolean(hasOnTimer);
-    this.hasOnButton = Boolean(hasOnButton);
+    this.hasExternalEvents = Boolean(hasExternalEvents);
 
     this.coState = hasStart ? 'ready' : 'dead';
     this.coWakeAt = 0;
@@ -261,7 +255,7 @@ export class WorkerRuntimeScheduler {
       (this.coState === 'ready' ||
         (this.hasOnRun && this.runActive) ||
         this.hasAnyRunningTimer() ||
-        this.hasOnButton);
+        this.hasExternalEvents);
 
     this.eventLoopActive = active;
     this.emitTelemetry(true);
@@ -346,19 +340,19 @@ export class WorkerRuntimeScheduler {
   syncHandlers(
     hasOnRun: boolean,
     hasOnTimer: boolean,
-    hasOnButton: boolean,
+    hasExternalEvents: boolean,
   ): void {
     const prevHasRun = this.hasOnRun;
     this.hasOnRun = Boolean(hasOnRun);
     this.hasOnTimer = Boolean(hasOnTimer);
-    this.hasOnButton = Boolean(hasOnButton);
+    this.hasExternalEvents = Boolean(hasExternalEvents);
 
     if (!prevHasRun && this.hasOnRun && !this.runExplicitlyControlled) {
       this.runActive = true;
       this.nextRunAt = this.now() + this.runPeriodMs;
       this.wake();
       this.emitTelemetry(true);
-    } else if (this.hasOnButton && !this.eventLoopActive && !this.stopRequested) {
+    } else if (this.hasExternalEvents && !this.eventLoopActive && !this.stopRequested) {
       this.eventLoopActive = true;
       this.wake();
       this.emitTelemetry(true);
@@ -448,25 +442,6 @@ export class WorkerRuntimeScheduler {
     return false;
   }
 
-  onMockInputsDelta(
-    prevInputs: Record<string, unknown>,
-    nextInputs: Record<string, unknown>,
-  ): void {
-    const prevA = Boolean(prevInputs.btnA);
-    const nextA = Boolean(nextInputs.btnA);
-    if (prevA !== nextA) {
-      this.buttonQueue.push({ key: 'A', pressed: nextA });
-      this.wake();
-    }
-
-    const prevB = Boolean(prevInputs.btnB);
-    const nextB = Boolean(nextInputs.btnB);
-    if (prevB !== nextB) {
-      this.buttonQueue.push({ key: 'B', pressed: nextB });
-      this.wake();
-    }
-  }
-
   /** Enqueues a generic declarative event (e.g. `on_button`, `on_robot_estop`, `on_can_rx`). */
   enqueueEvent(eventName: string, args: unknown[] = []): void {
     if (!eventName) return;
@@ -527,7 +502,7 @@ export class WorkerRuntimeScheduler {
       runActive: this.runActive,
       runPeriodMs: this.runPeriodMs,
       runCount: this.runCount,
-      hasOnButton: this.hasOnButton,
+      hasExternalEvents: this.hasExternalEvents,
       startCoState: this.coState,
       timeSliceMs: this.timeSliceMs,
       timers,
@@ -594,20 +569,12 @@ export class WorkerRuntimeScheduler {
         return 'start_resume';
       }
 
-      // 1. Immediate external events (custom declarative events & virtual buttons)
+      // 1. Immediate external events (unified declarative event channel for ALL packs)
       if (this.customEventQueue.length > 0) {
         const ev = this.customEventQueue.shift()!;
         this.lastCustomEvent = ev;
         this.setWaiting(false);
         return `event:${JSON.stringify([ev.eventName, ev.args])}`;
-      }
-
-      if (this.buttonQueue.length > 0) {
-        const ev = this.buttonQueue.shift()!;
-        if (this.hasOnButton) {
-          this.setWaiting(false);
-          return `button:${ev.key}:${ev.pressed ? '1' : '0'}`;
-        }
       }
 
       const now = this.now();
@@ -680,10 +647,7 @@ export class WorkerRuntimeScheduler {
         await this.macrotaskYield(4);
         if (this.stopRequested) continue;
         // Re-check if an urgent external event arrived during the breather
-        if (
-          this.customEventQueue.length > 0 ||
-          (this.buttonQueue.length > 0 && this.hasOnButton)
-        ) {
+        if (this.customEventQueue.length > 0) {
           continue;
         }
         this.coState = 'running';
@@ -704,7 +668,7 @@ export class WorkerRuntimeScheduler {
         this.coState === 'sleeping' ||
         (this.hasOnRun && this.runActive) ||
         this.hasAnyRunningTimer() ||
-        this.hasOnButton;
+        this.hasExternalEvents;
       if (!hasSources) {
         this.eventLoopActive = false;
         this.setWaiting(false);

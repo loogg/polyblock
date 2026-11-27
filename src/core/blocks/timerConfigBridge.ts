@@ -1,13 +1,12 @@
 import type {
-  ProjectTimerConfig,
+  ChannelPoolConfig,
   VariableInitialValue,
 } from '../../types/project';
 import type { ModuleConflictItem } from '../extensions/moduleResolver';
 
-export const DEFAULT_TIMER_COUNT = 8;
-export const MIN_TIMER_COUNT = 1;
-export const MAX_TIMER_COUNT = 32;
-export const DEFAULT_TIMER_POOL_KEY = 'rt.timers';
+export const DEFAULT_CHANNEL_COUNT = 8;
+export const MIN_CHANNEL_COUNT = 1;
+export const MAX_CHANNEL_COUNT = 32;
 export const EDIT_TIMER_ALIAS_SENTINEL = '__EDIT_TIMER_ALIAS__';
 
 export interface ChannelAliasPromptRequest {
@@ -54,6 +53,8 @@ export interface ActiveHandleScriptMeta {
   declaredEvents: string[];
   /** Sibling script names explicitly loaded via `poly_require_script` inside this script. */
   requiredScripts: string[];
+  /** True when this script declares any hat whose `hat.keepsAlive` is true (e.g. external IRQ callbacks). */
+  hasExternalKeepAliveHat?: boolean;
   /** Extracted dispatch branches (e.g. `on_timer_0`, `on_button_A_press`) routed centrally by the entry script. */
   dispatchBranches?: DispatchBranchMeta[];
   /** Non-parameter workspace variable names actively referenced by enabled blocks in this script. */
@@ -62,12 +63,12 @@ export interface ActiveHandleScriptMeta {
   declaredFunctions?: DeclaredFunctionMeta[];
 }
 
-export function normalizeTimerConfig(
-  raw?: Partial<ProjectTimerConfig> | null,
-  fallbackCount = DEFAULT_TIMER_COUNT,
-  minCount = MIN_TIMER_COUNT,
-  maxCount = MAX_TIMER_COUNT,
-): ProjectTimerConfig {
+export function normalizeChannelPoolConfig(
+  raw?: Partial<ChannelPoolConfig> | null,
+  fallbackCount = DEFAULT_CHANNEL_COUNT,
+  minCount = MIN_CHANNEL_COUNT,
+  maxCount = MAX_CHANNEL_COUNT,
+): ChannelPoolConfig {
   const safeMin = Math.max(1, Math.trunc(minCount));
   const safeMax = Math.max(safeMin, Math.min(64, Math.trunc(maxCount)));
   const countNum = Number(raw?.count);
@@ -98,9 +99,7 @@ export function normalizeTimerConfig(
  * Per-configKey isolated channel pool configurations for the currently active RuntimeHandle.
  * Prevents collisions when multiple sections declare `handleConfigs` (`channel-pool`, e.g. `rt.timers` vs `pwm-driver`).
  */
-const activeChannelPools = new Map<string, ProjectTimerConfig>([
-  [DEFAULT_TIMER_POOL_KEY, { count: DEFAULT_TIMER_COUNT, aliases: {} }],
-]);
+const activeChannelPools = new Map<string, ChannelPoolConfig>();
 
 let activeCapabilities: string[] | null = null;
 let activeHandleScripts: ActiveHandleScriptMeta[] = [];
@@ -234,37 +233,31 @@ export function triggerChannelAliasPrompt(req: ChannelAliasPromptRequest): void 
 }
 
 export function setActiveChannelPoolConfigs(
-  configs: Record<string, Partial<ProjectTimerConfig> | undefined>,
+  configs: Record<string, Partial<ChannelPoolConfig> | undefined>,
 ): void {
   activeChannelPools.clear();
   for (const [key, rawCfg] of Object.entries(configs)) {
-    activeChannelPools.set(key, normalizeTimerConfig(rawCfg));
-  }
-  if (!activeChannelPools.has(DEFAULT_TIMER_POOL_KEY)) {
-    activeChannelPools.set(DEFAULT_TIMER_POOL_KEY, {
-      count: DEFAULT_TIMER_COUNT,
-      aliases: {},
-    });
+    activeChannelPools.set(key, normalizeChannelPoolConfig(rawCfg));
   }
 }
 
 export function setActiveChannelPoolConfig(
   configKey: string,
-  cfg?: Partial<ProjectTimerConfig> | null,
-  fallbackCount = DEFAULT_TIMER_COUNT,
-  minCount = MIN_TIMER_COUNT,
-  maxCount = MAX_TIMER_COUNT,
+  cfg?: Partial<ChannelPoolConfig> | null,
+  fallbackCount = DEFAULT_CHANNEL_COUNT,
+  minCount = MIN_CHANNEL_COUNT,
+  maxCount = MAX_CHANNEL_COUNT,
 ): void {
   activeChannelPools.set(
     configKey,
-    normalizeTimerConfig(cfg, fallbackCount, minCount, maxCount),
+    normalizeChannelPoolConfig(cfg, fallbackCount, minCount, maxCount),
   );
 }
 
 export function getActiveChannelPoolConfig(
   configKey: string,
-  fallbackCount = DEFAULT_TIMER_COUNT,
-): ProjectTimerConfig {
+  fallbackCount = DEFAULT_CHANNEL_COUNT,
+): ChannelPoolConfig {
   const found = activeChannelPools.get(configKey);
   if (found) return found;
   return { count: fallbackCount, aliases: {} };
@@ -272,8 +265,8 @@ export function getActiveChannelPoolConfig(
 
 export function formatChannelLabel(
   id: number,
-  cfg: ProjectTimerConfig,
-  prefix = 'T',
+  cfg: ChannelPoolConfig,
+  prefix = 'CH',
 ): string {
   const alias = cfg.aliases[String(id)];
   if (id >= cfg.count) {
@@ -289,10 +282,10 @@ export function formatChannelLabel(
  */
 export function buildChannelDropdownOptions(
   configKey: string,
-  prefix = 'T',
+  prefix = 'CH',
   currentValue?: string | null,
-  defaultCount = DEFAULT_TIMER_COUNT,
-  maxCount = MAX_TIMER_COUNT,
+  defaultCount = DEFAULT_CHANNEL_COUNT,
+  maxCount = MAX_CHANNEL_COUNT,
   includeEditShortcut = true,
 ): Array<[string, string]> {
   const cfg = getActiveChannelPoolConfig(configKey, defaultCount);

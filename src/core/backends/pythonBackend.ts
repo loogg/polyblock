@@ -530,7 +530,7 @@ function buildPythonEventLoopDriver(keepAliveExternal: boolean): string {
 _has_start = 'on_start' in globals() and callable(on_start)
 _has_run = 'on_run' in globals() and callable(on_run)
 _has_timer = 'on_timer' in globals() and callable(on_timer)
-_has_ext = ${keepAliveExternal ? 'True' : "'on_button' in globals() and callable(on_button)"}
+_has_ext = ${keepAliveExternal ? 'True' : 'False'}
 
 async def _poly_start_runner():
   global _POLY_IN_START, _POLY_SLICE_START, _POLY_START_ERR
@@ -571,7 +571,7 @@ def _poly_refresh_handlers():
   _poly.sync_handlers(
     'on_run' in globals() and callable(on_run),
     'on_timer' in globals() and callable(on_timer),
-    _has_ext or ('on_button' in globals() and callable(on_button))
+    _has_ext
   )
 
 _start_task = asyncio.create_task(_poly_start_runner()) if _has_start else None
@@ -591,11 +591,6 @@ try:
       elif isinstance(_ev, str) and _ev.startswith('timer:'):
         if 'on_timer' in globals() and callable(on_timer):
           await _poly_call_cb('on_timer', on_timer, int(_ev[6:]))
-        _poly_refresh_handlers()
-      elif isinstance(_ev, str) and _ev.startswith('button:'):
-        _parts = _ev.split(':')
-        if 'on_button' in globals() and callable(on_button) and len(_parts) == 3:
-          await _poly_call_cb('on_button', on_button, _parts[1], _parts[2] == '1')
         _poly_refresh_handlers()
       elif isinstance(_ev, str) and _ev.startswith('event:'):
         _epayload = json.loads(_ev[6:])

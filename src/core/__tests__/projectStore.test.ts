@@ -32,13 +32,12 @@ import {
   duplicateScriptInProject,
   getActiveHandle,
   getHandleChannelPoolConfig,
-  getHandleTimerConfig,
   instantiateProjectFromTemplate,
   parseImportedProject,
   renameHandleInProject,
   renameScriptInProject,
   sanitizeScriptName,
-  setHandleTimerConfig,
+  setHandleChannelPoolConfig,
 } from '../projects/store';
 import type { WorkspaceStoreState } from '../../types/project';
 
@@ -104,12 +103,12 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
       'sensor_guard',
       'telemetry_hub',
     ]);
-    expect(getHandleTimerConfig(mh.handles[0]).aliases['0']).toBe('云台扫描');
+    expect(getHandleChannelPoolConfig(mh.handles[0], CAP_RT_TIMERS).aliases['0']).toBe('云台扫描');
     expect(getHandleChannelPoolConfig(mh.handles[0], 'pwm-servo', 4).aliases['0']).toBe(
       '云台偏航',
     );
-    expect(getHandleTimerConfig(mh.handles[1]).aliases['0']).toBe('温度巡检');
-    expect(getHandleTimerConfig(mh.handles[2]).aliases['0']).toBe('遥测上报');
+    expect(getHandleChannelPoolConfig(mh.handles[1], CAP_RT_TIMERS).aliases['0']).toBe('温度巡检');
+    expect(getHandleChannelPoolConfig(mh.handles[2], CAP_RT_TIMERS).aliases['0']).toBe('遥测上报');
 
     // Applying a target profile updates capabilities cleanly without clobbering handles
     const switched = applyTargetProfileToProject(
@@ -120,12 +119,12 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     expect(switched.enabledCapabilities).toEqual([CAP_RT]);
     expect(switched.handles).toHaveLength(3);
 
-    const updatedHandle = setHandleTimerConfig(switched.handles[0], {
+    const updatedHandle = setHandleChannelPoolConfig(switched.handles[0], CAP_RT_TIMERS, {
       count: 16,
       aliases: { '2': '电机看门狗' },
     });
-    expect(getHandleTimerConfig(updatedHandle).count).toBe(16);
-    expect(getHandleTimerConfig(updatedHandle).aliases['2']).toBe('电机看门狗');
+    expect(getHandleChannelPoolConfig(updatedHandle, CAP_RT_TIMERS).count).toBe(16);
+    expect(getHandleChannelPoolConfig(updatedHandle, CAP_RT_TIMERS).aliases['2']).toBe('电机看门狗');
   });
 
   it('performs handle CRUD (add, rename, duplicate, safe delete) and script CRUD within a handle', () => {

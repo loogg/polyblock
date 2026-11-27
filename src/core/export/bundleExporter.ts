@@ -58,11 +58,7 @@ function compileHandleAllScripts(
   const pools = extensionRegistry
     .getChannelPools(project.enabledCapabilities, project.localExtensions)
     .map((entry) => entry.pool);
-  const poolCfgs = getAllHandleChannelPoolConfigs(
-    handle,
-    pools,
-    project.defaultTimerCount,
-  );
+  const poolCfgs = getAllHandleChannelPoolConfigs(handle, pools);
   setActiveChannelPoolConfigs(poolCfgs);
   setActiveHandleSharedVariables(collectHandleSharedVariableNames(handle));
   setActiveHandleSharedVarInitials(handle.variableInitialValues);

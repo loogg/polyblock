@@ -166,15 +166,11 @@ export function analyzeWorkspaceDiagnostics(
       seenDispatchByType.set(blk.type, seen);
     }
     if (seen.has(dupKey)) {
-      const isTimer = blk.type === 'poly_on_timer';
+      const scopeLabel = extensionRegistry.renderHatScopeInfo(blk)?.label;
       diagnostics.push({
-        id: isTimer
-          ? `dup-timer-hat-${dupKey}-${blk.id}`
-          : `dup-hat-${blk.type}-${dupKey}-${blk.id}`,
+        id: `dup-hat-${blk.type}-${dupKey}-${blk.id}`,
         severity: 'warning',
-        message: isTimer
-          ? `定时器通道 T${dupKey} 绑定了多个“当定时器触发”回调块，建议合并为一个。`
-          : `回调 ${hatDef.hat.eventName}（条件 ${dupKey}）绑定了多个重复分支，建议合并。`,
+        message: `回调「${scopeLabel ?? `${hatDef.hat.eventName} (${dupKey})`}」绑定了多个重复分支，建议合并为一个。`,
         blockId: blk.id,
       });
     } else {
@@ -447,13 +443,10 @@ export function analyzeWorkspaceDiagnostics(
           (sb) => sb.eventName === localBr.eventName && sb.dupKey === localBr.dupKey,
         );
         if (colliding) {
-          const isTimer = localBr.blockType === 'poly_on_timer';
           diagnostics.push({
             id: `cross-file-branch-dup-${localBr.eventName}-${localBr.dupKey}-${sib.name}-${localBr.blockId}`,
             severity: 'error',
-            message: isTimer
-              ? `定时器通道 T${localBr.dupKey} 与同句柄脚本「${sib.name}」重复绑定，请更换通道号或合并到同一脚本。`
-              : `事件回调 ${localBr.eventName}（条件 ${localBr.dupKey}）与同句柄脚本「${sib.name}」重复绑定，请修改条件或合并。`,
+            message: `事件回调 ${localBr.eventName}（条件 ${localBr.dupKey}）与同句柄脚本「${sib.name}」重复绑定，请修改条件或合并到同一脚本。`,
             blockId: localBr.blockId,
           });
         }

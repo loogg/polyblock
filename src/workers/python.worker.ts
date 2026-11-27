@@ -47,9 +47,6 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
     if (!packId || rawKey.startsWith('global:') || rawKey.includes('::')) {
       return rawKey;
     }
-    if (rawKey === 'oled_clear' || rawKey === 'oled_show') {
-      return rawKey;
-    }
     return `${packId}::${rawKey}`;
   };
 
@@ -59,14 +56,7 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
     value: unknown,
   ) => {
     const k = qualifyPyKey(packId, String(rawKind));
-    if (k === 'oled_clear') {
-      currentMockInputs['virtual-board::oled'] = [];
-    } else if (k === 'oled_show') {
-      const prev = Array.isArray(currentMockInputs['virtual-board::oled'])
-        ? (currentMockInputs['virtual-board::oled'] as string[])
-        : [];
-      currentMockInputs['virtual-board::oled'] = [...prev, String(value)].slice(-8);
-    } else if (k.endsWith(':clear')) {
+    if (k.endsWith(':clear')) {
       currentMockInputs[k.slice(0, -6)] = [];
     } else if (k.endsWith(':append')) {
       const base = k.slice(0, -7);
@@ -260,11 +250,7 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
     return;
   }
   if (msg.type === 'UPDATE_MOCK_INPUTS') {
-    const prev = currentMockInputs;
     currentMockInputs = { ...currentMockInputs, ...msg.mockInputs };
-    if (activeScheduler?.runId === msg.runId) {
-      activeScheduler.onMockInputsDelta(prev, currentMockInputs);
-    }
     return;
   }
   if (msg.type === 'EMIT_EVENT') {

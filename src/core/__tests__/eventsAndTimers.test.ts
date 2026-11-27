@@ -14,7 +14,7 @@ import {
 import { CAP_RT_TIMERS } from '../capabilities/registry';
 import { extensionRegistry } from '../extensions/registry';
 import {
-  getHandleTimerConfig,
+  getHandleChannelPoolConfig,
   instantiateProjectFromTemplate,
 } from '../projects/store';
 import { WorkerRuntimeScheduler } from '../../workers/runtimeScheduler';
@@ -34,7 +34,10 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
   it('generates centralized entry-script on_timer(id) router, Style A1 shared module, clean companion branch functions, and precise Python global declarations', () => {
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles[0];
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, getHandleTimerConfig(hdl));
+    setActiveChannelPoolConfig(
+      CAP_RT_TIMERS,
+      getHandleChannelPoolConfig(hdl, CAP_RT_TIMERS),
+    );
     setActiveHandleSharedVariables(hdl.sharedVariables ?? []);
     const scriptMetas = buildHandleScriptsMeta(hdl);
 
@@ -172,7 +175,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     });
 
     const res = backendRegistry.get('lua').generate(ws);
-    expect(res.diagnostics.some((d) => d.id.startsWith('dup-timer-hat-0'))).toBe(true);
+    expect(res.diagnostics.some((d) => d.id.startsWith('dup-hat-poly_on_timer-0'))).toBe(true);
     expect(
       res.diagnostics.some(
         (d) => d.severity === 'error' && d.id.startsWith('pool-rt.timers-oob-9'),
@@ -228,8 +231,8 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(ev3).toBe('done');
 
     expect(schedB.initCoroutineMode(false, false, false, true)).toBe(true);
-    schedB.onMockInputsDelta({ btnA: false }, { btnA: true });
-    expect(await schedB.nextEvent()).toBe('button:A:1');
+    schedB.enqueueEvent('on_button', ['A', true]);
+    expect(await schedB.nextEvent()).toBe('event:["on_button",["A",true]]');
     schedB.requestGracefulStop();
     expect(await schedB.nextEvent()).toBe('stop');
   });

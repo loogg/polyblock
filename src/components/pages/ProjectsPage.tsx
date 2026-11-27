@@ -9,16 +9,13 @@ import {
   Upload,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
-import {
-  CAP_RT_TIMERS,
-  hasCapability,
-  targetProfileRegistry,
-} from '../../core/capabilities/registry';
+import { targetProfileRegistry } from '../../core/capabilities/registry';
+import { extensionRegistry } from '../../core/extensions/registry';
 import {
   countProjectScripts,
   DEMO_PROJECT_TEMPLATES,
+  formatHandleChannelPoolsSummary,
   getAbsorbedBundledExtensions,
-  getHandleTimerConfig,
   parseImportedProject,
 } from '../../core/projects/store';
 import type { ProjectModel } from '../../types/project';
@@ -147,7 +144,9 @@ export function ProjectsPage({
             const isEditing = editingId === proj.id;
             const totalScripts = countProjectScripts(proj);
             const profile = targetProfileRegistry.get(proj.targetProfileId);
-            const hasTimers = hasCapability(proj.enabledCapabilities, CAP_RT_TIMERS);
+            const projPools = extensionRegistry
+              .getChannelPools(proj.enabledCapabilities, proj.localExtensions)
+              .map((entry) => entry.pool);
 
             return (
               <div
@@ -201,22 +200,22 @@ export function ProjectsPage({
                 </div>
 
                 <div className="paused-var-chips">
-                  {proj.handles.map((h) => (
-                    <span key={h.id} className="var-chip">
-                      <span
-                        className="lang-dot"
-                        style={{ background: h.color, width: 6, height: 6 }}
-                      />
-                      <span>{h.name}</span>
-                      <span style={{ opacity: 0.65 }}>
-                        ({h.scripts.length}
-                        {hasTimers
-                          ? ` · T0~${getHandleTimerConfig(h, proj.defaultTimerCount).count - 1}`
-                          : ''}
-                        )
+                  {proj.handles.map((h) => {
+                    const poolSummary = formatHandleChannelPoolsSummary(h, projPools);
+                    return (
+                      <span key={h.id} className="var-chip">
+                        <span
+                          className="lang-dot"
+                          style={{ background: h.color, width: 6, height: 6 }}
+                        />
+                        <span>{h.name}</span>
+                        <span style={{ opacity: 0.65 }}>
+                          ({h.scripts.length}
+                          {poolSummary ? ` · ${poolSummary}` : ''})
+                        </span>
                       </span>
-                    </span>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <div className="card-footer">

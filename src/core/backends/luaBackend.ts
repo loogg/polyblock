@@ -509,7 +509,7 @@ function buildLuaEventLoopDriver(keepAliveExternal: boolean): string {
 local _has_start = (type(on_start) == "function")
 local _has_run = (type(on_run) == "function")
 local _has_timer = (type(on_timer) == "function")
-local _has_ext = ${keepAliveExternal ? 'true' : '(type(on_button) == "function")'}
+local _has_ext = ${keepAliveExternal ? 'true' : 'false'}
 
 if _has_start then
   __poly_start_co = coroutine.create(on_start)
@@ -586,7 +586,7 @@ local function __poly_refresh_handlers()
   __poly_sync_handlers(
     type(on_run) == "function",
     type(on_timer) == "function",
-    _has_ext or (type(on_button) == "function")
+    _has_ext
   )
 end
 
@@ -602,10 +602,6 @@ if __poly_init_scheduler(_has_start, _has_run, _has_timer, _has_ext) then
     elseif type(_ev) == "string" and _ev:sub(1, 6) == "timer:" then
       local _tid = tonumber(_ev:sub(7))
       if _tid ~= nil then __poly_call_cb("on_timer", on_timer, _tid) end
-      __poly_refresh_handlers()
-    elseif type(_ev) == "string" and _ev:sub(1, 7) == "button:" then
-      local _k, _p = _ev:match("^button:([^:]+):([01])$")
-      if _k ~= nil then __poly_call_cb("on_button", on_button, _k, _p == "1") end
       __poly_refresh_handlers()
     elseif type(_ev) == "string" and _ev:sub(1, 6) == "event:" then
       local _ename = __poly_last_event_name()

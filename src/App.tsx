@@ -32,7 +32,8 @@ import { buildHandleSharedModule } from './core/backends/sharedModule';
 import { backendRegistry } from './core/backends/registry';
 import type { GeneratedCodeResult } from './core/backends/types';
 import {
-  normalizeTimerConfig,
+  DEFAULT_CHANNEL_COUNT,
+  normalizeChannelPoolConfig,
   setActiveChannelPoolConfig,
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
@@ -46,7 +47,6 @@ import {
 } from './core/blocks/timerConfigBridge';
 import {
   CAP_RT_TIMERS,
-  hasCapability,
   targetProfileRegistry,
 } from './core/capabilities/registry';
 import {
@@ -100,7 +100,6 @@ import {
   getActiveScript,
   getAllHandleChannelPoolConfigs,
   getHandleChannelPoolConfig,
-  getHandleTimerConfig,
   instantiateProjectFromTemplate,
   loadWorkspaceStore,
   makeUniqueProjectName,
@@ -108,8 +107,7 @@ import {
   renameScriptInHandle,
   saveWorkspaceStore,
   setHandleChannelPoolConfig,
-  setHandleTimerConfig,
-  STORAGE_STORE_V7_KEY,
+  STORAGE_STORE_V8_KEY,
   updateHandleById,
   updateProjectById,
 } from './core/projects/store';
@@ -122,12 +120,12 @@ import {
 import type { RunnerStatus } from './core/runners/types';
 import type {
   AppSettings,
+  ChannelPoolConfig,
   ExecutionSpeedId,
   LogEntry,
   LogLevel,
   PageId,
   ProjectModel,
-  ProjectTimerConfig,
   RuntimeHandle,
   RuntimeTelemetry,
   ScriptLanguageId,
@@ -337,21 +335,11 @@ export function App() {
     [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
   );
   const activeChannelPoolConfigs = useMemo(
-    () =>
-      getAllHandleChannelPoolConfigs(
-        activeHandle,
-        activeChannelPools,
-        activeProject.defaultTimerCount,
-      ),
-    [activeHandle, activeChannelPools, activeProject.defaultTimerCount],
+    () => getAllHandleChannelPoolConfigs(activeHandle, activeChannelPools),
+    [activeHandle, activeChannelPools],
   );
-  const activeTimerConfig =
-    activeChannelPoolConfigs[CAP_RT_TIMERS] ??
-    getHandleTimerConfig(activeHandle, activeProject.defaultTimerCount);
-  const hasTimersCapability = hasCapability(
-    activeProject.enabledCapabilities,
-    CAP_RT_TIMERS,
-  );
+  const activeTimerCount =
+    activeChannelPoolConfigs[CAP_RT_TIMERS]?.count ?? DEFAULT_CHANNEL_COUNT;
   const activeModuleResolution = useMemo(
     () =>
       resolveProjectModules({
@@ -616,11 +604,7 @@ export function App() {
         .getChannelPools(nextProj.enabledCapabilities, nextProj.localExtensions)
         .map((entry) => entry.pool);
       setActiveChannelPoolConfigs(
-        getAllHandleChannelPoolConfigs(
-          nextHandle,
-          nextPools,
-          nextProj.defaultTimerCount,
-        ),
+        getAllHandleChannelPoolConfigs(nextHandle, nextPools),
       );
       setActiveProjectCapabilities(nextProj.enabledCapabilities);
       const sharedVarNames = collectHandleSharedVariableNames(nextHandle);
@@ -1441,24 +1425,20 @@ export function App() {
       patch: {
         autoStart?: boolean;
         description?: string;
-        timerConfig?: ProjectTimerConfig;
         channelPoolUpdate?: {
           configKey: string;
-          config: ProjectTimerConfig;
+          config: ChannelPoolConfig;
           min?: number;
           max?: number;
         };
       },
     ) => {
-      const normalizedTimer = patch.timerConfig
-        ? normalizeTimerConfig(patch.timerConfig)
-        : undefined;
       const poolUpd = patch.channelPoolUpdate
         ? {
             configKey: patch.channelPoolUpdate.configKey,
             min: patch.channelPoolUpdate.min,
             max: patch.channelPoolUpdate.max,
-            config: normalizeTimerConfig(
+            config: normalizeChannelPoolConfig(
               patch.channelPoolUpdate.config,
               patch.channelPoolUpdate.config.count,
               patch.channelPoolUpdate.min,
@@ -1470,16 +1450,15 @@ export function App() {
       setStore((prev) =>
         updateProjectById(prev, projectId, (p) =>
           updateHandleById(p, handleId, (h) => {
-            let base = normalizedTimer ? setHandleTimerConfig(h, normalizedTimer) : h;
-            if (poolUpd) {
-              base = setHandleChannelPoolConfig(
-                base,
-                poolUpd.configKey,
-                poolUpd.config,
-                poolUpd.min,
-                poolUpd.max,
-              );
-            }
+            const base = poolUpd
+              ? setHandleChannelPoolConfig(
+                  h,
+                  poolUpd.configKey,
+                  poolUpd.config,
+                  poolUpd.min,
+                  poolUpd.max,
+                )
+              : h;
             return {
               ...base,
               ...(patch.autoStart !== undefined ? { autoStart: patch.autoStart } : {}),
@@ -1492,22 +1471,17 @@ export function App() {
         ),
       );
       if (
-        (normalizedTimer || poolUpd) &&
+        poolUpd &&
         projectId === activeProjectIdRef.current &&
         handleId === activeHandleIdRef.current
       ) {
-        if (normalizedTimer) {
-          setActiveChannelPoolConfig(CAP_RT_TIMERS, normalizedTimer);
-        }
-        if (poolUpd) {
-          setActiveChannelPoolConfig(
-            poolUpd.configKey,
-            poolUpd.config,
-            poolUpd.config.count,
-            poolUpd.min,
-            poolUpd.max,
-          );
-        }
+        setActiveChannelPoolConfig(
+          poolUpd.configKey,
+          poolUpd.config,
+          poolUpd.config.count,
+          poolUpd.min,
+          poolUpd.max,
+        );
         const ws = workbenchRef.current?.getWorkspace();
         if (ws) regenerateFromWorkspace(ws, languageRef.current);
       }
@@ -1522,14 +1496,10 @@ export function App() {
       const poolSpec = extensionRegistry
         .getChannelPools(proj.enabledCapabilities, proj.localExtensions)
         .find((entry) => entry.pool.configKey === req.configKey)?.pool;
-      const fallback =
-        req.configKey === CAP_RT_TIMERS
-          ? proj.defaultTimerCount
-          : (poolSpec?.defaultCount ?? 8);
       const curCfg = getHandleChannelPoolConfig(
         hdl,
         req.configKey,
-        fallback,
+        poolSpec?.defaultCount ?? DEFAULT_CHANNEL_COUNT,
         poolSpec?.min,
         poolSpec?.max,
       );
@@ -1707,7 +1677,6 @@ export function App() {
         name?: string;
         description?: string;
         language?: ScriptLanguageId;
-        defaultTimerCount?: number;
       },
     ) => {
       setStore((prev) => {
@@ -1727,9 +1696,6 @@ export function App() {
             ? { description: patch.description }
             : {}),
           ...(patch.language ? { language: patch.language } : {}),
-          ...(patch.defaultTimerCount
-            ? { defaultTimerCount: patch.defaultTimerCount }
-            : {}),
           updatedAt: new Date().toISOString(),
         }));
       });
@@ -1843,7 +1809,7 @@ export function App() {
 
   const handleResetWorkspace = useCallback(() => {
     stopIfRunning();
-    localStorage.removeItem(STORAGE_STORE_V7_KEY);
+    localStorage.removeItem(STORAGE_STORE_V8_KEY);
     const freshStore = createDefaultWorkspaceStore();
     setStore(freshStore);
     mountScriptIntoCanvas(freshStore);
@@ -2073,7 +2039,6 @@ export function App() {
         handleForRun,
         entryScript.id,
         language,
-        activeProject.defaultTimerCount,
         activeChannelPoolConfigs,
       );
       setActiveHandleSharedVarInitials(activeHandle.variableInitialValues ?? {});
@@ -2157,7 +2122,7 @@ export function App() {
           breakpoints: allHandleBreakpoints,
           stepDelayMs: speedDelay,
           startInStepMode,
-          timerCount: activeTimerConfig.count,
+          timerCount: activeTimerCount,
           mockModules: modResolution.sandboxMountOrder,
           mockInputs: simStateRef.current,
         },
@@ -2234,7 +2199,7 @@ export function App() {
       settings.executionSpeed,
       settings.timeoutMs,
       settings.timeSliceMs,
-      activeTimerConfig.count,
+      activeTimerCount,
       activeChannelPoolConfigs,
       language,
       activeHandle,
@@ -2242,7 +2207,6 @@ export function App() {
       activeScript.name,
       activeProject.enabledCapabilities,
       activeProject.localExtensions,
-      activeProject.defaultTimerCount,
       generated,
       appendLog,
       handleDeviceEvent,
@@ -2290,11 +2254,7 @@ export function App() {
       message: string;
     }> = [];
     for (const hdl of runList) {
-      const hdlPools = getAllHandleChannelPoolConfigs(
-        hdl,
-        poolsForMulti,
-        proj.defaultTimerCount,
-      );
+      const hdlPools = getAllHandleChannelPoolConfigs(hdl, poolsForMulti);
       setActiveChannelPoolConfigs(hdlPools);
       setActiveHandleSharedVariables(collectHandleSharedVariableNames(hdl));
       setActiveHandleSharedVarInitials(hdl.variableInitialValues ?? {});
@@ -2674,8 +2634,7 @@ export function App() {
                   language={language}
                   extension={activeBackend.extension}
                   viewingSharedModule={viewingSharedModule}
-                  hasTimersCapability={hasTimersCapability}
-                  defaultTimerCount={activeProject.defaultTimerCount}
+                  channelPools={activeChannelPools}
                   disabled={runnerStatus === 'running' || runnerStatus === 'paused'}
                   onSelectHandleScript={(hdlId, scrId) => {
                     setViewingSharedModule(false);
@@ -2708,8 +2667,7 @@ export function App() {
                   activeScriptId={activeScript.id}
                   entryScriptId={activeHandle.entryScriptId}
                   extension={activeBackend.extension}
-                  hasTimersCapability={hasTimersCapability}
-                  defaultTimerCount={activeProject.defaultTimerCount}
+                  channelPools={activeChannelPools}
                   showExplorer={showExplorer}
                   disabled={runnerStatus === 'running' || runnerStatus === 'paused'}
                   sharedModuleTab={
@@ -2846,7 +2804,7 @@ export function App() {
                   variables={liveVariables}
                   errorLine={errorLine}
                   enabledCapabilities={activeProject.enabledCapabilities}
-                  defaultTimerCount={activeProject.defaultTimerCount}
+                  channelPools={activeChannelPools}
                   simPacks={activeSimPacks}
                   simState={simState}
                   projectHandles={activeProject.handles}

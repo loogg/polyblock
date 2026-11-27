@@ -122,12 +122,14 @@ export function inspectWorkspaceScriptMeta(
 ): {
   declaredEvents: string[];
   requiredScripts: string[];
+  hasExternalKeepAliveHat: boolean;
   dispatchBranches: DispatchBranchMeta[];
   declaredVariables: string[];
   declaredFunctions: DeclaredFunctionMeta[];
 } {
   const declared = new Set<string>();
   const required = new Set<string>();
+  let hasExternalKeepAlive = false;
   const dispatchBranches: DispatchBranchMeta[] = [];
   const declaredFunctions: DeclaredFunctionMeta[] = [];
   const fnCallGraph = new Map<string, Set<string>>();
@@ -191,6 +193,9 @@ export function inspectWorkspaceScriptMeta(
     const hatSpec = getUnifiedHatSpec(t);
     if (!hatSpec) return;
     declared.add(hatSpec.eventName);
+    if (hatSpec.keepsAlive) {
+      hasExternalKeepAlive = true;
+    }
 
     if (hatSpec.mode === 'dispatch') {
       const fields =
@@ -319,6 +324,7 @@ export function inspectWorkspaceScriptMeta(
   return {
     declaredEvents: Array.from(declared),
     requiredScripts: Array.from(required),
+    hasExternalKeepAliveHat: hasExternalKeepAlive,
     dispatchBranches,
     declaredVariables: Array.from(declaredVariables),
     declaredFunctions,
@@ -337,6 +343,7 @@ export function buildHandleScriptsMeta(
       isEntry: s.id === handle.entryScriptId,
       declaredEvents: meta.declaredEvents,
       requiredScripts: meta.requiredScripts,
+      hasExternalKeepAliveHat: meta.hasExternalKeepAliveHat,
       dispatchBranches: meta.dispatchBranches,
       declaredVariables: meta.declaredVariables,
       declaredFunctions: meta.declaredFunctions,
@@ -670,34 +677,19 @@ export function isEventDrivenWorkspace(workspace: Blockly.Workspace): boolean {
 }
 
 /**
- * Returns true if the workspace (or any sibling script in the same handle) defines an external
- * event hat (e.g. `on_button`, `on_drive_estop`, `on_can_rx`) whose `hat.keepsAlive !== false`
- * and is not `on_run` itself.
+ * Pure metadata-driven check across the entire handle:
+ * Returns true whenever ANY script in the active handle defines a hat whose `hat.keepsAlive` is true
+ * (e.g. `on_button`, `on_drive_estop`, `on_can_rx`). Zero hardcoded event-name exclusions!
  */
 export function hasExternalKeepAliveHat(workspace: Blockly.Workspace): boolean {
   for (const blk of workspace.getTopBlocks(true)) {
     if (blk.isShadow() || !blk.isEnabled()) continue;
-    const hatDef = extensionRegistry.getHatBlockDef(blk.type);
-    if (!hatDef) continue;
-    if (
-      hatDef.hat.eventName !== 'on_run' &&
-      hatDef.hat.eventName !== 'on_stop' &&
-      hatDef.hat.eventName !== 'on_timer' &&
-      hatDef.hat.keepsAlive !== false
-    ) {
+    if (getUnifiedHatSpec(blk.type)?.keepsAlive) {
       return true;
     }
   }
   for (const sib of getHandleSiblingScripts()) {
-    if (
-      sib.declaredEvents.some(
-        (ev) =>
-          ev !== 'on_start' &&
-          ev !== 'on_run' &&
-          ev !== 'on_stop' &&
-          ev !== 'on_timer',
-      )
-    ) {
+    if (sib.hasExternalKeepAliveHat) {
       return true;
     }
   }

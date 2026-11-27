@@ -1,17 +1,14 @@
 import { PROJECT_TEMPLATES } from '../blocks/templates';
 import {
-  DEFAULT_TIMER_COUNT,
-  MAX_TIMER_COUNT,
-  MIN_TIMER_COUNT,
-  normalizeTimerConfig,
+  DEFAULT_CHANNEL_COUNT,
+  MAX_CHANNEL_COUNT,
+  MIN_CHANNEL_COUNT,
+  normalizeChannelPoolConfig,
 } from '../blocks/timerConfigBridge';
 import {
   CAP_RT,
-  CAP_RT_LIFECYCLE,
-  CAP_RT_TICK,
   CAP_RT_TIMERS,
   CAP_VIRTUAL_BOARD,
-  hasCapability,
   targetProfileRegistry,
 } from '../capabilities/registry';
 import {
@@ -33,9 +30,9 @@ import {
   MEDIUM_DICT_CONFIG_WS,
 } from './flagshipDemo';
 import type {
+  ChannelPoolConfig,
   ProjectModel,
   ProjectScript,
-  ProjectTimerConfig,
   RuntimeHandle,
   ScriptLanguageId,
   TargetProfile,
@@ -43,7 +40,7 @@ import type {
   WorkspaceStoreState,
 } from '../../types/project';
 
-export const STORAGE_STORE_V7_KEY = 'polyblock.store.v7';
+export const STORAGE_STORE_V8_KEY = 'polyblock.store.v8';
 
 export const HANDLE_COLOR_PALETTE = [
   '#4f46e5',
@@ -59,9 +56,8 @@ export interface HandleTemplateSpec {
   description?: string;
   color?: string;
   autoStart?: boolean;
-  timerConfig?: Partial<ProjectTimerConfig>;
-  /** Additional per-handle channel pool configs (e.g. `pwm-servo` isolated from `rt.timers`). */
-  capabilityConfigs?: Record<string, Partial<ProjectTimerConfig>>;
+  /** Declarative per-handle channel pool configs keyed by pool configKey (e.g. `rt.timers`, `pwm-servo`). */
+  capabilityConfigs?: Record<string, Partial<ChannelPoolConfig>>;
   /** Explicit cross-file shared variables for this handle (Lua `shared.lua` / Python `shared.py`). */
   sharedVariables?: string[];
   /** Explicit cross-file shared functions exported into `shared.lua` / `shared.py`. */
@@ -88,7 +84,6 @@ export interface MultiHandleProjectTemplate {
   description: string;
   language: ScriptLanguageId;
   targetProfileId: string;
-  defaultTimerCount?: number;
   enabledCapabilities: string[];
   /** Optional project-embedded custom .polyext.json packs shipped with this template. */
   localExtensions?: PolyExtensionPack[];
@@ -212,28 +207,28 @@ export function makeUniqueProjectName(
 export function getHandleChannelPoolConfig(
   handle: RuntimeHandle,
   configKey: string,
-  fallbackCount = DEFAULT_TIMER_COUNT,
-  minCount = MIN_TIMER_COUNT,
-  maxCount = MAX_TIMER_COUNT,
-): ProjectTimerConfig {
+  fallbackCount = DEFAULT_CHANNEL_COUNT,
+  minCount = MIN_CHANNEL_COUNT,
+  maxCount = MAX_CHANNEL_COUNT,
+): ChannelPoolConfig {
   const fromCap = handle.capabilityConfigs?.[configKey] as
-    | Partial<ProjectTimerConfig>
+    | Partial<ChannelPoolConfig>
     | undefined;
-  return normalizeTimerConfig(fromCap, fallbackCount, minCount, maxCount);
+  return normalizeChannelPoolConfig(fromCap, fallbackCount, minCount, maxCount);
 }
 
 export function setHandleChannelPoolConfig(
   handle: RuntimeHandle,
   configKey: string,
-  nextCfg: ProjectTimerConfig,
-  minCount = MIN_TIMER_COUNT,
-  maxCount = MAX_TIMER_COUNT,
+  nextCfg: ChannelPoolConfig,
+  minCount = MIN_CHANNEL_COUNT,
+  maxCount = MAX_CHANNEL_COUNT,
 ): RuntimeHandle {
   return {
     ...handle,
     capabilityConfigs: {
       ...(handle.capabilityConfigs ?? {}),
-      [configKey]: normalizeTimerConfig(nextCfg, nextCfg.count, minCount, maxCount),
+      [configKey]: normalizeChannelPoolConfig(nextCfg, nextCfg.count, minCount, maxCount),
     },
     updatedAt: new Date().toISOString(),
   };
@@ -242,18 +237,13 @@ export function setHandleChannelPoolConfig(
 export function getAllHandleChannelPoolConfigs(
   handle: RuntimeHandle,
   channelPools: ResolvedHandleChannelPoolSpec[],
-  defaultTimerCount = DEFAULT_TIMER_COUNT,
-): Record<string, ProjectTimerConfig> {
-  const out: Record<string, ProjectTimerConfig> = {
-    [CAP_RT_TIMERS]: getHandleTimerConfig(handle, defaultTimerCount),
-  };
+): Record<string, ChannelPoolConfig> {
+  const out: Record<string, ChannelPoolConfig> = {};
   for (const pool of channelPools) {
-    const fallback =
-      pool.configKey === CAP_RT_TIMERS ? defaultTimerCount : pool.defaultCount;
     out[pool.configKey] = getHandleChannelPoolConfig(
       handle,
       pool.configKey,
-      fallback,
+      pool.defaultCount,
       pool.min,
       pool.max,
     );
@@ -261,18 +251,23 @@ export function getAllHandleChannelPoolConfigs(
   return out;
 }
 
-export function getHandleTimerConfig(
+/** Formats concise per-handle summary badges across all enabled declarative channel pools (e.g. `T0~7 · PWM0~3`). */
+export function formatHandleChannelPoolsSummary(
   handle: RuntimeHandle,
-  fallbackCount = DEFAULT_TIMER_COUNT,
-): ProjectTimerConfig {
-  return getHandleChannelPoolConfig(handle, CAP_RT_TIMERS, fallbackCount);
-}
-
-export function setHandleTimerConfig(
-  handle: RuntimeHandle,
-  nextCfg: ProjectTimerConfig,
-): RuntimeHandle {
-  return setHandleChannelPoolConfig(handle, CAP_RT_TIMERS, nextCfg);
+  channelPools: ResolvedHandleChannelPoolSpec[],
+): string {
+  return channelPools
+    .map((pool) => {
+      const cfg = getHandleChannelPoolConfig(
+        handle,
+        pool.configKey,
+        pool.defaultCount,
+        pool.min,
+        pool.max,
+      );
+      return `${pool.prefix}0~${cfg.count - 1}`;
+    })
+    .join(' · ');
 }
 
 function normalizeLocalExtensions(raw: unknown): PolyExtensionPack[] {
@@ -357,63 +352,8 @@ export function applyTargetProfileToProject(
     ...project,
     targetProfileId: profile.id,
     enabledCapabilities: [...profile.capabilities],
-    defaultTimerCount: profile.defaultTimerCount || DEFAULT_TIMER_COUNT,
     updatedAt: now,
   };
-}
-
-function inferCapabilitiesFromWorkspaces(
-  workspaces: Array<Record<string, unknown>>,
-): string[] {
-  const raw = JSON.stringify(workspaces);
-  const inferred = new Set<string>();
-  if (
-    raw.includes('"poly_on_run"') ||
-    raw.includes('"poly_on_stop"') ||
-    raw.includes('"poly_set_run_period"') ||
-    raw.includes('"poly_run_control"')
-  ) {
-    inferred.add(CAP_RT_LIFECYCLE);
-  }
-  if (
-    raw.includes('"poly_on_timer"') ||
-    raw.includes('"poly_start_timer"') ||
-    raw.includes('"poly_stop_timer"') ||
-    raw.includes('"poly_get_timer_value"') ||
-    raw.includes('"poly_is_timer_running"')
-  ) {
-    inferred.add(CAP_RT_TIMERS);
-  }
-  if (
-    raw.includes('"poly_rt_tick"') ||
-    raw.includes('"poly_rt_ms_to_tick"') ||
-    raw.includes('"poly_rt_is_expired"')
-  ) {
-    inferred.add(CAP_RT_TICK);
-  }
-  if (raw.includes('"poly_on_button"') || raw.includes('"ext_board_')) {
-    inferred.add(CAP_VIRTUAL_BOARD);
-  }
-  if (
-    inferred.has(CAP_RT_LIFECYCLE) &&
-    inferred.has(CAP_RT_TIMERS) &&
-    inferred.has(CAP_RT_TICK)
-  ) {
-    inferred.delete(CAP_RT_LIFECYCLE);
-    inferred.delete(CAP_RT_TIMERS);
-    inferred.delete(CAP_RT_TICK);
-    inferred.add(CAP_RT);
-  }
-  return Array.from(inferred);
-}
-
-function inferProfileId(caps: string[]): string {
-  const hasRt = hasCapability(caps, CAP_RT);
-  const hasVb = hasCapability(caps, CAP_VIRTUAL_BOARD);
-  if (hasRt && hasVb) return 'virtual-board-rt';
-  if (hasRt) return 'embedded-rt';
-  if (hasVb) return 'virtual-board-basic';
-  return 'generic-script';
 }
 
 const tplById = (id: string) =>
@@ -1248,7 +1188,6 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
       '纯脚本环境（零外设、零定时器）：3 个独立入门句柄（每句柄唯一 on_start），分别演示顺序累加日志（main_vm）、延时与断点单步（step_debug_vm）、随机采样阈值告警（alarm_vm）。',
     language: 'lua',
     targetProfileId: 'generic-script',
-    defaultTimerCount: 8,
     enabledCapabilities: [],
     difficulty: {
       level: 'L1',
@@ -1292,7 +1231,6 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
       '中等难度（Python 3 + 外设与秒表）：启用虚拟硬件外设包与秒表包；含 LED/三色灯/OLED 自检（board_vm）、交互式温度滑块告警（temp_guard_vm）与核心字典耗时统计（dict_config_vm）。',
     language: 'python',
     targetProfileId: 'virtual-board-basic',
-    defaultTimerCount: 8,
     enabledCapabilities: [CAP_VIRTUAL_BOARD, 'clock-timer'],
     difficulty: {
       level: 'L2',
@@ -1336,7 +1274,6 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
       '进阶事件驱动（Lua 5.4 单句柄多文件协同 + 顶层零闭包 ABI）：board_vm 句柄内由唯一入口 main.lua 的 on_start 显式 require("timers") 加载同句柄定时器回调模块；另附独立单次定时退出句柄 oneshot_vm。',
     language: 'lua',
     targetProfileId: 'virtual-board-rt',
-    defaultTimerCount: 8,
     enabledCapabilities: [CAP_RT, CAP_VIRTUAL_BOARD],
     difficulty: {
       level: 'L3',
@@ -1349,11 +1286,13 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
         description: '板载事件循环控制句柄（main.lua + timers.lua 协同运行）',
         color: '#4f46e5',
         autoStart: true,
-        timerConfig: {
-          count: 8,
-          aliases: {
-            '0': '心跳灯',
-            '1': '告警倒计时',
+        capabilityConfigs: {
+          [CAP_RT_TIMERS]: {
+            count: 8,
+            aliases: {
+              '0': '心跳灯',
+              '1': '告警倒计时',
+            },
           },
         },
         sharedVariables: ['led_on', 'ticks'],
@@ -1371,10 +1310,12 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
         description: '3 次定时自动退出独立句柄',
         color: '#10b981',
         autoStart: false,
-        timerConfig: {
-          count: 8,
-          aliases: {
-            '0': '三次采样',
+        capabilityConfigs: {
+          [CAP_RT_TIMERS]: {
+            count: 8,
+            aliases: {
+              '0': '三次采样',
+            },
           },
         },
         scripts: [
@@ -1390,7 +1331,6 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
       '旗舰全栈综合（3 隔离句柄并发 + 2 个项目内嵌自定义外设包 + 全部内置包）：展示多卡片模拟面板、自定义声明式急停中断（on_drive_estop）、双独立通道池（T0~T7 与 PWM0~PWM3）、自定义工具箱序号（#35）及秒表字典遥测。',
     language: 'lua',
     targetProfileId: 'virtual-board-rt',
-    defaultTimerCount: 8,
     enabledCapabilities: [
       CAP_RT,
       CAP_VIRTUAL_BOARD,
@@ -1416,14 +1356,14 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
         description: '运动、云台与急停控制句柄（独立 lua_State #1）',
         color: '#4f46e5',
         autoStart: true,
-        timerConfig: {
-          count: 8,
-          aliases: {
-            '0': '云台扫描',
-            '1': '疾速倒计时',
-          },
-        },
         capabilityConfigs: {
+          [CAP_RT_TIMERS]: {
+            count: 8,
+            aliases: {
+              '0': '云台扫描',
+              '1': '疾速倒计时',
+            },
+          },
           'pwm-servo': {
             count: 4,
             aliases: {
@@ -1442,10 +1382,12 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
         description: '安防温控告警句柄（独立 lua_State #2，独享 T0）',
         color: '#0ea5e9',
         autoStart: true,
-        timerConfig: {
-          count: 8,
-          aliases: {
-            '0': '温度巡检',
+        capabilityConfigs: {
+          [CAP_RT_TIMERS]: {
+            count: 8,
+            aliases: {
+              '0': '温度巡检',
+            },
           },
         },
         scripts: [
@@ -1457,10 +1399,12 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
         description: '字典与秒表遥测统计句柄（独立 lua_State #3，独享 T0）',
         color: '#10b981',
         autoStart: true,
-        timerConfig: {
-          count: 8,
-          aliases: {
-            '0': '遥测上报',
+        capabilityConfigs: {
+          [CAP_RT_TIMERS]: {
+            count: 8,
+            aliases: {
+              '0': '遥测上报',
+            },
           },
         },
         scripts: [
@@ -1475,7 +1419,6 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     description: '纯脚本环境空白工程（无定时器/无预设外设），后续可在项目配置中按需勾选目标板型与能力包。',
     language: 'lua',
     targetProfileId: 'generic-script',
-    defaultTimerCount: 8,
     enabledCapabilities: [],
     hiddenFromDemoList: true,
     handles: [
@@ -1511,9 +1454,8 @@ function normalizeInitialValuesMap(
 function instantiateHandleSpec(
   spec: HandleTemplateSpec,
   idx: number,
-  defaultTimerCount: number,
-  hasTimersCap: boolean,
   now: string,
+  defaultChannelCounts?: Record<string, number>,
 ): RuntimeHandle {
   const scripts: ProjectScript[] = spec.scripts.map((s) => {
     const scriptInitials = normalizeInitialValuesMap(s.variableInitialValues);
@@ -1532,15 +1474,14 @@ function instantiateHandleSpec(
   );
   const entryId = scripts[entryIdx]?.id ?? scripts[0].id;
   const capabilityConfigs: Record<string, unknown> = {};
-  if (hasTimersCap || spec.timerConfig) {
-    capabilityConfigs[CAP_RT_TIMERS] = normalizeTimerConfig(
-      spec.timerConfig,
-      defaultTimerCount,
-    );
+  if (defaultChannelCounts) {
+    for (const [cfgKey, cnt] of Object.entries(defaultChannelCounts)) {
+      capabilityConfigs[cfgKey] = normalizeChannelPoolConfig(undefined, cnt);
+    }
   }
   if (spec.capabilityConfigs) {
     for (const [cfgKey, rawCfg] of Object.entries(spec.capabilityConfigs)) {
-      capabilityConfigs[cfgKey] = normalizeTimerConfig(rawCfg);
+      capabilityConfigs[cfgKey] = normalizeChannelPoolConfig(rawCfg);
     }
   }
 
@@ -1578,11 +1519,9 @@ export function instantiateProjectFromTemplate(
     MULTI_SCRIPT_PROJECT_TEMPLATES.find((t) => t.id === templateId) ??
     MULTI_SCRIPT_PROJECT_TEMPLATES[0];
   const now = new Date().toISOString();
-  const defaultTimerCount = tpl.defaultTimerCount ?? DEFAULT_TIMER_COUNT;
-  const hasTimersCap = hasCapability(tpl.enabledCapabilities, CAP_RT_TIMERS);
 
   const handles = tpl.handles.map((hs, idx) =>
-    instantiateHandleSpec(hs, idx, defaultTimerCount, hasTimersCap, now),
+    instantiateHandleSpec(hs, idx, now),
   );
 
   return {
@@ -1595,7 +1534,6 @@ export function instantiateProjectFromTemplate(
     targetProfileId: tpl.targetProfileId,
     enabledCapabilities: [...tpl.enabledCapabilities],
     localExtensions: tpl.localExtensions ? cloneJson(tpl.localExtensions) : [],
-    defaultTimerCount,
     activeHandleId: handles[0].id,
     handles,
     createdAt: now,
@@ -1627,7 +1565,6 @@ export function instantiateProjectFromProfile(
   customName?: string,
 ): ProjectModel {
   const now = new Date().toISOString();
-  const hasTimersCap = hasCapability(profile.capabilities, CAP_RT_TIMERS);
   const handle = instantiateHandleSpec(
     {
       name: 'main_vm',
@@ -1636,9 +1573,8 @@ export function instantiateProjectFromProfile(
       scripts: [{ name: 'main', isEntry: true, workspace: createBlankWorkspace() }],
     },
     0,
-    profile.defaultTimerCount || DEFAULT_TIMER_COUNT,
-    hasTimersCap,
     now,
+    profile.defaultChannelCounts,
   );
   return {
     format: 'polyblock-project',
@@ -1653,7 +1589,6 @@ export function instantiateProjectFromProfile(
     targetProfileId: profile.id,
     enabledCapabilities: [...profile.capabilities],
     localExtensions: [],
-    defaultTimerCount: profile.defaultTimerCount || DEFAULT_TIMER_COUNT,
     activeHandleId: handle.id,
     handles: [handle],
     createdAt: now,
@@ -1701,18 +1636,10 @@ function normalizeScriptsArray(
 
 function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
   const now = new Date().toISOString();
-  const defaultCount = Number.isFinite(Number(raw.defaultTimerCount))
-    ? Math.max(
-        MIN_TIMER_COUNT,
-        Math.min(MAX_TIMER_COUNT, Math.trunc(Number(raw.defaultTimerCount))),
-      )
-    : DEFAULT_TIMER_COUNT;
-
   const rawHandles = Array.isArray(raw.handles)
     ? (raw.handles as Array<Record<string, unknown>>)
     : [];
 
-  const allWs: Array<Record<string, unknown>> = [];
   const handles: RuntimeHandle[] = rawHandles.map((rh, idx) => {
     const scripts: ProjectScript[] = Array.isArray(rh.scripts)
       ? (rh.scripts as Array<Record<string, unknown>>).map((rs, sIdx) => {
@@ -1747,9 +1674,6 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
             updatedAt: now,
           },
         ];
-    for (const s of scripts) {
-      if (s.workspace) allWs.push(s.workspace);
-    }
 
     const existingCapConfigs =
       rh.capabilityConfigs && typeof rh.capabilityConfigs === 'object'
@@ -1798,12 +1722,12 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
 
   const enabledCapabilities = Array.isArray(raw.enabledCapabilities)
     ? raw.enabledCapabilities.filter((c): c is string => typeof c === 'string')
-    : inferCapabilitiesFromWorkspaces(allWs);
+    : [];
 
   const profileId =
     typeof raw.targetProfileId === 'string' && raw.targetProfileId.trim()
       ? raw.targetProfileId
-      : inferProfileId(enabledCapabilities);
+      : 'generic-script';
 
   const activeHandleId =
     typeof raw.activeHandleId === 'string' &&
@@ -1821,7 +1745,6 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
     targetProfileId: profileId,
     enabledCapabilities,
     localExtensions: normalizeLocalExtensions(raw.localExtensions),
-    defaultTimerCount: defaultCount,
     activeHandleId,
     handles,
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : now,
@@ -1845,12 +1768,6 @@ export function parseImportedProject(
   }
 
   const rawHandles = obj.handles as Array<Record<string, unknown>>;
-  const defaultCount = Number.isFinite(Number(obj.defaultTimerCount))
-    ? Math.max(
-        MIN_TIMER_COUNT,
-        Math.min(MAX_TIMER_COUNT, Math.trunc(Number(obj.defaultTimerCount))),
-      )
-    : DEFAULT_TIMER_COUNT;
 
   const usedHandleNames: string[] = [];
   const handleIdMap = new Map<string, string>();
@@ -1910,15 +1827,14 @@ export function parseImportedProject(
       handleIdMap.get(obj.activeHandleId)) ||
     handles[0].id;
 
-  const allWs = handles.flatMap((h) => h.scripts.map((s) => s.workspace));
   const enabledCapabilities = Array.isArray(obj.enabledCapabilities)
     ? obj.enabledCapabilities.filter((c): c is string => typeof c === 'string')
-    : inferCapabilitiesFromWorkspaces(allWs);
+    : [];
 
   const targetProfileId =
     typeof obj.targetProfileId === 'string' && obj.targetProfileId.trim()
       ? obj.targetProfileId
-      : inferProfileId(enabledCapabilities);
+      : 'generic-script';
 
   const localPacks = normalizeLocalExtensions(obj.localExtensions);
   const absorbedBundled = getAbsorbedBundledExtensions(obj);
@@ -1937,7 +1853,6 @@ export function parseImportedProject(
     targetProfileId,
     enabledCapabilities,
     localExtensions: mergedLocalExtensions,
-    defaultTimerCount: defaultCount,
     activeHandleId,
     handles,
     createdAt: typeof obj.createdAt === 'string' ? obj.createdAt : now,
@@ -1971,7 +1886,7 @@ export function countProjectScripts(project: ProjectModel): number {
 
 export function loadWorkspaceStore(): WorkspaceStoreState {
   try {
-    const rawCurrent = localStorage.getItem(STORAGE_STORE_V7_KEY);
+    const rawCurrent = localStorage.getItem(STORAGE_STORE_V8_KEY);
     if (rawCurrent) {
       const parsed = JSON.parse(rawCurrent) as WorkspaceStoreState;
       if (
@@ -2004,7 +1919,7 @@ export function loadWorkspaceStore(): WorkspaceStoreState {
 
 export function saveWorkspaceStore(store: WorkspaceStoreState): void {
   try {
-    localStorage.setItem(STORAGE_STORE_V7_KEY, JSON.stringify(store));
+    localStorage.setItem(STORAGE_STORE_V8_KEY, JSON.stringify(store));
   } catch {
     // ignore storage quota errors
   }
@@ -2052,15 +1967,19 @@ export function addHandleToProject(
     project.handles.map((h) => h.name),
   );
   const scriptId = createId('scr');
-  const hasTimers = hasCapability(project.enabledCapabilities, CAP_RT_TIMERS);
+  const profile = targetProfileRegistry.get(project.targetProfileId);
+  const capabilityConfigs: Record<string, unknown> = {};
+  if (profile.defaultChannelCounts) {
+    for (const [cfgKey, cnt] of Object.entries(profile.defaultChannelCounts)) {
+      capabilityConfigs[cfgKey] = normalizeChannelPoolConfig(undefined, cnt);
+    }
+  }
   const newHandle: RuntimeHandle = {
     id: createId('hdl'),
     name: uniqueName,
     color: HANDLE_COLOR_PALETTE[project.handles.length % HANDLE_COLOR_PALETTE.length],
     autoStart: true,
-    capabilityConfigs: hasTimers
-      ? { [CAP_RT_TIMERS]: normalizeTimerConfig(undefined, project.defaultTimerCount) }
-      : {},
+    capabilityConfigs,
     sharedVariables: [],
     sharedFunctions: [],
     entryScriptId: scriptId,

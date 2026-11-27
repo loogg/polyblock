@@ -113,7 +113,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     );
     expect(imported.id).toBe('my-industrial-controller');
     expect(imported.builtin).toBe(false);
-    expect(targetProfileRegistry.get(imported.id).defaultTimerCount).toBe(16);
+    expect(targetProfileRegistry.get(imported.id).defaultChannelCounts?.[CAP_RT_TIMERS]).toBe(16);
     expect(targetProfileRegistry.removeCustomProfile(imported.id)).toBe(true);
   });
 
@@ -503,8 +503,8 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     state = applySimDeviceEvent(state, 'my-robot-api::log:append', 'L4', packs).next;
     expect(state['my-robot-api::log']).toEqual(['L2', 'L3', 'L4']);
 
-    state = applySimDeviceEvent(state, 'oled_clear', true, packs).next;
-    state = applySimDeviceEvent(state, 'oled_show', 'Hello OLED', packs).next;
+    state = applySimDeviceEvent(state, 'virtual-board::oled:clear', true, packs).next;
+    state = applySimDeviceEvent(state, 'virtual-board::oled:append', 'Hello OLED', packs).next;
     expect(state['virtual-board::oled']).toEqual(['Hello OLED']);
 
     const resetRobot = buildPackResetPatch(validatedSample);
@@ -1226,11 +1226,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
         .map((entry) => entry.pool);
 
       for (const hdl of proj.handles) {
-        const poolCfgs = getAllHandleChannelPoolConfigs(
-          hdl,
-          pools,
-          proj.defaultTimerCount,
-        );
+        const poolCfgs = getAllHandleChannelPoolConfigs(hdl, pools);
         setActiveChannelPoolConfigs(poolCfgs);
         setActiveHandleSharedVariables(hdl.sharedVariables ?? []);
         setActiveHandleSharedFunctions(hdl.sharedFunctions ?? []);
