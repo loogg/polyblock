@@ -60,7 +60,7 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     expect(h1.entryScriptId).toBe(h1.scripts[0].id);
     expect(h1.activeScriptId).toBe(h1.scripts[0].id);
 
-    // Virtual board basic template has virtual-board & dict-json, NO timers!
+    // Virtual board basic template has virtual-board, NO timers!
     const vb = instantiateProjectFromTemplate('virtual_board_demo');
     expect(vb.targetProfileId).toBe('virtual-board-basic');
     expect(vb.enabledCapabilities).toContain(CAP_VIRTUAL_BOARD);
@@ -89,7 +89,6 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
       expect.arrayContaining([
         CAP_RT,
         CAP_VIRTUAL_BOARD,
-        'dict-json',
         'clock-timer',
         'robot-drive',
         'pwm-servo',

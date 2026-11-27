@@ -43,7 +43,7 @@ import type {
   WorkspaceStoreState,
 } from '../../types/project';
 
-export const STORAGE_STORE_V6_KEY = 'polyblock.store.v6';
+export const STORAGE_STORE_V7_KEY = 'polyblock.store.v7';
 
 export const HANDLE_COLOR_PALETTE = [
   '#4f46e5',
@@ -1289,11 +1289,11 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     id: 'virtual_board_demo',
     name: '智能温控与虚拟板联动',
     description:
-      '中等难度（Python 3 + 外设与工具库）：启用虚拟硬件外设包、字典与秒表包；含 LED/三色灯/OLED 自检（board_vm）、交互式温度滑块告警（temp_guard_vm）与字典耗时统计（dict_config_vm）。',
+      '中等难度（Python 3 + 外设与秒表）：启用虚拟硬件外设包与秒表包；含 LED/三色灯/OLED 自检（board_vm）、交互式温度滑块告警（temp_guard_vm）与核心字典耗时统计（dict_config_vm）。',
     language: 'python',
     targetProfileId: 'virtual-board-basic',
     defaultTimerCount: 8,
-    enabledCapabilities: [CAP_VIRTUAL_BOARD, 'dict-json', 'clock-timer'],
+    enabledCapabilities: [CAP_VIRTUAL_BOARD, 'clock-timer'],
     difficulty: {
       level: 'L2',
       label: 'L2 中等 · 外设联动',
@@ -1394,7 +1394,6 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
     enabledCapabilities: [
       CAP_RT,
       CAP_VIRTUAL_BOARD,
-      'dict-json',
       'clock-timer',
       FLAGSHIP_ROBOT_DRIVE_PACK.id,
       FLAGSHIP_PWM_SERVO_PACK.id,
@@ -1972,7 +1971,7 @@ export function countProjectScripts(project: ProjectModel): number {
 
 export function loadWorkspaceStore(): WorkspaceStoreState {
   try {
-    const rawCurrent = localStorage.getItem(STORAGE_STORE_V6_KEY);
+    const rawCurrent = localStorage.getItem(STORAGE_STORE_V7_KEY);
     if (rawCurrent) {
       const parsed = JSON.parse(rawCurrent) as WorkspaceStoreState;
       if (
@@ -2005,7 +2004,7 @@ export function loadWorkspaceStore(): WorkspaceStoreState {
 
 export function saveWorkspaceStore(store: WorkspaceStoreState): void {
   try {
-    localStorage.setItem(STORAGE_STORE_V6_KEY, JSON.stringify(store));
+    localStorage.setItem(STORAGE_STORE_V7_KEY, JSON.stringify(store));
   } catch {
     // ignore storage quota errors
   }

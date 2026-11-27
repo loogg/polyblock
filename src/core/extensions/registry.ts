@@ -52,6 +52,7 @@ export const CORE_CATEGORY_LABELS: Record<CoreCategoryTarget, string> = {
   logic: '逻辑',
   text: '文本',
   lists: '列表',
+  dicts: '字典',
   functions: '函数',
 };
 

@@ -109,7 +109,7 @@ import {
   saveWorkspaceStore,
   setHandleChannelPoolConfig,
   setHandleTimerConfig,
-  STORAGE_STORE_V6_KEY,
+  STORAGE_STORE_V7_KEY,
   updateHandleById,
   updateProjectById,
 } from './core/projects/store';
@@ -1843,7 +1843,7 @@ export function App() {
 
   const handleResetWorkspace = useCallback(() => {
     stopIfRunning();
-    localStorage.removeItem(STORAGE_STORE_V6_KEY);
+    localStorage.removeItem(STORAGE_STORE_V7_KEY);
     const freshStore = createDefaultWorkspaceStore();
     setStore(freshStore);
     mountScriptIntoCanvas(freshStore);

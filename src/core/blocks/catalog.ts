@@ -41,6 +41,7 @@ export const CORE_TOOLBOX_ORDERS = [
   { id: 'logic', label: '逻辑', order: 60 },
   { id: 'text', label: '文本', order: 70 },
   { id: 'lists', label: '列表', order: 80 },
+  { id: 'dicts', label: '字典', order: 85 },
   { id: 'functions', label: '函数', order: 90 },
 ] as const;
 
@@ -288,6 +289,16 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
         keywords: '文本长度 length len',
         inputs: { VALUE: textShadow('abc') },
       },
+      {
+        kind: 'block',
+        type: 'poly_str_replace',
+        keywords: '文本 替换 replace string sub gsub',
+        inputs: {
+          SRC: textShadow('hello world'),
+          OLD: textShadow('world'),
+          NEW: textShadow('PolyBlock'),
+        },
+      },
     ],
   },
   {
@@ -335,6 +346,52 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
         type: 'poly_list_remove',
         keywords: '移除列表项 删除 remove pop index',
         inputs: { INDEX: numShadow(1) },
+      },
+    ],
+  },
+  {
+    id: 'dicts',
+    label: '字典',
+    color: '#f97316',
+    order: 85,
+    blocks: [
+      {
+        kind: 'block',
+        type: 'poly_dict_new',
+        keywords: '字典 dict map table 空对象 json',
+      },
+      {
+        kind: 'block',
+        type: 'poly_dict_set',
+        keywords: '字典 设置 键 key value set dict',
+        inputs: {
+          KEY: textShadow('mode'),
+          VAL: textShadow('auto'),
+        },
+      },
+      {
+        kind: 'block',
+        type: 'poly_dict_get',
+        keywords: '字典 读取 获取 get key dict',
+        inputs: {
+          KEY: textShadow('mode'),
+        },
+      },
+      {
+        kind: 'block',
+        type: 'poly_dict_has',
+        keywords: '字典 包含 存在 has contains key',
+        inputs: {
+          KEY: textShadow('mode'),
+        },
+      },
+      {
+        kind: 'block',
+        type: 'poly_dict_delete',
+        keywords: '字典 删除 键 delete remove pop nil key',
+        inputs: {
+          KEY: textShadow('mode'),
+        },
       },
     ],
   },

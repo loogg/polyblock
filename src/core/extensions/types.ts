@@ -217,6 +217,7 @@ export type CoreCategoryTarget =
   | 'logic'
   | 'text'
   | 'lists'
+  | 'dicts'
   | 'functions';
 
 /** Where a section places its blocks in the left toolbox: `'own'` (standalone tab, default) or any core category ID. */

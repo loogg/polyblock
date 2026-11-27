@@ -281,6 +281,16 @@ export function registerPythonBlockGenerators(): void {
     return [`str(${value})`, Order.FUNCTION_CALL];
   };
 
+  pythonGenerator.forBlock['poly_str_replace'] = (block, generator) => {
+    const src = generator.valueToCode(block, 'SRC', Order.NONE) || '""';
+    const oldStr = generator.valueToCode(block, 'OLD', Order.NONE) || '""';
+    const newStr = generator.valueToCode(block, 'NEW', Order.NONE) || '""';
+    return [
+      `str(${src}).replace(str(${oldStr}), str(${newStr}))`,
+      Order.FUNCTION_CALL,
+    ];
+  };
+
   // Pure value-slot list primitives (zero hidden helper functions!)
   pythonGenerator.forBlock['poly_list_append'] = (block, generator) => {
     const listCode = generator.valueToCode(block, 'LIST', Order.MEMBER) || '[]';
@@ -305,6 +315,34 @@ export function registerPythonBlockGenerators(): void {
     const listCode = generator.valueToCode(block, 'LIST', Order.MEMBER) || '[]';
     const idx = generator.valueToCode(block, 'INDEX', Order.NONE) || '1';
     return `${listCode}.pop(${formatPyZeroBasedIndex(idx)})\n`;
+  };
+
+  // Pure value-slot dict primitives (zero hidden helpers, native Python dicts, supports nested chaining)
+  pythonGenerator.forBlock['poly_dict_new'] = () => ['{}', Order.ATOMIC];
+
+  pythonGenerator.forBlock['poly_dict_set'] = (block, generator) => {
+    const dictCode = generator.valueToCode(block, 'DICT', Order.MEMBER) || '{}';
+    const key = generator.valueToCode(block, 'KEY', Order.NONE) || "''";
+    const val = generator.valueToCode(block, 'VAL', Order.NONE) || 'None';
+    return `${dictCode}[${key}] = ${val}\n`;
+  };
+
+  pythonGenerator.forBlock['poly_dict_get'] = (block, generator) => {
+    const dictCode = generator.valueToCode(block, 'DICT', Order.MEMBER) || '{}';
+    const key = generator.valueToCode(block, 'KEY', Order.NONE) || "''";
+    return [`${dictCode}.get(${key})`, Order.FUNCTION_CALL];
+  };
+
+  pythonGenerator.forBlock['poly_dict_has'] = (block, generator) => {
+    const dictCode = generator.valueToCode(block, 'DICT', Order.RELATIONAL) || '{}';
+    const key = generator.valueToCode(block, 'KEY', Order.RELATIONAL) || "''";
+    return [`${key} in ${dictCode}`, Order.RELATIONAL];
+  };
+
+  pythonGenerator.forBlock['poly_dict_delete'] = (block, generator) => {
+    const dictCode = generator.valueToCode(block, 'DICT', Order.MEMBER) || '{}';
+    const key = generator.valueToCode(block, 'KEY', Order.NONE) || "''";
+    return `${dictCode}.pop(${key}, None)\n`;
   };
 
   // Wrap built-in procedure defs/calls:

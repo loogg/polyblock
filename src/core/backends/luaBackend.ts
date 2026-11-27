@@ -195,6 +195,16 @@ export function registerLuaBlockGenerators(): void {
     return [`tostring(${value})`, Order.HIGH];
   };
 
+  luaGenerator.forBlock['poly_str_replace'] = (block, generator) => {
+    const src = generator.valueToCode(block, 'SRC', Order.NONE) || '""';
+    const oldStr = generator.valueToCode(block, 'OLD', Order.NONE) || '""';
+    const newStr = generator.valueToCode(block, 'NEW', Order.NONE) || '""';
+    return [
+      `(string.gsub(tostring(${src}), tostring(${oldStr}), tostring(${newStr})))`,
+      Order.ATOMIC,
+    ];
+  };
+
   // Pure value-slot list primitives (zero hidden helper functions!)
   luaGenerator.forBlock['poly_list_append'] = (block, generator) => {
     const listCode = generator.valueToCode(block, 'LIST', Order.NONE) || '{}';
@@ -205,7 +215,7 @@ export function registerLuaBlockGenerators(): void {
   luaGenerator.forBlock['poly_list_get'] = (block, generator) => {
     const listCode = generator.valueToCode(block, 'LIST', Order.HIGH) || '({})';
     const idx = generator.valueToCode(block, 'INDEX', Order.NONE) || '1';
-    return [`${listCode}[${idx}]`, Order.HIGH];
+    return [`${listCode}[${idx}]`, Order.ATOMIC];
   };
 
   luaGenerator.forBlock['poly_list_set'] = (block, generator) => {
@@ -219,6 +229,36 @@ export function registerLuaBlockGenerators(): void {
     const listCode = generator.valueToCode(block, 'LIST', Order.NONE) || '{}';
     const idx = generator.valueToCode(block, 'INDEX', Order.NONE) || '1';
     return `table.remove(${listCode}, ${idx})\n`;
+  };
+
+  // Pure value-slot dict primitives (zero hidden helpers, native Lua tables, supports nested chaining)
+  // Note: `{}` is an exp (not prefixexp) in Lua, so `Order.HIGH` keeps `a = {}` bare while auto-parenthesizing `({})['k']`;
+  // `poly_dict_get` returns `Order.ATOMIC` so chained `a['b']['val'] = 99` never emits leading `(` (avoiding Lua call-ambiguity).
+  luaGenerator.forBlock['poly_dict_new'] = () => ['{}', Order.HIGH];
+
+  luaGenerator.forBlock['poly_dict_set'] = (block, generator) => {
+    const dictCode = generator.valueToCode(block, 'DICT', Order.HIGH) || '({})';
+    const key = generator.valueToCode(block, 'KEY', Order.NONE) || '""';
+    const val = generator.valueToCode(block, 'VAL', Order.NONE) || 'nil';
+    return `${dictCode}[${key}] = ${val}\n`;
+  };
+
+  luaGenerator.forBlock['poly_dict_get'] = (block, generator) => {
+    const dictCode = generator.valueToCode(block, 'DICT', Order.HIGH) || '({})';
+    const key = generator.valueToCode(block, 'KEY', Order.NONE) || '""';
+    return [`${dictCode}[${key}]`, Order.ATOMIC];
+  };
+
+  luaGenerator.forBlock['poly_dict_has'] = (block, generator) => {
+    const dictCode = generator.valueToCode(block, 'DICT', Order.HIGH) || '({})';
+    const key = generator.valueToCode(block, 'KEY', Order.NONE) || '""';
+    return [`${dictCode}[${key}] ~= nil`, Order.RELATIONAL];
+  };
+
+  luaGenerator.forBlock['poly_dict_delete'] = (block, generator) => {
+    const dictCode = generator.valueToCode(block, 'DICT', Order.HIGH) || '({})';
+    const key = generator.valueToCode(block, 'KEY', Order.NONE) || '""';
+    return `${dictCode}[${key}] = nil\n`;
   };
 
   // Style A1 2-tier custom functions in Lua + function-top hoisting of nested `poly_local_set`:

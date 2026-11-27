@@ -63,6 +63,11 @@ const BLOCK_STYLES: Record<string, Partial<Blockly.Theme.BlockStyle>> = {
     colourSecondary: '#6d28d9',
     colourTertiary: '#5b21b6',
   },
+  dict_blocks: {
+    colourPrimary: '#f97316',
+    colourSecondary: '#ea580c',
+    colourTertiary: '#c2410c',
+  },
   procedure_blocks: {
     colourPrimary: '#4f46e5',
     colourSecondary: '#4338ca',

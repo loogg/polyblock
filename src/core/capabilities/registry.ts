@@ -55,11 +55,11 @@ export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
     id: 'virtual-board-basic',
     name: '虚拟硬件基础演示板（无定时）',
     description:
-      '仅启用示例虚拟硬件外设包与字典进阶包，不含 rt 运行时周期与定时器，演示不同项目的差异化能力装配。',
+      '仅启用示例虚拟硬件外设包，不含 rt 运行时周期与定时器，演示不同项目的差异化能力装配。',
     defaultLanguage: 'python',
     maxHandles: 4,
     defaultTimerCount: 8,
-    capabilities: [CAP_VIRTUAL_BOARD, 'dict-json'],
+    capabilities: [CAP_VIRTUAL_BOARD],
     builtin: true,
   },
 ];
@@ -74,7 +74,7 @@ export const SAMPLE_CUSTOM_BOARD_TEMPLATE: TargetProfile = {
   defaultLanguage: 'lua',
   maxHandles: 8,
   defaultTimerCount: 16,
-  capabilities: [CAP_RT, 'dict-json'],
+  capabilities: [CAP_RT],
 };
 
 export function validateTargetProfile(raw: unknown): TargetProfile {

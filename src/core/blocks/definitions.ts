@@ -184,6 +184,19 @@ export function registerPolyBlocks(): void {
       style: 'text_blocks',
       tooltip: '将数字、布尔或变量安全转换为字符串，方便拼接。',
     },
+    {
+      type: 'poly_str_replace',
+      message0: '文本 %1 替换 %2 为 %3',
+      args0: [
+        { type: 'input_value', name: 'SRC', check: 'String' },
+        { type: 'input_value', name: 'OLD', check: 'String' },
+        { type: 'input_value', name: 'NEW', check: 'String' },
+      ],
+      inputsInline: true,
+      output: 'String',
+      style: 'text_blocks',
+      tooltip: '将源文本中的指定子串替换为新内容。',
+    },
 
     // --- 列表核心原语（纯值槽、零隐藏辅助函数注入，支持跨文件/单文件/局部变量与表达式） ---
     {
@@ -237,6 +250,66 @@ export function registerPolyBlocks(): void {
       nextStatement: null,
       style: 'list_blocks',
       tooltip: '移除列表第 N 项（从 1 开始计数：Lua 导出 table.remove，Python 导出 pop）。',
+    },
+
+    // --- 字典核心原语（纯值槽、零外部依赖，支持跨文件/单文件/局部变量与嵌套字典） ---
+    {
+      type: 'poly_dict_new',
+      message0: '空字典 { }',
+      output: null,
+      style: 'dict_blocks',
+      tooltip: '创建一个空的键值字典（Lua table / Python dict），可用于变量赋值或嵌套子字典。',
+    },
+    {
+      type: 'poly_dict_set',
+      message0: '字典 %1 设置键 %2 = %3',
+      args0: [
+        { type: 'input_value', name: 'DICT' },
+        { type: 'input_value', name: 'KEY', check: 'String' },
+        { type: 'input_value', name: 'VAL' },
+      ],
+      inputsInline: true,
+      previousStatement: null,
+      nextStatement: null,
+      style: 'dict_blocks',
+      tooltip: '向指定字典（可拖入任意作用域变量或嵌套取键表达式）写入指定键名与值。',
+    },
+    {
+      type: 'poly_dict_get',
+      message0: '字典 %1 取键 %2',
+      args0: [
+        { type: 'input_value', name: 'DICT' },
+        { type: 'input_value', name: 'KEY', check: 'String' },
+      ],
+      inputsInline: true,
+      output: null,
+      style: 'dict_blocks',
+      tooltip: '从指定字典读取键对应的值（不存在返回 nil / None，支持多层嵌套读取）。',
+    },
+    {
+      type: 'poly_dict_has',
+      message0: '字典 %1 包含键 %2 ?',
+      args0: [
+        { type: 'input_value', name: 'DICT' },
+        { type: 'input_value', name: 'KEY', check: 'String' },
+      ],
+      inputsInline: true,
+      output: 'Boolean',
+      style: 'dict_blocks',
+      tooltip: '判断指定字典中是否存在该键名。',
+    },
+    {
+      type: 'poly_dict_delete',
+      message0: '字典 %1 删除键 %2',
+      args0: [
+        { type: 'input_value', name: 'DICT' },
+        { type: 'input_value', name: 'KEY', check: 'String' },
+      ],
+      inputsInline: true,
+      previousStatement: null,
+      nextStatement: null,
+      style: 'dict_blocks',
+      tooltip: '从指定字典删除该键名（键不存在时静默跳过：Lua 导出 d[k] = nil，Python 导出 d.pop(k, None)）。',
     },
   ];
 
@@ -399,7 +472,7 @@ export function registerPolyBlocks(): void {
     }
   }
 
-  // Register all built-in declarative extension packs (rt, virtual-board, dict-json, clock-timer) & custom packs
+  // Register all built-in declarative extension packs (rt, virtual-board, clock-timer) & custom packs
   extensionRegistry.ensureInitialized();
 
   blocksRegistered = true;

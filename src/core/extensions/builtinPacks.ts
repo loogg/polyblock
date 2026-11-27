@@ -635,114 +635,6 @@ def is_pressed(btn):
   ],
 };
 
-export const DICT_JSON_PACK: PolyExtensionPack = {
-  format: 'polyblock-extension',
-  version: 1,
-  id: 'dict-json',
-  name: '字典与文本进阶包',
-  packVersion: '1.0.0',
-  iconLabel: '字典',
-  color: '#f97316',
-  description:
-    '提供跨 Lua table 与 Python dict 的键值对操作积木及字符串替换工具，生成原生标准语法，零额外依赖。',
-  builtin: true,
-  tags: ['数据结构'],
-  sections: [
-    {
-      id: 'main',
-      label: '字典',
-      toolboxOrder: 110,
-      blocks: [
-        {
-          type: 'ext_dict_new',
-          kind: 'value',
-          outputType: null,
-          message0: '空字典 { }',
-          tooltip: '创建一个空的键值字典（Lua table / Python dict）。',
-          keywords: '字典 dict map table 空对象 json',
-          lua: { template: '{}' },
-          python: { template: '{}' },
-        },
-        {
-          type: 'ext_dict_set',
-          kind: 'statement',
-          message0: '字典 %1 设置键 %2 = %3',
-          args0: [
-            { type: 'input_value', name: 'DICT' },
-            { type: 'input_value', name: 'KEY', check: 'String' },
-            { type: 'input_value', name: 'VAL' },
-          ],
-          inputsInline: true,
-          tooltip: '向指定字典（可拖入任意作用域变量或字典表达式）写入指定键名与值。',
-          keywords: '字典 设置 键 key value set dict',
-          shadows: {
-            KEY: { type: 'text', value: 'mode' },
-            VAL: { type: 'text', value: 'auto' },
-          },
-          lua: { template: '{{DICT}}[{{KEY}}] = {{VAL}}' },
-          python: { template: '{{DICT}}[{{KEY}}] = {{VAL}}' },
-        },
-        {
-          type: 'ext_dict_get',
-          kind: 'value',
-          outputType: null,
-          message0: '字典 %1 取键 %2',
-          args0: [
-            { type: 'input_value', name: 'DICT' },
-            { type: 'input_value', name: 'KEY', check: 'String' },
-          ],
-          inputsInline: true,
-          tooltip: '从指定字典读取键对应的值（不存在返回 nil / None）。',
-          keywords: '字典 读取 获取 get key dict',
-          shadows: { KEY: { type: 'text', value: 'mode' } },
-          lua: { template: '{{DICT}}[{{KEY}}]' },
-          python: { template: '{{DICT}}.get({{KEY}})' },
-        },
-        {
-          type: 'ext_dict_has',
-          kind: 'value',
-          outputType: 'Boolean',
-          message0: '字典 %1 包含键 %2 ?',
-          args0: [
-            { type: 'input_value', name: 'DICT' },
-            { type: 'input_value', name: 'KEY', check: 'String' },
-          ],
-          inputsInline: true,
-          tooltip: '判断指定字典中是否存在该键名。',
-          keywords: '字典 包含 存在 has contains key',
-          shadows: { KEY: { type: 'text', value: 'mode' } },
-          lua: { template: '({{DICT}}[{{KEY}}] ~= nil)' },
-          python: { template: '({{KEY}} in {{DICT}})' },
-        },
-        {
-          type: 'ext_str_replace',
-          kind: 'value',
-          outputType: 'String',
-          message0: '文本 %1 替换 %2 为 %3',
-          args0: [
-            { type: 'input_value', name: 'SRC', check: 'String' },
-            { type: 'input_value', name: 'OLD', check: 'String' },
-            { type: 'input_value', name: 'NEW', check: 'String' },
-          ],
-          inputsInline: true,
-          tooltip: '将源文本中的指定子串替换为新内容。',
-          keywords: '文本 替换 replace string sub',
-          shadows: {
-            SRC: { type: 'text', value: 'hello world' },
-            OLD: { type: 'text', value: 'world' },
-            NEW: { type: 'text', value: 'PolyBlock' },
-          },
-          lua: {
-            template:
-              '(string.gsub(tostring({{SRC}}), tostring({{OLD}}), tostring({{NEW}})))',
-          },
-          python: { template: 'str({{SRC}}).replace(str({{OLD}}), str({{NEW}}))' },
-        },
-      ],
-    },
-  ],
-};
-
 export const CLOCK_TIMER_PACK: PolyExtensionPack = {
   format: 'polyblock-extension',
   version: 1,
@@ -815,7 +707,6 @@ def reset():
 export const BUILTIN_EXTENSION_PACKS: PolyExtensionPack[] = [
   RT_PACK,
   VIRTUAL_BOARD_PACK,
-  DICT_JSON_PACK,
   CLOCK_TIMER_PACK,
 ];
 

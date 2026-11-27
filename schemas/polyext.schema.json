@@ -197,10 +197,11 @@
             "logic",
             "text",
             "lists",
+            "dicts",
             "functions"
           ],
           "default": "own",
-          "description": "侧边栏落位：'own' 新建独立分类（默认），或填任意 9 个核心分类 ID 将积木并入该核心分类。"
+          "description": "侧边栏落位：'own' 新建独立分类（默认），或填任意 10 个核心分类 ID 将积木并入该核心分类。"
         },
         "toolboxOrder": {
           "type": "integer",

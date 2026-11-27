@@ -379,7 +379,7 @@ def center_all():
 };
 
 /**
- * L2 Medium Extra Script (`dict_config`): demonstrates dict-json + clock-timer + board button polling.
+ * L2 Medium Extra Script (`dict_config`): demonstrates core dict + str_replace + clock-timer + board OLED.
  */
 export const MEDIUM_DICT_CONFIG_WS: Record<string, unknown> = {
   blocks: {
@@ -401,11 +401,11 @@ export const MEDIUM_DICT_CONFIG_WS: Record<string, unknown> = {
                   id: 'md_cfg_new',
                   fields: { VAR: { id: 'var_md_cfg' } },
                   inputs: {
-                    VALUE: { block: { type: 'ext_dict_new', id: 'md_dict_lit' } },
+                    VALUE: { block: { type: 'poly_dict_new', id: 'md_dict_lit' } },
                   },
                   next: {
                     block: {
-                      type: 'ext_dict_set',
+                      type: 'poly_dict_set',
                       id: 'md_set_mode',
                       inputs: {
                         DICT: { block: { type: 'variables_get', id: 'md_dref_1', fields: { VAR: { id: 'var_md_cfg' } } } },
@@ -414,7 +414,7 @@ export const MEDIUM_DICT_CONFIG_WS: Record<string, unknown> = {
                       },
                       next: {
                         block: {
-                          type: 'ext_dict_set',
+                          type: 'poly_dict_set',
                           id: 'md_set_limit',
                           inputs: {
                             DICT: { block: { type: 'variables_get', id: 'md_dref_2', fields: { VAR: { id: 'var_md_cfg' } } } },
@@ -432,14 +432,14 @@ export const MEDIUM_DICT_CONFIG_WS: Record<string, unknown> = {
                                   inputs: {
                                     TEXT: {
                                       block: {
-                                        type: 'ext_str_replace',
+                                        type: 'poly_str_replace',
                                         id: 'md_rep',
                                         inputs: {
                                           SRC: { block: { type: 'text', id: 'md_src', fields: { TEXT: 'MODE: {M}' } } },
                                           OLD: { block: { type: 'text', id: 'md_old', fields: { TEXT: '{M}' } } },
                                           NEW: {
                                             block: {
-                                              type: 'ext_dict_get',
+                                              type: 'poly_dict_get',
                                               id: 'md_get_m',
                                               inputs: {
                                                 DICT: { block: { type: 'variables_get', id: 'md_dref_3', fields: { VAR: { id: 'var_md_cfg' } } } },
@@ -459,7 +459,7 @@ export const MEDIUM_DICT_CONFIG_WS: Record<string, unknown> = {
                                       inputs: {
                                         VALUE: {
                                           block: {
-                                            type: 'ext_dict_get',
+                                            type: 'poly_dict_get',
                                             id: 'md_get_lim',
                                             inputs: {
                                               DICT: { block: { type: 'variables_get', id: 'md_dref_4', fields: { VAR: { id: 'var_md_cfg' } } } },
@@ -1199,7 +1199,7 @@ export const FLAGSHIP_SENSOR_GUARD_WS: Record<string, unknown> = {
 
 /**
  * L4 Flagship Handle #3 (`telemetry_hub`) Entry Script: `metrics_report`
- * Uses `clock-timer` + `dict-json` + its own 3rd isolated T0 (`遥测上报`)!
+ * Uses `clock-timer` + core dict blocks + its own 3rd isolated T0 (`遥测上报`)!
  */
 export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
   blocks: {
@@ -1222,7 +1222,7 @@ export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
                   type: 'variables_set',
                   id: 'fg_t_rep0',
                   fields: { VAR: { id: 'var_fg_report' } },
-                  inputs: { VALUE: { block: { type: 'ext_dict_new', id: 'fg_t_dnew' } } },
+                  inputs: { VALUE: { block: { type: 'poly_dict_new', id: 'fg_t_dnew' } } },
                   next: {
                     block: {
                       type: 'ext_clock_reset',
@@ -1277,7 +1277,7 @@ export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
                   inputs: { VALUE: { block: { type: 'ext_clock_millis', id: 'fg_t_ms' } } },
                   next: {
                     block: {
-                      type: 'ext_dict_set',
+                      type: 'poly_dict_set',
                       id: 'fg_t_d1',
                       inputs: {
                         DICT: { block: { type: 'variables_get', id: 'fg_t_dref1', fields: { VAR: { id: 'var_fg_report' } } } },
@@ -1286,7 +1286,7 @@ export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
                       },
                       next: {
                         block: {
-                          type: 'ext_dict_set',
+                          type: 'poly_dict_set',
                           id: 'fg_t_d2',
                           inputs: {
                             DICT: { block: { type: 'variables_get', id: 'fg_t_dref2', fields: { VAR: { id: 'var_fg_report' } } } },
@@ -1295,7 +1295,7 @@ export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
                           },
                           next: {
                             block: {
-                              type: 'ext_dict_set',
+                              type: 'poly_dict_set',
                               id: 'fg_t_d3',
                               inputs: {
                                 DICT: { block: { type: 'variables_get', id: 'fg_t_dref3', fields: { VAR: { id: 'var_fg_report' } } } },
@@ -1318,7 +1318,7 @@ export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
                                       inputs: {
                                         VALUE: {
                                           block: {
-                                            type: 'ext_dict_get',
+                                            type: 'poly_dict_get',
                                             id: 'fg_t_gms',
                                             inputs: {
                                               DICT: { block: { type: 'variables_get', id: 'fg_t_dref4', fields: { VAR: { id: 'var_fg_report' } } } },

@@ -117,24 +117,23 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(targetProfileRegistry.removeCustomProfile(imported.id)).toBe(true);
   });
 
-  it('registers all 4 built-in packs (with multi-section rt), derives badges, and sorts toolbox categories by numeric toolboxOrder', () => {
+  it('registers all 3 pure-module built-in packs (with multi-section rt), derives badges, and sorts toolbox categories by numeric toolboxOrder', () => {
     const all = extensionRegistry.listAll();
     expect(all.map((p) => p.id)).toEqual(
       expect.arrayContaining([
         'rt',
         'virtual-board',
-        'dict-json',
         'clock-timer',
       ]),
     );
-    expect(extensionRegistry.listBySource('builtin')).toHaveLength(4);
+    expect(extensionRegistry.listBySource('builtin')).toHaveLength(3);
     expect(resolvePackSections(RT_PACK).map((s) => s.capId)).toEqual([
       CAP_RT_LIFECYCLE,
       CAP_RT_TIMERS,
       CAP_RT_TICK,
     ]);
     expect(CORE_TOOLBOX_ORDERS.map((c) => c.order)).toEqual([
-      10, 20, 30, 40, 50, 60, 70, 80, 90,
+      10, 20, 30, 40, 50, 60, 70, 80, 85, 90,
     ]);
 
     const rtBadges = derivePackBadges(RT_PACK).map((b) => b.label);
@@ -200,17 +199,17 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     );
     extensionRegistry.setActiveProjectLocalPacks([]);
 
-    const cats = extensionRegistry.toCategorySpecs(['virtual-board', 'dict-json']);
+    const cats = extensionRegistry.toCategorySpecs(['virtual-board', 'clock-timer']);
     expect(cats).toHaveLength(2);
     expect(cats[0].label).toBe('硬件');
     expect(cats[0].order).toBe(100);
     expect(cats[0].blocks.length).toBeGreaterThanOrEqual(7);
-    expect(cats[1].label).toBe('字典');
-    expect(cats[1].order).toBe(110);
+    expect(cats[1].label).toBe('计时');
+    expect(cats[1].order).toBe(120);
 
-    const mocks = extensionRegistry.getSandboxMocks(['virtual-board', 'dict-json']);
-    expect(mocks).toHaveLength(1);
-    expect(mocks[0].moduleName).toBe('board');
+    const mocks = extensionRegistry.getSandboxMocks(['virtual-board', 'clock-timer']);
+    expect(mocks).toHaveLength(2);
+    expect(mocks.map((m) => m.moduleName)).toEqual(['board', 'poly_clock']);
     expect(mocks[0].packId).toBe('virtual-board');
   });
 

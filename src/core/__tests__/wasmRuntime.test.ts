@@ -1713,7 +1713,7 @@ sys.modules["board"] = _m
             inputs: {
               BODY: {
                 block: {
-                  type: 'ext_dict_set',
+                  type: 'poly_dict_set',
                   id: 'dl_dset',
                   inputs: {
                     DICT: { block: { type: 'variables_get', id: 'dl_dg1', fields: { VAR: { id: 'v_cfg' } } } },
@@ -1745,7 +1745,7 @@ sys.modules["board"] = _m
                               inputs: {
                                 VALUE: {
                                   block: {
-                                    type: 'ext_dict_get',
+                                    type: 'poly_dict_get',
                                     id: 'dl_dget',
                                     inputs: {
                                       DICT: { block: { type: 'variables_get', id: 'dl_dg2', fields: { VAR: { id: 'v_cfg' } } } },
@@ -1856,5 +1856,235 @@ sys.modules["board"] = _m
     expect(pyLogs).toContain('CFG = TURBO');
     expect(pyLogs).toContain('ARR1 = 42');
     expect(pyLogs).toContain('SHARED_SLEPT');
+  });
+
+  it('executes Layer 0 Core nested dict (new/set/get/has/delete) and str_replace identically in Wasmoon Lua 5.4 & MicroPython', async () => {
+    // a = {}; a["b"] = {}; a["b"]["val"] = 99;
+    // print("VAL", a["b"]["val"]); print("HAS1", has(a["b"], "val"));
+    // delete(a["b"], "val"); delete(a["b"], "missing"); print("HAS2", has(a["b"], "val"));
+    // print("REP", replace("hi {X}", "{X}", "Poly"))
+    const wsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'nd_start',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'variables_set',
+                  id: 'nd_init',
+                  fields: { VAR: { id: 'v_a' } },
+                  inputs: { VALUE: { block: { type: 'poly_dict_new', id: 'nd_new1' } } },
+                  next: {
+                    block: {
+                      type: 'poly_dict_set',
+                      id: 'nd_set_b',
+                      inputs: {
+                        DICT: { block: { type: 'variables_get', id: 'nd_a1', fields: { VAR: { id: 'v_a' } } } },
+                        KEY: { block: { type: 'text', id: 'nd_kb1', fields: { TEXT: 'b' } } },
+                        VAL: { block: { type: 'poly_dict_new', id: 'nd_new2' } },
+                      },
+                      next: {
+                        block: {
+                          type: 'poly_dict_set',
+                          id: 'nd_set_val',
+                          inputs: {
+                            DICT: {
+                              block: {
+                                type: 'poly_dict_get',
+                                id: 'nd_get_b1',
+                                inputs: {
+                                  DICT: { block: { type: 'variables_get', id: 'nd_a2', fields: { VAR: { id: 'v_a' } } } },
+                                  KEY: { block: { type: 'text', id: 'nd_kb2', fields: { TEXT: 'b' } } },
+                                },
+                              },
+                            },
+                            KEY: { block: { type: 'text', id: 'nd_kv1', fields: { TEXT: 'val' } } },
+                            VAL: { block: { type: 'math_number', id: 'nd_99', fields: { NUM: 99 } } },
+                          },
+                          next: {
+                            block: {
+                              type: 'poly_print_kv',
+                              id: 'nd_p_val',
+                              fields: { LABEL: 'VAL' },
+                              inputs: {
+                                VALUE: {
+                                  block: {
+                                    type: 'poly_dict_get',
+                                    id: 'nd_get_val',
+                                    inputs: {
+                                      DICT: {
+                                        block: {
+                                          type: 'poly_dict_get',
+                                          id: 'nd_get_b2',
+                                          inputs: {
+                                            DICT: { block: { type: 'variables_get', id: 'nd_a3', fields: { VAR: { id: 'v_a' } } } },
+                                            KEY: { block: { type: 'text', id: 'nd_kb3', fields: { TEXT: 'b' } } },
+                                          },
+                                        },
+                                      },
+                                      KEY: { block: { type: 'text', id: 'nd_kv2', fields: { TEXT: 'val' } } },
+                                    },
+                                  },
+                                },
+                              },
+                              next: {
+                                block: {
+                                  type: 'poly_print_kv',
+                                  id: 'nd_p_has1',
+                                  fields: { LABEL: 'HAS1' },
+                                  inputs: {
+                                    VALUE: {
+                                      block: {
+                                        type: 'poly_dict_has',
+                                        id: 'nd_has1',
+                                        inputs: {
+                                          DICT: {
+                                            block: {
+                                              type: 'poly_dict_get',
+                                              id: 'nd_get_b3',
+                                              inputs: {
+                                                DICT: { block: { type: 'variables_get', id: 'nd_a4', fields: { VAR: { id: 'v_a' } } } },
+                                                KEY: { block: { type: 'text', id: 'nd_kb4', fields: { TEXT: 'b' } } },
+                                              },
+                                            },
+                                          },
+                                          KEY: { block: { type: 'text', id: 'nd_kv3', fields: { TEXT: 'val' } } },
+                                        },
+                                      },
+                                    },
+                                  },
+                                  next: {
+                                    block: {
+                                      type: 'poly_dict_delete',
+                                      id: 'nd_del1',
+                                      inputs: {
+                                        DICT: {
+                                          block: {
+                                            type: 'poly_dict_get',
+                                            id: 'nd_get_b4',
+                                            inputs: {
+                                              DICT: { block: { type: 'variables_get', id: 'nd_a5', fields: { VAR: { id: 'v_a' } } } },
+                                              KEY: { block: { type: 'text', id: 'nd_kb5', fields: { TEXT: 'b' } } },
+                                            },
+                                          },
+                                        },
+                                        KEY: { block: { type: 'text', id: 'nd_kv4', fields: { TEXT: 'val' } } },
+                                      },
+                                      next: {
+                                        block: {
+                                          type: 'poly_dict_delete',
+                                          id: 'nd_del_missing',
+                                          inputs: {
+                                            DICT: {
+                                              block: {
+                                                type: 'poly_dict_get',
+                                                id: 'nd_get_b5',
+                                                inputs: {
+                                                  DICT: { block: { type: 'variables_get', id: 'nd_a6', fields: { VAR: { id: 'v_a' } } } },
+                                                  KEY: { block: { type: 'text', id: 'nd_kb6', fields: { TEXT: 'b' } } },
+                                                },
+                                              },
+                                            },
+                                            KEY: { block: { type: 'text', id: 'nd_km', fields: { TEXT: 'missing' } } },
+                                          },
+                                          next: {
+                                            block: {
+                                              type: 'poly_print_kv',
+                                              id: 'nd_p_has2',
+                                              fields: { LABEL: 'HAS2' },
+                                              inputs: {
+                                                VALUE: {
+                                                  block: {
+                                                    type: 'poly_dict_has',
+                                                    id: 'nd_has2',
+                                                    inputs: {
+                                                      DICT: {
+                                                        block: {
+                                                          type: 'poly_dict_get',
+                                                          id: 'nd_get_b6',
+                                                          inputs: {
+                                                            DICT: { block: { type: 'variables_get', id: 'nd_a7', fields: { VAR: { id: 'v_a' } } } },
+                                                            KEY: { block: { type: 'text', id: 'nd_kb7', fields: { TEXT: 'b' } } },
+                                                          },
+                                                        },
+                                                      },
+                                                      KEY: { block: { type: 'text', id: 'nd_kv5', fields: { TEXT: 'val' } } },
+                                                    },
+                                                  },
+                                                },
+                                              },
+                                              next: {
+                                                block: {
+                                                  type: 'poly_print_kv',
+                                                  id: 'nd_p_rep',
+                                                  fields: { LABEL: 'REP' },
+                                                  inputs: {
+                                                    VALUE: {
+                                                      block: {
+                                                        type: 'poly_str_replace',
+                                                        id: 'nd_rep',
+                                                        inputs: {
+                                                          SRC: { block: { type: 'text', id: 'nd_r1', fields: { TEXT: 'hi {X}' } } },
+                                                          OLD: { block: { type: 'text', id: 'nd_r2', fields: { TEXT: '{X}' } } },
+                                                          NEW: { block: { type: 'text', id: 'nd_r3', fields: { TEXT: 'Poly' } } },
+                                                        },
+                                                      },
+                                                    },
+                                                  },
+                                                },
+                                              },
+                                            },
+                                          },
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [{ name: 'a', id: 'v_a' }],
+    };
+
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(wsJson, ws);
+    const luaRes = backendRegistry.get('lua').generate(ws);
+    const pyRes = backendRegistry.get('python').generate(ws);
+    ws.dispose();
+
+    expect(luaRes.diagnostics).toHaveLength(0);
+    expect(pyRes.diagnostics).toHaveLength(0);
+    // Clean nested chaining without parens or extra imports
+    expect(luaRes.code).toContain("a['b']['val'] = 99");
+    expect(luaRes.code).toContain("a['b']['val'] = nil");
+    expect(luaRes.code).not.toContain('require(');
+    expect(pyRes.code).toContain("a.get('b')['val'] = 99");
+    expect(pyRes.code).toContain("a.get('b').pop('val', None)");
+    expect(pyRes.code).not.toContain('import ');
+
+    const { logs: luaLogs } = await runLuaDebugInWasmoon(luaRes.debugCode);
+    expect(luaLogs).toContain('VAL = 99');
+    expect(luaLogs).toContain('HAS1 = true');
+    expect(luaLogs).toContain('HAS2 = false');
+    expect(luaLogs).toContain('REP = hi Poly');
+
+    const { logs: pyLogs } = await runPyDebugInMicroPython(pyRes.debugCode);
+    expect(pyLogs).toContain('VAL = 99');
+    expect(pyLogs).toContain('HAS1 = True');
+    expect(pyLogs).toContain('HAS2 = False');
+    expect(pyLogs).toContain('REP = hi Poly');
   });
 });
