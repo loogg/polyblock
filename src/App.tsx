@@ -44,7 +44,7 @@ import {
   setActiveProjectCapabilities,
   setActiveScriptVarInitials,
   type ChannelAliasPromptRequest,
-} from './core/blocks/timerConfigBridge';
+} from './core/blocks/workspaceContextBridge';
 import {
   CAP_RT_TIMERS,
   targetProfileRegistry,
@@ -107,7 +107,7 @@ import {
   renameScriptInHandle,
   saveWorkspaceStore,
   setHandleChannelPoolConfig,
-  STORAGE_STORE_V8_KEY,
+  STORAGE_STORE_V9_KEY,
   updateHandleById,
   updateProjectById,
 } from './core/projects/store';
@@ -1809,7 +1809,7 @@ export function App() {
 
   const handleResetWorkspace = useCallback(() => {
     stopIfRunning();
-    localStorage.removeItem(STORAGE_STORE_V8_KEY);
+    localStorage.removeItem(STORAGE_STORE_V9_KEY);
     const freshStore = createDefaultWorkspaceStore();
     setStore(freshStore);
     mountScriptIntoCanvas(freshStore);
@@ -1913,9 +1913,8 @@ export function App() {
         : activeHandle;
 
       // Pre-Run Static Error Gate: collect blocking `severity === 'error'` diagnostics across ALL scripts in the handle!
-      setActiveHandleSharedVarInitials(handleForRun.variableInitialValues ?? {});
-      setActiveHandleSharedFunctions(handleForRun.sharedFunctions ?? []);
       const handleMetasForRun = buildHandleScriptsMeta(handleForRun);
+      const sharedVarsForRun = collectHandleSharedVariableNames(handleForRun);
       const blockingErrors: Array<{
         scriptName: string;
         message: string;
@@ -1935,13 +1934,16 @@ export function App() {
             }
           }
         } else {
-          setActiveScriptVarInitials(scr.variableInitialValues ?? {});
-          setActiveHandleScripts(handleMetasForRun, scr.id);
-          const sibCompiled = compileScriptHeadless(
-            scr.workspace,
-            language,
-            activeChannelPoolConfigs,
-          );
+          const sibCompiled = compileScriptHeadless(scr.workspace, language, {
+            channelPoolConfigs: activeChannelPoolConfigs,
+            enabledCapabilities: activeProject.enabledCapabilities,
+            handleScripts: handleMetasForRun,
+            currentScriptId: scr.id,
+            sharedVariables: sharedVarsForRun,
+            sharedVarInitials: handleForRun.variableInitialValues ?? {},
+            scriptVarInitials: scr.variableInitialValues ?? {},
+            sharedFunctions: handleForRun.sharedFunctions ?? [],
+          });
           for (const d of sibCompiled.diagnostics) {
             if (d.severity === 'error') {
               blockingErrors.push({
@@ -1954,8 +1956,6 @@ export function App() {
           }
         }
       }
-      setActiveScriptVarInitials(activeScript.variableInitialValues ?? {});
-      setActiveHandleScripts(handleMetasForRun, activeScript.id);
 
       if (blockingErrors.length > 0) {
         setShowConsole(true);
@@ -1984,19 +1984,23 @@ export function App() {
       let runDebugCode = latest.debugCode || latest.code;
       let runIsEventDriven = Boolean(latest.isEventDriven);
       if (!runningEntryDirectly) {
-        setActiveScriptVarInitials(entryScript.variableInitialValues ?? {});
-        setActiveHandleScripts(handleMetasForRun, entryScript.id);
         const compiledEntry = compileScriptHeadless(
           entryScript.workspace,
           language,
-          activeChannelPoolConfigs,
+          {
+            channelPoolConfigs: activeChannelPoolConfigs,
+            enabledCapabilities: activeProject.enabledCapabilities,
+            handleScripts: handleMetasForRun,
+            currentScriptId: entryScript.id,
+            sharedVariables: sharedVarsForRun,
+            sharedVarInitials: handleForRun.variableInitialValues ?? {},
+            scriptVarInitials: entryScript.variableInitialValues ?? {},
+            sharedFunctions: handleForRun.sharedFunctions ?? [],
+          },
         );
         runCode = compiledEntry.code;
         runDebugCode = compiledEntry.debugCode;
         runIsEventDriven = compiledEntry.isEventDriven;
-        // Restore active-tab script metadata for editor diagnostics
-        setActiveScriptVarInitials(activeScript.variableInitialValues ?? {});
-        setActiveHandleScripts(handleMetasForRun, activeScript.id);
       }
 
       const scriptFileLabel = `${activeHandle.name}/${entryScript.name}.${adapter.extension}`;
@@ -2041,9 +2045,6 @@ export function App() {
         language,
         activeChannelPoolConfigs,
       );
-      setActiveHandleSharedVarInitials(activeHandle.variableInitialValues ?? {});
-      setActiveScriptVarInitials(activeScript.variableInitialValues ?? {});
-      setActiveHandleScripts(handleMetasForRun, activeScript.id);
 
       const modResolution = resolveProjectModules({
         enabledCapabilities: activeProject.enabledCapabilities,
@@ -2051,8 +2052,7 @@ export function App() {
         handleScripts: siblingMocks.map((m, idx) => ({
           scriptId: `${activeHandle.id}-sib-${idx}`,
           scriptName: m.moduleName,
-          luaSource: m.luaSource,
-          pythonSource: m.pythonSource,
+          sources: m.sources,
         })),
       });
 
@@ -2255,15 +2255,19 @@ export function App() {
     }> = [];
     for (const hdl of runList) {
       const hdlPools = getAllHandleChannelPoolConfigs(hdl, poolsForMulti);
-      setActiveChannelPoolConfigs(hdlPools);
-      setActiveHandleSharedVariables(collectHandleSharedVariableNames(hdl));
-      setActiveHandleSharedVarInitials(hdl.variableInitialValues ?? {});
-      setActiveHandleSharedFunctions(hdl.sharedFunctions ?? []);
+      const hdlSharedVars = collectHandleSharedVariableNames(hdl);
       const hdlMetas = buildHandleScriptsMeta(hdl);
       for (const scr of hdl.scripts) {
-        setActiveScriptVarInitials(scr.variableInitialValues ?? {});
-        setActiveHandleScripts(hdlMetas, scr.id);
-        const res = compileScriptHeadless(scr.workspace, proj.language, hdlPools);
+        const res = compileScriptHeadless(scr.workspace, proj.language, {
+          channelPoolConfigs: hdlPools,
+          enabledCapabilities: proj.enabledCapabilities,
+          handleScripts: hdlMetas,
+          currentScriptId: scr.id,
+          sharedVariables: hdlSharedVars,
+          sharedVarInitials: hdl.variableInitialValues ?? {},
+          scriptVarInitials: scr.variableInitialValues ?? {},
+          sharedFunctions: hdl.sharedFunctions ?? [],
+        });
         for (const d of res.diagnostics) {
           if (d.severity === 'error') {
             multiBlockingErrors.push({
@@ -2276,13 +2280,6 @@ export function App() {
         }
       }
     }
-    // Restore active handle bridge context
-    setActiveChannelPoolConfigs(activeChannelPoolConfigs);
-    setActiveHandleSharedVariables(collectHandleSharedVariableNames(activeHandle));
-    setActiveHandleSharedVarInitials(activeHandle.variableInitialValues ?? {});
-    setActiveScriptVarInitials(activeScript.variableInitialValues ?? {});
-    setActiveHandleSharedFunctions(activeHandle.sharedFunctions ?? []);
-    setActiveHandleScripts(buildHandleScriptsMeta(activeHandle), activeScript.id);
 
     if (multiBlockingErrors.length > 0) {
       const ext = backendRegistry.get(proj.language).extension;

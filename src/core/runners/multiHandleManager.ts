@@ -13,13 +13,8 @@ import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { buildHandleSharedModule } from '../backends/sharedModule';
 import {
   DEFAULT_CHANNEL_COUNT,
-  setActiveChannelPoolConfigs,
-  setActiveHandleScripts,
-  setActiveHandleSharedFunctions,
-  setActiveHandleSharedVarInitials,
-  setActiveHandleSharedVariables,
-  setActiveScriptVarInitials,
-} from '../blocks/timerConfigBridge';
+  type CompileContext,
+} from '../blocks/workspaceContextBridge';
 import { collectHandleSharedVariableNames } from '../projects/handleVariables';
 import { CAP_RT_TIMERS } from '../capabilities/registry';
 import { resolveProjectModules } from '../extensions/moduleResolver';
@@ -33,7 +28,7 @@ import type { RunResult, RunnerStatus, ScriptRunner } from './types';
 export function compileScriptHeadless(
   workspaceJson: Record<string, unknown>,
   language: ScriptLanguageId,
-  channelPoolConfigs: Record<string, ChannelPoolConfig>,
+  context?: CompileContext,
 ): {
   code: string;
   debugCode: string;
@@ -41,11 +36,10 @@ export function compileScriptHeadless(
   isEventDriven: boolean;
   diagnostics: DiagnosticItem[];
 } {
-  setActiveChannelPoolConfigs(channelPoolConfigs);
   const ws = new Blockly.Workspace();
   try {
     Blockly.serialization.workspaces.load(workspaceJson, ws);
-    const res = backendRegistry.get(language).generate(ws);
+    const res = backendRegistry.get(language).generate(ws, context);
     return {
       code: res.code,
       debugCode: res.debugCode || res.code,
@@ -87,9 +81,6 @@ export function buildHandleScriptModules(
     : handle;
   const handleMetas = buildHandleScriptsMeta(effectiveHandle);
   const sharedVars = collectHandleSharedVariableNames(effectiveHandle);
-  setActiveHandleSharedVariables(sharedVars);
-  setActiveHandleSharedVarInitials(effectiveHandle.variableInitialValues);
-  setActiveHandleSharedFunctions(effectiveHandle.sharedFunctions ?? []);
 
   // Unified Style A1 read-only `shared.lua` / `shared.py` (for BOTH Lua and Python!)
   const sharedMod = buildHandleSharedModule(
@@ -101,8 +92,7 @@ export function buildHandleScriptModules(
     const sharedSrc = useDebugCompanion ? sharedMod.debugSource : sharedMod.source;
     modules.push({
       moduleName: sharedMod.moduleName,
-      luaSource: language === 'lua' ? sharedSrc : undefined,
-      pythonSource: language === 'python' ? sharedSrc : undefined,
+      sources: { [language]: sharedSrc },
     });
   }
 
@@ -112,14 +102,19 @@ export function buildHandleScriptModules(
         liveScriptOverride && liveScriptOverride.scriptId === script.id
           ? liveScriptOverride.workspace
           : script.workspace;
-      setActiveScriptVarInitials(script.variableInitialValues);
-      setActiveHandleScripts(handleMetas, script.id);
-      const compiled = compileScriptHeadless(wsJson, language, poolCfgs);
+      const compiled = compileScriptHeadless(wsJson, language, {
+        channelPoolConfigs: poolCfgs,
+        handleScripts: handleMetas,
+        currentScriptId: script.id,
+        sharedVariables: sharedVars,
+        sharedVarInitials: effectiveHandle.variableInitialValues,
+        scriptVarInitials: script.variableInitialValues,
+        sharedFunctions: effectiveHandle.sharedFunctions ?? [],
+      });
       const src = useDebugCompanion ? compiled.moduleDebugCode : compiled.code;
       modules.push({
         moduleName: script.name,
-        luaSource: language === 'lua' ? src : undefined,
-        pythonSource: language === 'python' ? src : undefined,
+        sources: { [language]: src },
       });
     } catch {
       // skip uncompilable auxiliary module gracefully
@@ -200,17 +195,21 @@ export class MultiHandleRunnerOrchestrator {
         count: DEFAULT_CHANNEL_COUNT,
         aliases: {},
       };
-      setActiveChannelPoolConfigs(poolCfgs);
-      setActiveHandleSharedVariables(collectHandleSharedVariableNames(handle));
-      setActiveHandleSharedVarInitials(handle.variableInitialValues);
-      setActiveHandleSharedFunctions(handle.sharedFunctions ?? []);
-      setActiveScriptVarInitials(entryScript.variableInitialValues);
+      const sharedVars = collectHandleSharedVariableNames(handle);
       const scriptMetas = buildHandleScriptsMeta(handle);
-      setActiveHandleScripts(scriptMetas, entryScript.id);
       const compiled = compileScriptHeadless(
         entryScript.workspace,
         project.language,
-        poolCfgs,
+        {
+          channelPoolConfigs: poolCfgs,
+          enabledCapabilities: project.enabledCapabilities,
+          handleScripts: scriptMetas,
+          currentScriptId: entryScript.id,
+          sharedVariables: sharedVars,
+          sharedVarInitials: handle.variableInitialValues,
+          scriptVarInitials: entryScript.variableInitialValues,
+          sharedFunctions: handle.sharedFunctions ?? [],
+        },
       );
       const handleAuxMocks = buildHandleScriptModules(
         handle,
@@ -218,7 +217,6 @@ export class MultiHandleRunnerOrchestrator {
         project.language,
         poolCfgs,
       );
-      setActiveHandleScripts(scriptMetas, entryScript.id);
 
       const resolution = resolveProjectModules({
         enabledCapabilities: project.enabledCapabilities,
@@ -226,8 +224,7 @@ export class MultiHandleRunnerOrchestrator {
         handleScripts: handleAuxMocks.map((m, idx) => ({
           scriptId: `${handle.id}-aux-${idx}`,
           scriptName: m.moduleName,
-          luaSource: m.luaSource,
-          pythonSource: m.pythonSource,
+          sources: m.sources,
         })),
       });
 

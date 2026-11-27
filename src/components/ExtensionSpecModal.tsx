@@ -269,9 +269,9 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                     <td>积木展示文案（用 <code>%1</code>、<code>%2</code> 按顺序占位）与参数定义数组；每个参数的 <code>name</code> 在代码模板中写作 <code>{`{{NAME}}`}</code>。详见下方速查表。</td>
                   </tr>
                   <tr>
-                    <td><code>lua</code> / <code>python</code></td>
+                    <td><code>code</code></td>
                     <td>
-                      代码生成模板 <code>{`{ template, imports? }`}</code>，<strong>两者至少填一个即可</strong>（支持单语言扩展包；切到未提供模板的语言时校验面板会自动报 Error）。占位符修饰器支持 <code>:json</code>、<code>:int</code>、<code>:bool_lua</code>、<code>:bool_py</code>、<code>:channel_comment_lua</code>、<code>:channel_comment_py</code>。不写 <code>imports</code> 时自动继承包顶层 <code>imports</code>，写 <code>[]</code> 可显式取消导入。
+                      按语言映射的代码生成模板对象 <code>{`{ lua?: { template, imports? }, python?: { template, imports? }, ... }`}</code>，<strong>至少提供一种目标语言即可</strong>（支持单语言扩展包；切到未提供模板的语言时校验面板会自动报 Error）。占位符修饰器统一语言中立：<code>:json</code>、<code>:int</code>、<code>:bool</code>、<code>:edge:&lt;param&gt;</code>、<code>:channel_comment</code>（由当前目标语言方言自动展开）。不写 <code>imports</code> 时自动继承包顶层 <code>imports</code>，写 <code>[]</code> 可显式取消导入。
                     </td>
                   </tr>
                   <tr>
@@ -313,12 +313,12 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                   <tr>
                     <td><code>field_dropdown</code></td>
                     <td>固定选项下拉菜单</td>
-                    <td><code>name</code>、<code>options: [["展示名", "值"], ...]</code>；模板写 <code>{`{{DIR:json}}`}</code> 或 <code>{`{{STATE:bool_lua}}`}</code>。</td>
+                    <td><code>name</code>、<code>options: [["展示名", "值"], ...]</code>；模板写 <code>{`{{DIR:json}}`}</code> 或 <code>{`{{STATE:bool}}`}</code>。</td>
                   </tr>
                   <tr>
                     <td><code>field_checkbox</code></td>
                     <td>积木上的勾选框（布尔开关）</td>
-                    <td><code>name</code>、<code>checked: true | false</code>；模板写 <code>{`{{EN:bool_lua}}`}</code> / <code>{`{{EN:bool_py}}`}</code>。</td>
+                    <td><code>name</code>、<code>checked: true | false</code>；模板写 <code>{`{{EN:bool}}`}</code>（按目标语言方言自动展开为 <code>true/false</code> 或 <code>True/False</code>）。</td>
                   </tr>
                   <tr>
                     <td><code>field_variable</code></td>
@@ -328,7 +328,7 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                   <tr>
                     <td><code>field_channel_id</code></td>
                     <td>每句柄通道池下拉框（带别名与越界校验）</td>
-                    <td><code>name</code>；<strong>无需手写绑定 ID</strong>，自动绑定所属 <code>section.handleConfigs</code> 中的 <code>channel-pool</code>；模板可用 <code>{`{{CH:int}}`}</code> 与 <code>{`{{CH:channel_comment_lua}}`}</code>。</td>
+                    <td><code>name</code>；<strong>无需手写绑定 ID</strong>，自动绑定所属 <code>section.handleConfigs</code> 中的 <code>channel-pool</code>；模板可用 <code>{`{{CH:int}}`}</code> 与 <code>{`{{CH:channel_comment}}`}</code>。</td>
                   </tr>
                 </tbody>
               </table>

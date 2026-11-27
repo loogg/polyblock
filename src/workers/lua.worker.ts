@@ -393,9 +393,10 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
 
       // Mount sandbox extension mock modules into Lua's package.preload with automatic packId scoping
       for (const mod of mockModules ?? []) {
-        if (!mod.luaSource || !mod.moduleName) continue;
+        const luaSrc = mod.sources?.lua;
+        if (!luaSrc || !mod.moduleName) continue;
         const safeModName = JSON.stringify(mod.moduleName);
-        const safeSrc = JSON.stringify(mod.luaSource);
+        const safeSrc = JSON.stringify(luaSrc);
         if (mod.packId) {
           const safePackId = JSON.stringify(mod.packId);
           await engine.doString(`

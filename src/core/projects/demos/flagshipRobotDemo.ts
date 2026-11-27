@@ -1,4 +1,10 @@
-import type { PolyExtensionPack } from '../extensions/types';
+import {
+  CAP_RT,
+  CAP_RT_TIMERS,
+  CAP_VIRTUAL_BOARD,
+} from '../../capabilities/registry';
+import type { PolyExtensionPack } from '../../extensions/types';
+import type { MultiHandleProjectTemplate } from './types';
 
 /**
  * Embedded custom extension pack #1 for the L4 Flagship Robot project:
@@ -43,8 +49,10 @@ export const FLAGSHIP_ROBOT_DRIVE_PACK: PolyExtensionPack = {
           tooltip: '设置左右轮目标转速百分比（0~100%）；若急停开关处于锁定态会自动归零保护。',
           keywords: '底盘 差速 驱动 左轮 右轮 速度 drive set_wheels',
           simWidgetKeys: ['moving', 'left_speed', 'right_speed', 'drive_log'],
-          lua: { template: 'drive.set_wheels({{LEFT}}, {{RIGHT}})' },
-          python: { template: 'drive.set_wheels({{LEFT}}, {{RIGHT}})' },
+          code: {
+            lua: { template: 'drive.set_wheels({{LEFT}}, {{RIGHT}})' },
+            python: { template: 'drive.set_wheels({{LEFT}}, {{RIGHT}})' },
+          },
         },
         {
           type: 'ext_drive_stop',
@@ -54,8 +62,10 @@ export const FLAGSHIP_ROBOT_DRIVE_PACK: PolyExtensionPack = {
           tooltip: '立刻切断左右轮动力并刷新底盘状态灯与指令终端。',
           keywords: '底盘 刹车 停机 stop drive',
           simWidgetKeys: ['moving', 'left_speed', 'right_speed', 'drive_log'],
-          lua: { template: 'drive.stop()' },
-          python: { template: 'drive.stop()' },
+          code: {
+            lua: { template: 'drive.stop()' },
+            python: { template: 'drive.stop()' },
+          },
         },
         {
           type: 'ext_drive_battery',
@@ -65,8 +75,10 @@ export const FLAGSHIP_ROBOT_DRIVE_PACK: PolyExtensionPack = {
           tooltip: '读取机器人动力电池当前剩余百分比（可在右侧「模拟」面板拖动电量滑块实时测试）。',
           keywords: '底盘 电池 电量 battery drive',
           simWidgetKeys: ['battery'],
-          lua: { template: 'drive.battery()' },
-          python: { template: 'drive.battery()' },
+          code: {
+            lua: { template: 'drive.battery()' },
+            python: { template: 'drive.battery()' },
+          },
         },
         {
           type: 'ext_drive_is_estop',
@@ -76,8 +88,10 @@ export const FLAGSHIP_ROBOT_DRIVE_PACK: PolyExtensionPack = {
           tooltip: '检查急停开关（E-Stop）当前是否被拨至锁定状态。',
           keywords: '底盘 急停 锁定 estop drive',
           simWidgetKeys: ['estop'],
-          lua: { template: 'drive.is_estop()' },
-          python: { template: 'drive.is_estop()' },
+          code: {
+            lua: { template: 'drive.is_estop()' },
+            python: { template: 'drive.is_estop()' },
+          },
         },
         {
           type: 'ext_drive_on_estop',
@@ -103,8 +117,10 @@ export const FLAGSHIP_ROBOT_DRIVE_PACK: PolyExtensionPack = {
             eventName: 'on_drive_estop',
             params: ['active'],
             mode: 'dispatch',
-            conditionLua: '{{STATE:edge_lua:active}}',
-            conditionPython: '{{STATE:edge_py:active}}',
+            condition: {
+              lua: '{{STATE:edge:active}}',
+              python: '{{STATE:edge:active}}',
+            },
             duplicateKeyTemplate: '{{STATE}}',
             scopeLabelTemplate: 'on_drive_estop · {{STATE:edge_zh}}',
             scopeShortTemplate: '急停',
@@ -117,7 +133,8 @@ export const FLAGSHIP_ROBOT_DRIVE_PACK: PolyExtensionPack = {
   ],
   sandboxMock: {
     moduleName: 'drive',
-    luaSource: `
+    sources: {
+      lua: `
 local M = {}
 function M.set_wheels(l, r)
   if __poly_sim_get("estop") == true then
@@ -149,7 +166,7 @@ function M.is_estop()
 end
 return M
 `,
-    pythonSource: `
+      python: `
 import _poly
 def set_wheels(l, r):
     if _poly.sim_get("estop") is True:
@@ -175,6 +192,7 @@ def battery():
 def is_estop():
     return _poly.sim_get("estop") is True
 `,
+    },
   },
   simWidgets: [
     {
@@ -296,13 +314,15 @@ export const FLAGSHIP_PWM_SERVO_PACK: PolyExtensionPack = {
           tooltip: '设置指定 PWM 舵机通道的目标角度（0~180°）。',
           keywords: '舵机 云台 pwm 角度 servo set_angle',
           simWidgetKeys: ['pan_deg', 'tilt_deg'],
-          lua: {
-            template:
-              'servo.set_angle({{PWM_ID:int}}, {{ANGLE}}){{PWM_ID:channel_comment_lua}}',
-          },
-          python: {
-            template:
-              'servo.set_angle({{PWM_ID:int}}, {{ANGLE}}){{PWM_ID:channel_comment_py}}',
+          code: {
+            lua: {
+              template:
+                'servo.set_angle({{PWM_ID:int}}, {{ANGLE}}){{PWM_ID:channel_comment}}',
+            },
+            python: {
+              template:
+                'servo.set_angle({{PWM_ID:int}}, {{ANGLE}}){{PWM_ID:channel_comment}}',
+            },
           },
         },
         {
@@ -313,15 +333,18 @@ export const FLAGSHIP_PWM_SERVO_PACK: PolyExtensionPack = {
           tooltip: '将偏航（PWM0）与俯仰（PWM1）舵机同步归中至 90°。',
           keywords: '云台 舵机 归中 center servo',
           simWidgetKeys: ['pan_deg', 'tilt_deg'],
-          lua: { template: 'servo.center_all()' },
-          python: { template: 'servo.center_all()' },
+          code: {
+            lua: { template: 'servo.center_all()' },
+            python: { template: 'servo.center_all()' },
+          },
         },
       ],
     },
   ],
   sandboxMock: {
     moduleName: 'servo',
-    luaSource: `
+    sources: {
+      lua: `
 local M = {}
 function M.set_angle(ch, deg)
   local cid = math.floor(tonumber(ch) or 0)
@@ -338,7 +361,7 @@ function M.center_all()
 end
 return M
 `,
-    pythonSource: `
+      python: `
 import _poly
 def set_angle(ch, deg):
     cid = int(float(ch))
@@ -351,6 +374,7 @@ def center_all():
     _poly.sim_set("pan_deg", 90)
     _poly.sim_set("tilt_deg", 90)
 `,
+    },
   },
   simWidgets: [
     {
@@ -376,127 +400,6 @@ def center_all():
       default: 90,
     },
   ],
-};
-
-/**
- * L2 Medium Extra Script (`dict_config`): demonstrates core dict + str_replace + clock-timer + board OLED.
- */
-export const MEDIUM_DICT_CONFIG_WS: Record<string, unknown> = {
-  blocks: {
-    languageVersion: 0,
-    blocks: [
-      {
-        type: 'poly_on_start',
-        id: 'md_start',
-        x: 36,
-        y: 28,
-        inputs: {
-          BODY: {
-            block: {
-              type: 'ext_clock_reset',
-              id: 'md_clk_rst',
-              next: {
-                block: {
-                  type: 'variables_set',
-                  id: 'md_cfg_new',
-                  fields: { VAR: { id: 'var_md_cfg' } },
-                  inputs: {
-                    VALUE: { block: { type: 'poly_dict_new', id: 'md_dict_lit' } },
-                  },
-                  next: {
-                    block: {
-                      type: 'poly_dict_set',
-                      id: 'md_set_mode',
-                      inputs: {
-                        DICT: { block: { type: 'variables_get', id: 'md_dref_1', fields: { VAR: { id: 'var_md_cfg' } } } },
-                        KEY: { block: { type: 'text', id: 'md_k1', fields: { TEXT: 'mode' } } },
-                        VAL: { block: { type: 'text', id: 'md_v1', fields: { TEXT: 'SMART_ECO' } } },
-                      },
-                      next: {
-                        block: {
-                          type: 'poly_dict_set',
-                          id: 'md_set_limit',
-                          inputs: {
-                            DICT: { block: { type: 'variables_get', id: 'md_dref_2', fields: { VAR: { id: 'var_md_cfg' } } } },
-                            KEY: { block: { type: 'text', id: 'md_k2', fields: { TEXT: 'limit' } } },
-                            VAL: { block: { type: 'math_number', id: 'md_v2', fields: { NUM: 35 } } },
-                          },
-                          next: {
-                            block: {
-                              type: 'ext_board_oled_clear',
-                              id: 'md_oled_clr',
-                              next: {
-                                block: {
-                                  type: 'ext_board_oled',
-                                  id: 'md_oled_mode',
-                                  inputs: {
-                                    TEXT: {
-                                      block: {
-                                        type: 'poly_str_replace',
-                                        id: 'md_rep',
-                                        inputs: {
-                                          SRC: { block: { type: 'text', id: 'md_src', fields: { TEXT: 'MODE: {M}' } } },
-                                          OLD: { block: { type: 'text', id: 'md_old', fields: { TEXT: '{M}' } } },
-                                          NEW: {
-                                            block: {
-                                              type: 'poly_dict_get',
-                                              id: 'md_get_m',
-                                              inputs: {
-                                                DICT: { block: { type: 'variables_get', id: 'md_dref_3', fields: { VAR: { id: 'var_md_cfg' } } } },
-                                                KEY: { block: { type: 'text', id: 'md_gk', fields: { TEXT: 'mode' } } },
-                                              },
-                                            },
-                                          },
-                                        },
-                                      },
-                                    },
-                                  },
-                                  next: {
-                                    block: {
-                                      type: 'poly_print_kv',
-                                      id: 'md_print_lim',
-                                      fields: { LABEL: '字典阈值 °C' },
-                                      inputs: {
-                                        VALUE: {
-                                          block: {
-                                            type: 'poly_dict_get',
-                                            id: 'md_get_lim',
-                                            inputs: {
-                                              DICT: { block: { type: 'variables_get', id: 'md_dref_4', fields: { VAR: { id: 'var_md_cfg' } } } },
-                                              KEY: { block: { type: 'text', id: 'md_gk2', fields: { TEXT: 'limit' } } },
-                                            },
-                                          },
-                                        },
-                                      },
-                                      next: {
-                                        block: {
-                                          type: 'poly_print_kv',
-                                          id: 'md_print_ms',
-                                          fields: { LABEL: '配置加载耗时 ms' },
-                                          inputs: {
-                                            VALUE: { block: { type: 'ext_clock_millis', id: 'md_ms' } },
-                                          },
-                                        },
-                                      },
-                                    },
-                                  },
-                                },
-                              },
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    ],
-  },
-  variables: [{ name: 'cfg', id: 'var_md_cfg' }],
 };
 
 /**
@@ -1366,5 +1269,70 @@ export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
   variables: [
     { name: 'seq', id: 'var_fg_seq' },
     { name: 'report', id: 'var_fg_report' },
+  ],
+};
+
+/** L4 Full-Stack Flagship Demo: 3 isolated concurrent handles + 2 embedded custom packs + dual channel pools. */
+export const FLAGSHIP_ROBOT_DEMO: MultiHandleProjectTemplate = {
+  id: 'multi_handle_robot',
+  name: '智能双轮机器人全栈仿真',
+  description:
+    '旗舰全栈综合（3 隔离句柄并发 + 2 个项目内嵌自定义外设包 + 全部内置包）：展示多卡片模拟面板、自定义声明式急停中断（on_drive_estop）、双独立通道池（T0~T7 与 PWM0~PWM3）、自定义工具箱序号（#35）及秒表字典遥测。',
+  language: 'lua',
+  targetProfileId: 'virtual-board-rt',
+  enabledCapabilities: [
+    CAP_RT,
+    CAP_VIRTUAL_BOARD,
+    'clock-timer',
+    FLAGSHIP_ROBOT_DRIVE_PACK.id,
+    FLAGSHIP_PWM_SERVO_PACK.id,
+  ],
+  localExtensions: [FLAGSHIP_ROBOT_DRIVE_PACK, FLAGSHIP_PWM_SERVO_PACK],
+  difficulty: {
+    level: 'L4',
+    label: 'L4 旗舰 · 全栈综合',
+    highlights: [
+      '3 句柄并发模拟',
+      '2 内嵌自定义外设',
+      '自定义急停中断',
+      '双通道池 (T + PWM)',
+      '字典 + 秒表遥测',
+    ],
+  },
+  handles: [
+    {
+      name: 'drive_ctrl',
+      description: '运动、云台与急停控制句柄（独立 lua_State #1）',
+      color: '#4f46e5',
+      autoStart: true,
+      capabilityConfigs: {
+        [CAP_RT_TIMERS]: { count: 8, aliases: { '0': '云台扫描', '1': '疾速倒计时' } },
+        'pwm-servo': { count: 4, aliases: { '0': '云台偏航', '1': '云台俯仰' } },
+      },
+      scripts: [
+        { name: 'main', isEntry: true, workspace: FLAGSHIP_DRIVE_CTRL_WS },
+        { name: 'patrol_test', workspace: FLAGSHIP_PATROL_TEST_WS },
+      ],
+    },
+    {
+      name: 'sensor_guard',
+      description: '安防温控告警句柄（独立 lua_State #2，独享 T0）',
+      color: '#0ea5e9',
+      autoStart: true,
+      capabilityConfigs: {
+        [CAP_RT_TIMERS]: { count: 8, aliases: { '0': '温度巡检' } },
+      },
+      scripts: [{ name: 'main', isEntry: true, workspace: FLAGSHIP_SENSOR_GUARD_WS }],
+    },
+    {
+      name: 'telemetry_hub',
+      description: '字典与秒表遥测统计句柄（独立 lua_State #3，独享 T0）',
+      color: '#10b981',
+      autoStart: true,
+      capabilityConfigs: {
+        [CAP_RT_TIMERS]: { count: 8, aliases: { '0': '遥测上报' } },
+      },
+      scripts: [{ name: 'main', isEntry: true, workspace: FLAGSHIP_TELEMETRY_HUB_WS }],
+    },
   ],
 };

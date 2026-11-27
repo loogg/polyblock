@@ -1,3 +1,4 @@
+import type { ScriptLanguageId } from '../../types/project';
 import { hasCapability } from '../capabilities/registry';
 import { extensionRegistry } from './registry';
 import type { ExtensionModuleSource, PolyExtensionPack } from './types';
@@ -101,8 +102,7 @@ export interface ResolveProjectModulesInput {
   handleScripts?: Array<{
     scriptId: string;
     scriptName: string;
-    luaSource?: string;
-    pythonSource?: string;
+    sources?: Partial<Record<ScriptLanguageId, string>>;
   }>;
 }
 
@@ -186,8 +186,7 @@ export function resolveProjectModules(
       ownerLabel: `句柄脚本 ${hs.scriptName}`,
       source: {
         moduleName: hs.scriptName,
-        luaSource: hs.luaSource,
-        pythonSource: hs.pythonSource,
+        sources: { ...(hs.sources ?? {}) },
       },
     });
   }
@@ -328,7 +327,9 @@ export function resolveProjectModules(
       .filter(
         (entry) =>
           entry.tier === tier &&
-          Boolean(entry.source.luaSource || entry.source.pythonSource),
+          Object.values(entry.source.sources ?? {}).some(
+            (src) => typeof src === 'string' && src.length > 0,
+          ),
       )
       .sort((a, b) => {
         const ra = a.source.role === 'helper' ? 0 : 1;

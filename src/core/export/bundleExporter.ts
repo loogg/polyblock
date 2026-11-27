@@ -2,14 +2,6 @@ import type { ProjectModel, RuntimeHandle } from '../../types/project';
 import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { buildHandleSharedModule } from '../backends/sharedModule';
 import { backendRegistry } from '../backends/registry';
-import {
-  setActiveChannelPoolConfigs,
-  setActiveHandleScripts,
-  setActiveHandleSharedFunctions,
-  setActiveHandleSharedVarInitials,
-  setActiveHandleSharedVariables,
-  setActiveScriptVarInitials,
-} from '../blocks/timerConfigBridge';
 import { collectHandleSharedVariableNames } from '../projects/handleVariables';
 import {
   resolveProjectModules,
@@ -59,10 +51,7 @@ function compileHandleAllScripts(
     .getChannelPools(project.enabledCapabilities, project.localExtensions)
     .map((entry) => entry.pool);
   const poolCfgs = getAllHandleChannelPoolConfigs(handle, pools);
-  setActiveChannelPoolConfigs(poolCfgs);
-  setActiveHandleSharedVariables(collectHandleSharedVariableNames(handle));
-  setActiveHandleSharedVarInitials(handle.variableInitialValues);
-  setActiveHandleSharedFunctions(handle.sharedFunctions ?? []);
+  const sharedVars = collectHandleSharedVariableNames(handle);
   const scriptMetas = buildHandleScriptsMeta(handle);
 
   const compiled: Array<{ scriptId: string; scriptName: string; code: string }> = [];
@@ -75,9 +64,16 @@ function compileHandleAllScripts(
     });
   }
   for (const scr of handle.scripts) {
-    setActiveScriptVarInitials(scr.variableInitialValues);
-    setActiveHandleScripts(scriptMetas, scr.id);
-    const res = compileScriptHeadless(scr.workspace, project.language, poolCfgs);
+    const res = compileScriptHeadless(scr.workspace, project.language, {
+      channelPoolConfigs: poolCfgs,
+      enabledCapabilities: project.enabledCapabilities,
+      handleScripts: scriptMetas,
+      currentScriptId: scr.id,
+      sharedVariables: sharedVars,
+      sharedVarInitials: handle.variableInitialValues,
+      scriptVarInitials: scr.variableInitialValues,
+      sharedFunctions: handle.sharedFunctions ?? [],
+    });
     compiled.push({
       scriptId: scr.id,
       scriptName: scr.name,
@@ -109,8 +105,7 @@ export function buildSingleHandleTargetBundle(
     handleScripts: compiledScripts.map((s) => ({
       scriptId: s.scriptId,
       scriptName: s.scriptName,
-      luaSource: project.language === 'lua' ? s.code : undefined,
-      pythonSource: project.language === 'python' ? s.code : undefined,
+      sources: { [project.language]: s.code },
     })),
   });
 
@@ -135,8 +130,7 @@ export function buildSingleHandleTargetBundle(
   }> = [];
 
   for (const lib of resolution.exportLibs) {
-    const src =
-      project.language === 'lua' ? lib.source.luaSource : lib.source.pythonSource;
+    const src = lib.source.sources[project.language];
     if (!src) continue;
     const relPath = moduleNameToRelativeFile(lib.moduleName, ext);
     if (usedPaths.has(relPath)) continue; // Handle script already won at Tier 1
@@ -251,8 +245,7 @@ export function buildProjectTargetBundle(
   }> = [];
 
   for (const lib of projectRes.exportLibs) {
-    const src =
-      project.language === 'lua' ? lib.source.luaSource : lib.source.pythonSource;
+    const src = lib.source.sources[project.language];
     if (!src) continue;
     const relPath = `libs/${moduleNameToRelativeFile(lib.moduleName, ext)}`;
     entries.push({ path: relPath, content: src.endsWith('\n') ? src : `${src}\n` });

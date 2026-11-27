@@ -64,8 +64,10 @@ export const RT_PACK: PolyExtensionPack = {
           tooltip:
             '设置或动态修改周期运行（on_run）的触发间隔（毫秒），调用后立即按新周期重新计时生效（对应 rt.set_run_period）。',
           keywords: '设置 on_run 周期运行 间隔 period ms 频率',
-          lua: { template: 'rt.set_run_period({{MS}})' },
-          python: { template: 'rt.set_run_period({{MS}})' },
+          code: {
+            lua: { template: 'rt.set_run_period({{MS}})' },
+            python: { template: 'rt.set_run_period({{MS}})' },
+          },
         },
         {
           type: 'poly_run_control',
@@ -87,8 +89,10 @@ export const RT_PACK: PolyExtensionPack = {
           tooltip:
             '在运行时启动或暂停周期运行调度（默认使能为 1，对应 rt.start_run / rt.stop_run）。',
           keywords: '启动 停止 暂停 on_run 周期运行 start_run stop_run',
-          lua: { template: 'rt.{{ACTION}}()' },
-          python: { template: 'rt.{{ACTION}}()' },
+          code: {
+            lua: { template: 'rt.{{ACTION}}()' },
+            python: { template: 'rt.{{ACTION}}()' },
+          },
         },
         {
           type: 'poly_on_stop',
@@ -148,10 +152,14 @@ export const RT_PACK: PolyExtensionPack = {
             params: ['id'],
             mode: 'dispatch',
             extractBranchFnPrefix: 'on_timer_',
-            conditionLua: 'id == {{TIMER_ID:int}}',
-            conditionPython: 'id == {{TIMER_ID:int}}',
-            branchCommentLua: '{{TIMER_ID:channel_comment_lua}}',
-            branchCommentPython: '{{TIMER_ID:channel_comment_py}}',
+            condition: {
+              lua: 'id == {{TIMER_ID:int}}',
+              python: 'id == {{TIMER_ID:int}}',
+            },
+            branchComment: {
+              lua: '{{TIMER_ID:channel_comment}}',
+              python: '{{TIMER_ID:channel_comment}}',
+            },
             duplicateKeyTemplate: '{{TIMER_ID:int}}',
             scopeLabelTemplate: 'on_timer · {{TIMER_ID:channel_label}}',
             scopeShortTemplate: 'T{{TIMER_ID:int}}',
@@ -178,13 +186,15 @@ export const RT_PACK: PolyExtensionPack = {
           tooltip:
             '启动或重置指定通道定时器（rt.start_timer(id, period_ms, repeat)）：repeat=0 持续循环，1 单次，N 触发 N 次后停止。',
           keywords: '启动定时器 start_timer 周期 重复 循环 单次 timer',
-          lua: {
-            template:
-              'rt.start_timer({{TIMER_ID:int}}, {{PERIOD_MS}}, {{REPEAT}}){{TIMER_ID:channel_comment_lua}}',
-          },
-          python: {
-            template:
-              'rt.start_timer({{TIMER_ID:int}}, {{PERIOD_MS}}, {{REPEAT}}){{TIMER_ID:channel_comment_py}}',
+          code: {
+            lua: {
+              template:
+                'rt.start_timer({{TIMER_ID:int}}, {{PERIOD_MS}}, {{REPEAT}}){{TIMER_ID:channel_comment}}',
+            },
+            python: {
+              template:
+                'rt.start_timer({{TIMER_ID:int}}, {{PERIOD_MS}}, {{REPEAT}}){{TIMER_ID:channel_comment}}',
+            },
           },
         },
         {
@@ -197,11 +207,13 @@ export const RT_PACK: PolyExtensionPack = {
           fields: { TIMER_ID: '0' },
           tooltip: '停止指定通道定时器（rt.stop_timer(id)）。',
           keywords: '停止定时器 stop_timer 关闭 取消 timer',
-          lua: {
-            template: 'rt.stop_timer({{TIMER_ID:int}}){{TIMER_ID:channel_comment_lua}}',
-          },
-          python: {
-            template: 'rt.stop_timer({{TIMER_ID:int}}){{TIMER_ID:channel_comment_py}}',
+          code: {
+            lua: {
+              template: 'rt.stop_timer({{TIMER_ID:int}}){{TIMER_ID:channel_comment}}',
+            },
+            python: {
+              template: 'rt.stop_timer({{TIMER_ID:int}}){{TIMER_ID:channel_comment}}',
+            },
           },
         },
         {
@@ -216,8 +228,10 @@ export const RT_PACK: PolyExtensionPack = {
           tooltip:
             '读取指定定时器本周期已流逝的毫秒数（rt.get_timer_value(id)，0 → period_ms，未运行返回 0）。',
           keywords: '读取 定时器 已过 毫秒 get_timer_value elapsed timer',
-          lua: { template: 'rt.get_timer_value({{TIMER_ID:int}})' },
-          python: { template: 'rt.get_timer_value({{TIMER_ID:int}})' },
+          code: {
+            lua: { template: 'rt.get_timer_value({{TIMER_ID:int}})' },
+            python: { template: 'rt.get_timer_value({{TIMER_ID:int}})' },
+          },
         },
         {
           type: 'poly_is_timer_running',
@@ -230,8 +244,10 @@ export const RT_PACK: PolyExtensionPack = {
           fields: { TIMER_ID: '0' },
           tooltip: '检查指定通道定时器当前是否处于运行状态（rt.is_timer_running(id)）。',
           keywords: '定时器 正在运行 状态 is_timer_running running timer',
-          lua: { template: 'rt.is_timer_running({{TIMER_ID:int}})' },
-          python: { template: 'rt.is_timer_running({{TIMER_ID:int}})' },
+          code: {
+            lua: { template: 'rt.is_timer_running({{TIMER_ID:int}})' },
+            python: { template: 'rt.is_timer_running({{TIMER_ID:int}})' },
+          },
         },
       ],
     },
@@ -252,8 +268,10 @@ export const RT_PACK: PolyExtensionPack = {
           tooltip:
             '读取当前 32 位无符号系统滴答计数（对应 rt.tick()，沙箱默认 1000Hz 即 1ms/tick）。',
           keywords: '系统 tick 时钟 滴答 毫秒 rt.tick get_tick uptime',
-          lua: { template: 'rt.tick()' },
-          python: { template: 'rt.tick()' },
+          code: {
+            lua: { template: 'rt.tick()' },
+            python: { template: 'rt.tick()' },
+          },
         },
         {
           type: 'poly_rt_ms_to_tick',
@@ -266,8 +284,10 @@ export const RT_PACK: PolyExtensionPack = {
           tooltip:
             '将毫秒时长按目标板 tick 频率向上取整转换为 tick 数（对应 rt.ms_to_tick(ms)）。',
           keywords: '毫秒 转换 tick ms_to_tick 时钟 滴答',
-          lua: { template: 'rt.ms_to_tick({{MS}})' },
-          python: { template: 'rt.ms_to_tick({{MS}})' },
+          code: {
+            lua: { template: 'rt.ms_to_tick({{MS}})' },
+            python: { template: 'rt.ms_to_tick({{MS}})' },
+          },
         },
         {
           type: 'poly_rt_is_expired',
@@ -286,15 +306,18 @@ export const RT_PACK: PolyExtensionPack = {
           tooltip:
             '32 位无符号回绕安全的到期判断（(uint32_t)(now - start) >= timeout），对应 rt.is_expired(start_tick, timeout_ticks)。',
           keywords: '到期 超时 回绕 判断 is_expired tick timeout 时钟',
-          lua: { template: 'rt.is_expired({{START}}, {{TIMEOUT}})' },
-          python: { template: 'rt.is_expired({{START}}, {{TIMEOUT}})' },
+          code: {
+            lua: { template: 'rt.is_expired({{START}}, {{TIMEOUT}})' },
+            python: { template: 'rt.is_expired({{START}}, {{TIMEOUT}})' },
+          },
         },
       ],
     },
   ],
   sandboxMock: {
     moduleName: 'rt',
-    luaSource: `
+    sources: {
+      lua: `
 local M = {
   set_run_period = __poly_rt_set_run_period,
   start_run = __poly_rt_start_run,
@@ -309,7 +332,7 @@ local M = {
 }
 return M
 `.trim(),
-    pythonSource: `
+      python: `
 import _poly
 
 def set_run_period(ms):
@@ -342,6 +365,7 @@ def ms_to_tick(ms):
 def is_expired(start_tick, timeout_ticks):
     return _poly.rt_is_expired(start_tick, timeout_ticks)
 `.trim(),
+    },
   },
 };
 
@@ -385,8 +409,10 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
           tooltip: '控制板载 LED 指示灯亮灭。',
           keywords: 'led 灯 点亮 熄灭 硬件 board gpio',
           simWidgetKeys: ['led'],
-          lua: { template: 'board.led({{STATE:bool_lua}})' },
-          python: { template: 'board.led({{STATE:bool_py}})' },
+          code: {
+            lua: { template: 'board.led({{STATE:bool}})' },
+            python: { template: 'board.led({{STATE:bool}})' },
+          },
         },
         {
           type: 'ext_board_rgb',
@@ -409,8 +435,10 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
             '设置板载三色指示灯（仅红 / 绿 / 蓝三色 + 关闭；需要 256 级全彩调色时请使用全彩 RGB 控件）。',
           keywords: '三色灯 指示灯 红 绿 蓝 tricolor rgb led 硬件 board',
           simWidgetKeys: ['rgb'],
-          lua: { template: 'board.rgb({{COLOR:json}})' },
-          python: { template: 'board.rgb({{COLOR:json}})' },
+          code: {
+            lua: { template: 'board.rgb({{COLOR:json}})' },
+            python: { template: 'board.rgb({{COLOR:json}})' },
+          },
         },
         {
           type: 'ext_board_oled',
@@ -422,8 +450,10 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
           keywords: 'oled 屏幕 显示 screen display 硬件 board',
           shadows: { TEXT: { type: 'text', value: 'Hello Board!' } },
           simWidgetKeys: ['oled'],
-          lua: { template: 'board.oled_show({{TEXT}})' },
-          python: { template: 'board.oled_show({{TEXT}})' },
+          code: {
+            lua: { template: 'board.oled_show({{TEXT}})' },
+            python: { template: 'board.oled_show({{TEXT}})' },
+          },
         },
         {
           type: 'ext_board_oled_clear',
@@ -433,8 +463,10 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
           tooltip: '清空板载 OLED 屏幕显示内容。',
           keywords: 'oled 清空 clear 屏幕 硬件',
           simWidgetKeys: ['oled'],
-          lua: { template: 'board.oled_clear()' },
-          python: { template: 'board.oled_clear()' },
+          code: {
+            lua: { template: 'board.oled_clear()' },
+            python: { template: 'board.oled_clear()' },
+          },
         },
         {
           type: 'ext_board_temp',
@@ -444,8 +476,10 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
           tooltip: '读取板载温度传感器数值（在沙箱右侧「模拟」面板可实时拖动滑块测试）。',
           keywords: '温度 传感器 sensor temp temperature 硬件 board',
           simWidgetKeys: ['temp'],
-          lua: { template: 'board.read_temp()' },
-          python: { template: 'board.read_temp()' },
+          code: {
+            lua: { template: 'board.read_temp()' },
+            python: { template: 'board.read_temp()' },
+          },
         },
         {
           type: 'ext_board_button',
@@ -465,8 +499,10 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
           tooltip: '读取板载按键 A / B 是否处于按下状态。',
           keywords: '按键 按钮 button pressed 硬件 board',
           simWidgetKeys: ['btnA', 'btnB'],
-          lua: { template: 'board.is_pressed({{BTN:json}})' },
-          python: { template: 'board.is_pressed({{BTN:json}})' },
+          code: {
+            lua: { template: 'board.is_pressed({{BTN:json}})' },
+            python: { template: 'board.is_pressed({{BTN:json}})' },
+          },
         },
         {
           type: 'poly_on_button',
@@ -501,8 +537,10 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
             eventName: 'on_button',
             params: ['key', 'pressed'],
             mode: 'dispatch',
-            conditionLua: 'key == {{KEY:json}} and {{EDGE:edge_lua:pressed}}',
-            conditionPython: 'key == {{KEY:json}} and {{EDGE:edge_py:pressed}}',
+            condition: {
+              lua: 'key == {{KEY:json}} and {{EDGE:edge:pressed}}',
+              python: 'key == {{KEY:json}} and {{EDGE:edge:pressed}}',
+            },
             duplicateKeyTemplate: '{{KEY}}:{{EDGE}}',
             scopeLabelTemplate: 'on_button · 按键 {{KEY}} {{EDGE:edge_zh}}',
             scopeShortTemplate: '按键{{KEY}}',
@@ -515,7 +553,8 @@ export const VIRTUAL_BOARD_PACK: PolyExtensionPack = {
   ],
   sandboxMock: {
     moduleName: 'board',
-    luaSource: `
+    sources: {
+      lua: `
 local M = {}
 function M.led(on)
   __poly_sim_set("led", on and true or false)
@@ -548,7 +587,7 @@ function M.is_pressed(btn)
 end
 return M
 `,
-    pythonSource: `
+      python: `
 import _poly
 def led(on):
     _poly.sim_set("led", bool(on))
@@ -573,6 +612,7 @@ def is_pressed(btn):
     key = "btnB" if str(btn) == "B" else "btnA"
     return bool(_poly.sim_get(key))
 `,
+    },
   },
   simWidgets: [
     {
@@ -665,8 +705,10 @@ export const CLOCK_TIMER_PACK: PolyExtensionPack = {
           message0: '已运行毫秒数 (ms)',
           tooltip: '返回从脚本启动或上次重置秒表以来经过的毫秒数。',
           keywords: '时间 计时器 毫秒 millis timer clock elapsed',
-          lua: { template: 'poly_clock.millis()' },
-          python: { template: 'poly_clock.millis()' },
+          code: {
+            lua: { template: 'poly_clock.millis()' },
+            python: { template: 'poly_clock.millis()' },
+          },
         },
         {
           type: 'ext_clock_reset',
@@ -674,15 +716,18 @@ export const CLOCK_TIMER_PACK: PolyExtensionPack = {
           message0: '重置秒表计时器',
           tooltip: '将当前秒表起点重置为 0ms。',
           keywords: '重置 计时器 秒表 reset timer clock',
-          lua: { template: 'poly_clock.reset()' },
-          python: { template: 'poly_clock.reset()' },
+          code: {
+            lua: { template: 'poly_clock.reset()' },
+            python: { template: 'poly_clock.reset()' },
+          },
         },
       ],
     },
   ],
   sandboxMock: {
     moduleName: 'poly_clock',
-    luaSource: `
+    sources: {
+      lua: `
 local M = {}
 local base_ms = __poly_now_ms()
 function M.millis()
@@ -693,7 +738,7 @@ function M.reset()
 end
 return M
 `,
-    pythonSource: `
+      python: `
 import _poly
 _base_ms = _poly.now_ms()
 def millis():
@@ -702,6 +747,7 @@ def reset():
     global _base_ms
     _base_ms = _poly.now_ms()
 `,
+    },
   },
 };
 
@@ -723,7 +769,7 @@ export const SAMPLE_CUSTOM_EXTENSION_TEMPLATE: PolyExtensionPack = {
   color: '#ec4899',
   tags: ['机器人', '运动控制'],
   description:
-    '演示单轨声明式 .polyext.json 规范：包级默认 imports + sections[] 内嵌积木 + 事件回调帽块 (hat) + 积木级 simWidgetKeys 关联 + 双语沙箱模拟桩。',
+    '演示单轨声明式 .polyext.json 规范：包级默认 imports + sections[] 内嵌积木 + 事件回调帽块 (hat) + 积木级 simWidgetKeys 关联 + 多语言沙箱模拟桩。',
   imports: {
     lua: ['local robot = require("robot")'],
     python: ['import robot'],
@@ -756,8 +802,10 @@ export const SAMPLE_CUSTOM_EXTENSION_TEMPLATE: PolyExtensionPack = {
           keywords: '机器人 移动 速度 robot move',
           shadows: { SPEED: { type: 'math_number', value: 60 } },
           simWidgetKeys: ['moving', 'speed', 'log'],
-          lua: { template: 'robot.move({{DIR:json}}, {{SPEED}})' },
-          python: { template: 'robot.move({{DIR:json}}, {{SPEED}})' },
+          code: {
+            lua: { template: 'robot.move({{DIR:json}}, {{SPEED}})' },
+            python: { template: 'robot.move({{DIR:json}}, {{SPEED}})' },
+          },
         },
         {
           type: 'ext_robot_battery',
@@ -767,8 +815,10 @@ export const SAMPLE_CUSTOM_EXTENSION_TEMPLATE: PolyExtensionPack = {
           tooltip: '获取机器人当前剩余电量百分比。',
           keywords: '机器人 电量 电池 battery',
           simWidgetKeys: ['battery'],
-          lua: { template: 'robot.battery()' },
-          python: { template: 'robot.battery()' },
+          code: {
+            lua: { template: 'robot.battery()' },
+            python: { template: 'robot.battery()' },
+          },
         },
         {
           type: 'ext_robot_on_estop',
@@ -792,8 +842,10 @@ export const SAMPLE_CUSTOM_EXTENSION_TEMPLATE: PolyExtensionPack = {
             eventName: 'on_robot_estop',
             params: ['active'],
             mode: 'dispatch',
-            conditionLua: '{{STATE:edge_lua:active}}',
-            conditionPython: '{{STATE:edge_py:active}}',
+            condition: {
+              lua: '{{STATE:edge:active}}',
+              python: '{{STATE:edge:active}}',
+            },
             duplicateKeyTemplate: '{{STATE}}',
             scopeLabelTemplate: 'on_robot_estop · {{STATE:edge_zh}}',
             scopeShortTemplate: '急停',
@@ -806,7 +858,8 @@ export const SAMPLE_CUSTOM_EXTENSION_TEMPLATE: PolyExtensionPack = {
   ],
   sandboxMock: {
     moduleName: 'robot',
-    luaSource: `
+    sources: {
+      lua: `
 local M = {}
 function M.move(dir, speed)
   if __poly_sim_get("estop") == true then
@@ -828,7 +881,7 @@ function M.battery()
 end
 return M
 `,
-    pythonSource: `
+      python: `
 import _poly
 def move(dir_name, speed):
     if _poly.sim_get("estop") is True:
@@ -846,6 +899,7 @@ def battery():
     v = _poly.sim_get("battery")
     return int(v) if v is not None else 88
 `,
+    },
   },
   simWidgets: [
     {

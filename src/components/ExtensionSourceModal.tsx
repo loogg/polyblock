@@ -1,7 +1,9 @@
 import { Check, Code2, Copy, Download, FileCode2, FileJson, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { LANGUAGE_DIALECTS } from '../core/backends/types';
 import { getAllPackBlocks } from '../core/extensions/registry';
 import type { PolyExtensionPack } from '../core/extensions/types';
+import type { ScriptLanguageId } from '../types/project';
 
 interface ExtensionSourceModalProps {
   pack: PolyExtensionPack;
@@ -14,7 +16,7 @@ interface SourceTabItem {
   id: string;
   label: string;
   badge?: string;
-  kind: 'json' | 'lua' | 'python';
+  kind: 'json' | ScriptLanguageId;
   banner: string;
   content: string;
 }
@@ -114,7 +116,7 @@ export function ExtensionSourceModal({
 
     const jsonBanner =
       !hasMock && libCount === 0
-        ? `纯原生语法模板包（${pack.sections.length} 个组件 · ${blockCount} 个积木）：积木通过 lua.template / python.template 直接展开为原生语言语法，无需额外模块文件。`
+        ? `纯原生语法模板包（${pack.sections.length} 个组件 · ${blockCount} 个积木）：积木通过 code.<lang>.template 直接展开为原生语言语法，无需额外模块文件。`
         : `标准单轨声明式协议（${pack.sections.length} 个组件 · ${blockCount} 个积木${
             hasMock ? ` · 含沙箱假桩 ${pack.sandboxMock!.moduleName}` : ''
           }${libCount > 0 ? ` · 含 ${libCount} 个真实脚本库` : ''}）。可点击右上角导出后修改并导入为项目内嵌覆写包。`;
@@ -128,48 +130,39 @@ export function ExtensionSourceModal({
       content: JSON.stringify(pack, null, 2),
     });
 
-    if (pack.sandboxMock?.luaSource) {
-      list.push({
-        id: 'mock-lua',
-        label: `${pack.sandboxMock.moduleName}.lua`,
-        badge: 'sandboxMock',
-        kind: 'lua',
-        banner: `浏览器沙箱专用 Lua 假桩（moduleName="${pack.sandboxMock.moduleName}"）：仅在浏览器仿真时顶替真机 C 固件，打包导出真机 .zip 时严格剥离。`,
-        content: pack.sandboxMock.luaSource,
-      });
-    }
-
-    if (pack.sandboxMock?.pythonSource) {
-      list.push({
-        id: 'mock-py',
-        label: `${pack.sandboxMock.moduleName}.py`,
-        badge: 'sandboxMock',
-        kind: 'python',
-        banner: `浏览器沙箱专用 Python 假桩（moduleName="${pack.sandboxMock.moduleName}"）：仅在浏览器仿真时顶替真机固件，打包导出真机 .zip 时严格剥离。`,
-        content: pack.sandboxMock.pythonSource,
-      });
+    if (pack.sandboxMock) {
+      for (const [langKey, src] of Object.entries(pack.sandboxMock.sources)) {
+        if (!src) continue;
+        const lang = langKey as ScriptLanguageId;
+        const dialect = LANGUAGE_DIALECTS[lang];
+        const ext = dialect?.extension ?? langKey;
+        const displayName = dialect?.displayName ?? langKey;
+        list.push({
+          id: `mock-${langKey}`,
+          label: `${pack.sandboxMock.moduleName}.${ext}`,
+          badge: 'sandboxMock',
+          kind: lang,
+          banner: `浏览器沙箱专用 ${displayName} 假桩（moduleName="${pack.sandboxMock.moduleName}"）：仅在浏览器仿真时顶替真机固件，打包导出真机 .zip 时严格剥离。`,
+          content: src,
+        });
+      }
     }
 
     for (const lib of pack.libs ?? []) {
       const roleText = lib.role === 'helper' ? '辅助依赖库' : '入口脚本库';
-      if (lib.luaSource) {
+      for (const [langKey, src] of Object.entries(lib.sources)) {
+        if (!src) continue;
+        const lang = langKey as ScriptLanguageId;
+        const dialect = LANGUAGE_DIALECTS[lang];
+        const ext = dialect?.extension ?? langKey;
+        const displayName = dialect?.displayName ?? langKey;
         list.push({
-          id: `lib-lua-${lib.moduleName}`,
-          label: `${lib.moduleName}.lua`,
+          id: `lib-${langKey}-${lib.moduleName}`,
+          label: `${lib.moduleName}.${ext}`,
           badge: lib.role === 'helper' ? 'libs · 辅' : 'libs',
-          kind: 'lua',
-          banner: `真实 Lua 脚本库（moduleName="${lib.moduleName}" · ${roleText}）：浏览器沙箱直接运行此源码，打包导出真机 .zip 时同步输出。`,
-          content: lib.luaSource,
-        });
-      }
-      if (lib.pythonSource) {
-        list.push({
-          id: `lib-py-${lib.moduleName}`,
-          label: `${lib.moduleName}.py`,
-          badge: lib.role === 'helper' ? 'libs · 辅' : 'libs',
-          kind: 'python',
-          banner: `真实 Python 脚本库（moduleName="${lib.moduleName}" · ${roleText}）：浏览器沙箱直接运行此源码，打包导出真机 .zip 时同步输出。`,
-          content: lib.pythonSource,
+          kind: lang,
+          banner: `真实 ${displayName} 脚本库（moduleName="${lib.moduleName}" · ${roleText}）：浏览器沙箱直接运行此源码，打包导出真机 .zip 时同步输出。`,
+          content: src,
         });
       }
     }

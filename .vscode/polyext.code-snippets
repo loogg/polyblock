@@ -62,8 +62,10 @@
       "  ],",
       "  \"inputsInline\": true,",
       "  \"tooltip\": \"${6:积木说明}\",",
-      "  \"lua\": { \"template\": \"${1:mod}.${2:action}({{${4:VAL}}})\" },",
-      "  \"python\": { \"template\": \"${1:mod}.${2:action}({{${4:VAL}}})\" }",
+      "  \"code\": {",
+      "    \"lua\": { \"template\": \"${1:mod}.${2:action}({{${4:VAL}}})\" },",
+      "    \"python\": { \"template\": \"${1:mod}.${2:action}({{${4:VAL}}})\" }",
+      "  }",
       "}$0"
     ]
   },
@@ -78,8 +80,10 @@
       "  \"outputType\": \"${3|Number,String,Boolean|}\",",
       "  \"message0\": \"${4:读取数值}\",",
       "  \"tooltip\": \"${5:返回值说明}\",",
-      "  \"lua\": { \"template\": \"${1:mod}.${2:read}()\" },",
-      "  \"python\": { \"template\": \"${1:mod}.${2:read}()\" }",
+      "  \"code\": {",
+      "    \"lua\": { \"template\": \"${1:mod}.${2:read}()\" },",
+      "    \"python\": { \"template\": \"${1:mod}.${2:read}()\" }",
+      "  }",
       "}$0"
     ]
   },
@@ -142,7 +146,9 @@
       "{",
       "  \"moduleName\": \"${1:crc16}\",",
       "  \"role\": \"${2|entry,helper|}\",",
-      "  \"luaSource\": \"${3:local M = {}\\nreturn M\\n}\"",
+      "  \"sources\": {",
+      "    \"lua\": \"${3:local M = {}\\nreturn M\\n}\"",
+      "  }",
       "}$0"
     ]
   }

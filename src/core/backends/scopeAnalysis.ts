@@ -3,7 +3,7 @@ import type {
   ScopedVariableItem,
   VariableScopeNode,
 } from '../../types/project';
-import { getActiveHandleSharedVariables } from '../blocks/timerConfigBridge';
+import { getActiveHandleSharedVariables } from '../blocks/workspaceContextBridge';
 import { extensionRegistry } from '../extensions/registry';
 
 const RESERVED_IDENTS = new Set([

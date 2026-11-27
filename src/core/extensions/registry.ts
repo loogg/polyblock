@@ -1,6 +1,7 @@
 import * as Blockly from 'blockly';
 import { luaGenerator, Order as LuaOrder } from 'blockly/lua';
 import { Order as PyOrder, pythonGenerator } from 'blockly/python';
+import type { ScriptLanguageId } from '../../types/project';
 import {
   buildLuaHoistedLocalsLine,
   buildPythonGlobalLineForBlocks,
@@ -9,6 +10,7 @@ import {
   formatLuaVarRef,
   formatPythonVarRef,
 } from '../backends/codegenContext';
+import { LANGUAGE_DIALECTS, SUPPORTED_LANGUAGE_IDS } from '../backends/types';
 import type { BlockCategorySpec, ToolboxBlockSpec } from '../blocks/catalog';
 import { createChannelIdField } from '../blocks/channelField';
 import {
@@ -18,13 +20,14 @@ import {
   getActiveHandleScriptId,
   getActiveHandleScripts,
   isCurrentHandleScriptEntry,
-} from '../blocks/timerConfigBridge';
+} from '../blocks/workspaceContextBridge';
 import { hasCapability } from '../capabilities/registry';
 import { BUILTIN_EXTENSION_PACKS } from './builtinPacks';
 import type {
   CategoryTargetSpec,
   CoreCategoryTarget,
   ExtensionBlockDef,
+  ExtensionCodeTemplate,
   ExtensionHatSpec,
   ExtensionModuleSource,
   ExtensionPackImports,
@@ -39,7 +42,7 @@ import type {
   SimWidgetSpec,
 } from './types';
 
-export const STORAGE_CUSTOM_EXTENSIONS_KEY = 'polyblock.extensions.custom.v2';
+export const STORAGE_CUSTOM_EXTENSIONS_KEY = 'polyblock.extensions.custom.v3';
 export const DEFAULT_PACK_TOOLBOX_ORDER = 100;
 export const OPEN_HANDLE_CHANNEL_CONFIG_CALLBACK = 'OPEN_HANDLE_CHANNEL_CONFIG';
 
@@ -270,23 +273,28 @@ export function formatPackPlacementSummary(pack: PolyExtensionPack): string {
  * Statement/value blocks may provide Lua-only, Python-only, or dual-language templates.
  */
 export function getPackSupportedLanguages(pack: PolyExtensionPack): {
+  supported: ScriptLanguageId[];
   lua: boolean;
   python: boolean;
   label: string;
 } {
   const nonHatBlocks = getAllPackBlocks(pack).filter((b) => b.kind !== 'hat');
-  if (nonHatBlocks.length === 0) {
-    return { lua: true, python: true, label: 'Lua 5.4 / Python 3' };
-  }
-  const lua = nonHatBlocks.some((b) => Boolean(b.lua?.template));
-  const python = nonHatBlocks.some((b) => Boolean(b.python?.template));
+  const supported: ScriptLanguageId[] =
+    nonHatBlocks.length === 0
+      ? [...SUPPORTED_LANGUAGE_IDS]
+      : SUPPORTED_LANGUAGE_IDS.filter((lang) =>
+          nonHatBlocks.some((b) => Boolean(b.code?.[lang]?.template)),
+        );
   const label =
-    lua && python
-      ? 'Lua 5.4 / Python 3'
-      : lua
-        ? '仅 Lua 5.4'
-        : '仅 Python 3';
-  return { lua, python, label };
+    supported.length === 1
+      ? `仅 ${LANGUAGE_DIALECTS[supported[0]].displayName}`
+      : supported.map((lang) => LANGUAGE_DIALECTS[lang].displayName).join(' / ');
+  return {
+    supported,
+    lua: supported.includes('lua'),
+    python: supported.includes('python'),
+    label,
+  };
 }
 
 /**
@@ -341,10 +349,9 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
   }
 
   const langs = getPackSupportedLanguages(pack);
-  if (langs.lua && !langs.python) {
-    badges.push({ id: 'lang-only', label: '仅 Lua', tone: 'tag' });
-  } else if (langs.python && !langs.lua) {
-    badges.push({ id: 'lang-only', label: '仅 Python', tone: 'tag' });
+  if (langs.supported.length === 1) {
+    const onlyName = LANGUAGE_DIALECTS[langs.supported[0]].displayName.split(' ')[0];
+    badges.push({ id: 'lang-only', label: `仅 ${onlyName}`, tone: 'tag' });
   }
 
   if (hasHat) {
@@ -426,11 +433,68 @@ function buildArgKindMap(def: ExtensionBlockDef): Map<string, string> {
   return map;
 }
 
+function formatTemplateModifier(
+  rawValue: string,
+  mod: string | undefined,
+  modParam: string | undefined,
+  lang: ScriptLanguageId,
+  poolKey: string,
+  poolPrefix: string,
+  poolDefault: number,
+): string {
+  if (mod === 'json') {
+    return JSON.stringify(rawValue);
+  }
+  if (mod === 'int') {
+    const n = Number(rawValue);
+    return String(Number.isFinite(n) ? Math.trunc(n) : 0);
+  }
+  if (mod === 'min10_int') {
+    const n = Number(rawValue);
+    return String(Number.isFinite(n) ? Math.max(10, Math.round(n)) : 100);
+  }
+  if (mod === 'bool') {
+    const dialect = LANGUAGE_DIALECTS[lang];
+    return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'
+      ? dialect.boolTrue
+      : dialect.boolFalse;
+  }
+  if (mod === 'edge') {
+    const dialect = LANGUAGE_DIALECTS[lang];
+    const param = modParam || 'pressed';
+    return rawValue === 'press' || rawValue === 'true' || rawValue === '1'
+      ? param
+      : `${dialect.notOp}${param}`;
+  }
+  if (mod === 'edge_zh') {
+    return rawValue === 'press' || rawValue === 'true' || rawValue === '1'
+      ? '按下'
+      : '释放';
+  }
+  if (mod === 'channel_comment') {
+    const dialect = LANGUAGE_DIALECTS[lang];
+    const tid = Math.trunc(Number(rawValue || 0));
+    const alias = getActiveChannelPoolConfig(poolKey, poolDefault).aliases[
+      String(tid)
+    ];
+    return alias ? `${dialect.lineCommentPrefix}${poolPrefix}${tid}: ${alias}` : '';
+  }
+  if (mod === 'channel_label') {
+    const tid = Math.trunc(Number(rawValue || 0));
+    return formatChannelLabel(
+      tid,
+      getActiveChannelPoolConfig(poolKey, poolDefault),
+      poolPrefix,
+    );
+  }
+  return rawValue;
+}
+
 function renderTemplate(
   template: string,
   def: ExtensionBlockDef,
   block: Blockly.Block,
-  lang: 'lua' | 'python',
+  lang: ScriptLanguageId,
   pack?: PolyExtensionPack,
   section?: ResolvedPackSection,
 ): string {
@@ -446,16 +510,12 @@ function renderTemplate(
     PLACEHOLDER_RE,
     (_full, argName: string, mod?: string, modParam?: string) => {
       const argType = argKinds.get(argName);
-      let rawValue = '';
 
       if (argType === 'input_value') {
         if (lang === 'lua') {
-          rawValue = luaGenerator.valueToCode(block, argName, LuaOrder.NONE) || '""';
-        } else {
-          rawValue =
-            pythonGenerator.valueToCode(block, argName, PyOrder.NONE) || '""';
+          return luaGenerator.valueToCode(block, argName, LuaOrder.NONE) || '""';
         }
-        return rawValue;
+        return pythonGenerator.valueToCode(block, argName, PyOrder.NONE) || '""';
       }
 
       if (argType === 'field_variable') {
@@ -465,63 +525,16 @@ function renderTemplate(
           : formatPythonVarRef(varId, pythonGenerator, block);
       }
 
-      rawValue = String(block.getFieldValue(argName) ?? '');
-
-      if (mod === 'json') {
-        return JSON.stringify(rawValue);
-      }
-      if (mod === 'int') {
-        const n = Number(rawValue);
-        return String(Number.isFinite(n) ? Math.trunc(n) : 0);
-      }
-      if (mod === 'min10_int') {
-        const n = Number(rawValue);
-        return String(Number.isFinite(n) ? Math.max(10, Math.round(n)) : 100);
-      }
-      if (mod === 'bool_lua') {
-        return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'
-          ? 'true'
-          : 'false';
-      }
-      if (mod === 'bool_py') {
-        return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'
-          ? 'True'
-          : 'False';
-      }
-      if (mod === 'edge_lua' || mod === 'edge_py') {
-        const param = modParam || 'pressed';
-        return rawValue === 'press' || rawValue === 'true' || rawValue === '1'
-          ? param
-          : `not ${param}`;
-      }
-      if (mod === 'edge_zh') {
-        return rawValue === 'press' || rawValue === 'true' || rawValue === '1'
-          ? '按下'
-          : '释放';
-      }
-      if (mod === 'channel_comment_lua') {
-        const tid = Math.trunc(Number(rawValue || 0));
-        const alias = getActiveChannelPoolConfig(poolKey, poolDefault).aliases[
-          String(tid)
-        ];
-        return alias ? ` -- ${poolPrefix}${tid}: ${alias}` : '';
-      }
-      if (mod === 'channel_comment_py') {
-        const tid = Math.trunc(Number(rawValue || 0));
-        const alias = getActiveChannelPoolConfig(poolKey, poolDefault).aliases[
-          String(tid)
-        ];
-        return alias ? `  # ${poolPrefix}${tid}: ${alias}` : '';
-      }
-      if (mod === 'channel_label') {
-        const tid = Math.trunc(Number(rawValue || 0));
-        return formatChannelLabel(
-          tid,
-          getActiveChannelPoolConfig(poolKey, poolDefault),
-          poolPrefix,
-        );
-      }
-      return rawValue;
+      const rawValue = String(block.getFieldValue(argName) ?? '');
+      return formatTemplateModifier(
+        rawValue,
+        mod,
+        modParam,
+        lang,
+        poolKey,
+        poolPrefix,
+        poolDefault,
+      );
     },
   );
 }
@@ -534,6 +547,7 @@ function renderTemplateFromRawFields(
   template: string,
   fields: Record<string, unknown>,
   section: ResolvedPackSection,
+  lang: ScriptLanguageId,
 ): string {
   const pool = section.channelPool;
   const poolKey = pool?.configKey ?? 'default';
@@ -542,62 +556,16 @@ function renderTemplateFromRawFields(
 
   return template.replace(
     PLACEHOLDER_RE,
-    (_full, argName: string, mod?: string, modParam?: string) => {
-      const rawValue = String(fields[argName] ?? '');
-      if (mod === 'json') return JSON.stringify(rawValue);
-      if (mod === 'int') {
-        const n = Number(rawValue);
-        return String(Number.isFinite(n) ? Math.trunc(n) : 0);
-      }
-      if (mod === 'min10_int') {
-        const n = Number(rawValue);
-        return String(Number.isFinite(n) ? Math.max(10, Math.round(n)) : 100);
-      }
-      if (mod === 'bool_lua') {
-        return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'
-          ? 'true'
-          : 'false';
-      }
-      if (mod === 'bool_py') {
-        return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'
-          ? 'True'
-          : 'False';
-      }
-      if (mod === 'edge_lua' || mod === 'edge_py') {
-        const param = modParam || 'pressed';
-        return rawValue === 'press' || rawValue === 'true' || rawValue === '1'
-          ? param
-          : `not ${param}`;
-      }
-      if (mod === 'edge_zh') {
-        return rawValue === 'press' || rawValue === 'true' || rawValue === '1'
-          ? '按下'
-          : '释放';
-      }
-      if (mod === 'channel_comment_lua') {
-        const tid = Math.trunc(Number(rawValue || 0));
-        const alias = getActiveChannelPoolConfig(poolKey, poolDefault).aliases[
-          String(tid)
-        ];
-        return alias ? ` -- ${poolPrefix}${tid}: ${alias}` : '';
-      }
-      if (mod === 'channel_comment_py') {
-        const tid = Math.trunc(Number(rawValue || 0));
-        const alias = getActiveChannelPoolConfig(poolKey, poolDefault).aliases[
-          String(tid)
-        ];
-        return alias ? `  # ${poolPrefix}${tid}: ${alias}` : '';
-      }
-      if (mod === 'channel_label') {
-        const tid = Math.trunc(Number(rawValue || 0));
-        return formatChannelLabel(
-          tid,
-          getActiveChannelPoolConfig(poolKey, poolDefault),
-          poolPrefix,
-        );
-      }
-      return rawValue;
-    },
+    (_full, argName: string, mod?: string, modParam?: string) =>
+      formatTemplateModifier(
+        String(fields[argName] ?? ''),
+        mod,
+        modParam,
+        lang,
+        poolKey,
+        poolPrefix,
+        poolDefault,
+      ),
   );
 }
 
@@ -812,9 +780,9 @@ function registerHatGenerators(
       const fnDefs: string[] = [];
 
       matchingHats.forEach((hatBlk, idx) => {
-        const comment = hatSpec.branchCommentLua
+        const comment = hatSpec.branchComment?.lua
           ? renderTemplate(
-              hatSpec.branchCommentLua,
+              hatSpec.branchComment.lua,
               b,
               hatBlk,
               'lua',
@@ -865,11 +833,11 @@ function registerHatGenerators(
     const branches: string[] = [];
     matchingHats.forEach((hatBlk, idx) => {
       const kw = idx === 0 ? 'if' : 'elseif';
-      const cond = hatSpec.conditionLua
-        ? renderTemplate(hatSpec.conditionLua, b, hatBlk, 'lua', pack, section)
+      const cond = hatSpec.condition?.lua
+        ? renderTemplate(hatSpec.condition.lua, b, hatBlk, 'lua', pack, section)
         : 'true';
-      const comment = hatSpec.branchCommentLua
-        ? renderTemplate(hatSpec.branchCommentLua, b, hatBlk, 'lua', pack, section)
+      const comment = hatSpec.branchComment?.lua
+        ? renderTemplate(hatSpec.branchComment.lua, b, hatBlk, 'lua', pack, section)
         : '';
       const rawBody = generator.statementToCode(hatBlk, 'BODY');
       const indentedBody = indentLines(rawBody, '  ');
@@ -930,9 +898,9 @@ function registerHatGenerators(
       const fnDefs: string[] = [];
 
       matchingHats.forEach((hatBlk, idx) => {
-        const comment = hatSpec.branchCommentPython
+        const comment = hatSpec.branchComment?.python
           ? renderTemplate(
-              hatSpec.branchCommentPython,
+              hatSpec.branchComment.python,
               b,
               hatBlk,
               'python',
@@ -1003,12 +971,12 @@ function registerHatGenerators(
     const branches: string[] = [];
     matchingHats.forEach((hatBlk, idx) => {
       const kw = idx === 0 ? 'if' : 'elif';
-      const cond = hatSpec.conditionPython
-        ? renderTemplate(hatSpec.conditionPython, b, hatBlk, 'python', pack, section)
+      const cond = hatSpec.condition?.python
+        ? renderTemplate(hatSpec.condition.python, b, hatBlk, 'python', pack, section)
         : 'True';
-      const comment = hatSpec.branchCommentPython
+      const comment = hatSpec.branchComment?.python
         ? renderTemplate(
-            hatSpec.branchCommentPython,
+            hatSpec.branchComment.python,
             b,
             hatBlk,
             'python',
@@ -1048,8 +1016,8 @@ function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
         continue;
       }
 
-      if (b.lua) {
-        const luaSpec = b.lua;
+      const luaSpec = b.code?.lua;
+      if (luaSpec) {
         const luaImports =
           luaSpec.imports !== undefined ? luaSpec.imports : pack.imports?.lua;
         luaGenerator.forBlock[b.type] = (block, generator) => {
@@ -1070,14 +1038,14 @@ function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
       } else {
         luaGenerator.forBlock[b.type] = () => {
           if (b.kind === 'value') {
-            return ['nil --[[ 未提供 Lua 模板 ]]', LuaOrder.ATOMIC];
+            return ['nil --[[ 未提供 code.lua.template ]]', LuaOrder.ATOMIC];
           }
-          return `-- [PolyBlock] 积木 "${b.type}" 仅支持 Python，未提供 lua.template\n`;
+          return `-- [PolyBlock] 积木 "${b.type}" 未提供 code.lua.template\n`;
         };
       }
 
-      if (b.python) {
-        const pySpec = b.python;
+      const pySpec = b.code?.python;
+      if (pySpec) {
         const pyImports =
           pySpec.imports !== undefined ? pySpec.imports : pack.imports?.python;
         pythonGenerator.forBlock[b.type] = (block, generator) => {
@@ -1098,9 +1066,9 @@ function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
       } else {
         pythonGenerator.forBlock[b.type] = () => {
           if (b.kind === 'value') {
-            return ['None  # 未提供 Python 模板', PyOrder.ATOMIC];
+            return ['None  # 未提供 code.python.template', PyOrder.ATOMIC];
           }
-          return `# [PolyBlock] 积木 "${b.type}" 仅支持 Lua，未提供 python.template\n`;
+          return `# [PolyBlock] 积木 "${b.type}" 未提供 code.python.template\n`;
         };
       }
     }
@@ -1249,19 +1217,25 @@ function validateHandleConfigs(raw: unknown): HandleConfigSpec[] | undefined {
 
 function validateImports(raw: unknown): ExtensionPackImports | undefined {
   if (raw === undefined || raw === null) return undefined;
-  if (typeof raw !== 'object') throw new Error('imports 必须是对象（含 lua / python 数组）');
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('imports 必须是按语言 ID 映射的对象（如 { lua: [...], python: [...] }）');
+  }
   const obj = raw as Record<string, unknown>;
-  const lua = Array.isArray(obj.lua)
-    ? obj.lua.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
-    : undefined;
-  const python = Array.isArray(obj.python)
-    ? obj.python.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
-    : undefined;
-  if (!lua?.length && !python?.length) return undefined;
-  return {
-    ...(lua?.length ? { lua } : {}),
-    ...(python?.length ? { python } : {}),
-  };
+  const out: ExtensionPackImports = {};
+  let count = 0;
+  for (const lang of SUPPORTED_LANGUAGE_IDS) {
+    const arr = obj[lang];
+    if (Array.isArray(arr)) {
+      const cleaned = arr.filter(
+        (s): s is string => typeof s === 'string' && s.trim().length > 0,
+      );
+      if (cleaned.length > 0) {
+        out[lang] = cleaned;
+        count += 1;
+      }
+    }
+  }
+  return count > 0 ? out : undefined;
 }
 
 function validateModuleSource(
@@ -1269,19 +1243,33 @@ function validateModuleSource(
   fieldLabel: string,
 ): ExtensionModuleSource | undefined {
   if (raw === undefined || raw === null) return undefined;
-  if (typeof raw !== 'object') {
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(`${fieldLabel} 必须是对象`);
   }
   const obj = raw as Record<string, unknown>;
   if (typeof obj.moduleName !== 'string' || !obj.moduleName.trim()) {
     throw new Error(`${fieldLabel}.moduleName 必填`);
   }
+  if (!obj.sources || typeof obj.sources !== 'object' || Array.isArray(obj.sources)) {
+    throw new Error(`${fieldLabel}.sources 必填，且须为按语言 ID 映射的源码对象（如 { lua: "..." }）`);
+  }
+  const rawSources = obj.sources as Record<string, unknown>;
+  const sources: Partial<Record<ScriptLanguageId, string>> = {};
+  let sourceCount = 0;
+  for (const [langKey, val] of Object.entries(rawSources)) {
+    if (typeof val === 'string') {
+      sources[langKey as ScriptLanguageId] = val;
+      sourceCount += 1;
+    } else if (val !== undefined) {
+      throw new Error(`${fieldLabel}.sources.${langKey} 必须是字符串`);
+    }
+  }
+  if (sourceCount === 0) {
+    throw new Error(`${fieldLabel}.sources 至少需要提供一种语言的模块源码`);
+  }
   return {
     moduleName: obj.moduleName.trim(),
-    ...(typeof obj.luaSource === 'string' ? { luaSource: obj.luaSource } : {}),
-    ...(typeof obj.pythonSource === 'string'
-      ? { pythonSource: obj.pythonSource }
-      : {}),
+    sources,
     ...(obj.role === 'entry' || obj.role === 'helper' ? { role: obj.role } : {}),
   };
 }
@@ -1344,19 +1332,26 @@ function validateBlockDef(
       );
     }
   } else {
-    const luaSpec = blk.lua as Record<string, unknown> | undefined;
-    const pySpec = blk.python as Record<string, unknown> | undefined;
-    const hasLua = Boolean(luaSpec && typeof luaSpec.template === 'string');
-    const hasPy = Boolean(pySpec && typeof pySpec.template === 'string');
-    if (luaSpec !== undefined && !hasLua) {
-      throw new Error(`积木 ${blk.type} 的 lua 对象缺少字符串字段 template`);
-    }
-    if (pySpec !== undefined && !hasPy) {
-      throw new Error(`积木 ${blk.type} 的 python 对象缺少字符串字段 template`);
-    }
-    if (!hasLua && !hasPy) {
+    const rawCode = blk.code as Record<string, unknown> | undefined;
+    if (!rawCode || typeof rawCode !== 'object' || Array.isArray(rawCode)) {
       throw new Error(
-        `积木 ${blk.type} 至少需要提供 lua.template 或 python.template 之一`,
+        `积木 ${blk.type} 缺少 code 对象（需按语言映射至少提供一个 template，如 { lua: { template: "..." } }）`,
+      );
+    }
+    let validLangCount = 0;
+    for (const [langKey, entry] of Object.entries(rawCode)) {
+      if (entry === undefined) continue;
+      const spec = entry as Partial<ExtensionCodeTemplate> | null;
+      if (!spec || typeof spec !== 'object' || typeof spec.template !== 'string') {
+        throw new Error(
+          `积木 ${blk.type} 的 code.${langKey} 对象缺少字符串字段 template`,
+        );
+      }
+      validLangCount += 1;
+    }
+    if (validLangCount === 0) {
+      throw new Error(
+        `积木 ${blk.type} 的 code 对象至少需要提供一种语言的 template`,
       );
     }
   }
@@ -1781,10 +1776,8 @@ class ExtensionRegistry {
     params: string[];
     passParams: boolean;
     alwaysExtract: boolean;
-    conditionLua: string;
-    conditionPython: string;
-    commentLua: string;
-    commentPython: string;
+    condition: Partial<Record<ScriptLanguageId, string>>;
+    comment: Partial<Record<ScriptLanguageId, string>>;
   } | null {
     const found = this.getHatBlockDef(blockType);
     if (!found || found.hat.mode !== 'dispatch') {
@@ -1796,9 +1789,21 @@ class ExtensionRegistry {
     const params = [...(hat.params ?? [])];
     const passParams = !alwaysExtract && params.length > 0;
     const rawKey = hat.duplicateKeyTemplate
-      ? renderTemplateFromRawFields(hat.duplicateKeyTemplate, fields, section)
+      ? renderTemplateFromRawFields(hat.duplicateKeyTemplate, fields, section, 'lua')
       : String(fallbackIndex);
     const safeSuffix = rawKey.replace(/[^A-Za-z0-9_]+/g, '_') || String(fallbackIndex);
+    const condition: Partial<Record<ScriptLanguageId, string>> = {};
+    const comment: Partial<Record<ScriptLanguageId, string>> = {};
+    for (const lang of SUPPORTED_LANGUAGE_IDS) {
+      const condTpl = hat.condition?.[lang];
+      condition[lang] = condTpl
+        ? renderTemplateFromRawFields(condTpl, fields, section, lang)
+        : LANGUAGE_DIALECTS[lang].boolTrue;
+      const cmtTpl = hat.branchComment?.[lang];
+      comment[lang] = cmtTpl
+        ? renderTemplateFromRawFields(cmtTpl, fields, section, lang)
+        : '';
+    }
     return {
       blockType,
       eventName: hat.eventName,
@@ -1808,18 +1813,8 @@ class ExtensionRegistry {
       params,
       passParams,
       alwaysExtract,
-      conditionLua: hat.conditionLua
-        ? renderTemplateFromRawFields(hat.conditionLua, fields, section)
-        : 'true',
-      conditionPython: hat.conditionPython
-        ? renderTemplateFromRawFields(hat.conditionPython, fields, section)
-        : 'True',
-      commentLua: hat.branchCommentLua
-        ? renderTemplateFromRawFields(hat.branchCommentLua, fields, section)
-        : '',
-      commentPython: hat.branchCommentPython
-        ? renderTemplateFromRawFields(hat.branchCommentPython, fields, section)
-        : '',
+      condition,
+      comment,
     };
   }
 

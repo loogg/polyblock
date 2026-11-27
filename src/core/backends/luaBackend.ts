@@ -16,7 +16,8 @@ import {
   getActiveHandleScripts,
   getActiveHandleSharedFunctions,
   getActiveScriptVarInitials,
-} from '../blocks/timerConfigBridge';
+  withCompileContext,
+} from '../blocks/workspaceContextBridge';
 import { formatInitialValueLua } from '../projects/handleVariables';
 import {
   analyzeWorkspaceScopes,
@@ -28,7 +29,13 @@ import {
   SENTINEL_END_PREFIX,
   SENTINEL_START_PREFIX,
 } from './sourceMap';
-import type { GeneratedCodeResult, ScriptBackendAdapter } from './types';
+import {
+  LANGUAGE_DIALECTS,
+  type CompileContext,
+  type EntryDispatchBranchSpec,
+  type GeneratedCodeResult,
+  type ScriptBackendAdapter,
+} from './types';
 
 let luaGeneratorsRegistered = false;
 let luaDeclaredLocalsByRoot = new Map<string, Set<string>>();
@@ -634,8 +641,42 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
   readonly accentColor = '#3b82f6';
   readonly description =
     '标准 Lua 5.4 脚本生成器，支持 Style A1 只读 shared 模块、单线程协程事件 ABI 与伴生脚本断点调试。';
+  readonly dialect = LANGUAGE_DIALECTS.lua;
 
-  generate(workspace: Blockly.Workspace): GeneratedCodeResult {
+  formatDispatchRouter(
+    eventName: string,
+    branches: EntryDispatchBranchSpec[],
+    _debugPass: boolean,
+  ): { autoImports: string[]; code: string } {
+    if (branches.length === 0) return { autoImports: [], code: '' };
+    const paramsStr = (branches[0].params ?? []).join(', ');
+    const lines: string[] = [];
+    branches.forEach((br, idx) => {
+      const kw = idx === 0 ? 'if' : 'elseif';
+      const cond = br.condition.lua ?? this.dialect.boolTrue;
+      const comment = br.comment.lua ?? '';
+      const callArgs = br.passParams ? paramsStr : '';
+      const srcTag = br.isLocal
+        ? ''
+        : comment
+          ? ` (${br.scriptName}.lua)`
+          : ` -- ${br.scriptName}.lua`;
+      const callLine = br.isLocal
+        ? `    ${br.fnName}(${callArgs})`
+        : `    if ${br.fnName} then ${br.fnName}(${callArgs}) end`;
+      lines.push(`  ${kw} ${cond} then${comment}${srcTag}\n${callLine}`);
+    });
+    return {
+      autoImports: [],
+      code: `function ${eventName}(${paramsStr})\n${lines.join('\n')}\n  end\nend\n`,
+    };
+  }
+
+  generate(
+    workspace: Blockly.Workspace,
+    context?: CompileContext,
+  ): GeneratedCodeResult {
+    return withCompileContext(context, () => {
     registerLuaBlockGenerators();
 
     const prevPrefix = luaGenerator.STATEMENT_PREFIX;
@@ -711,7 +752,7 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
         `local ${ident} = ${formatInitialValueLua(scriptInitials[name])}`,
     );
 
-    const cleanRouter = buildEntryDispatchRouters(workspace, 'lua', false);
+    const cleanRouter = buildEntryDispatchRouters(workspace, this, false);
     const cleanPrependLines: string[] = [];
     if (usedSharedClean && sharedInfo.moduleName) {
       cleanPrependLines.push(
@@ -775,7 +816,7 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
       luaGenerator.STATEMENT_SUFFIX = prevSuffix;
     }
 
-    const debugRouter = buildEntryDispatchRouters(workspace, 'lua', true);
+    const debugRouter = buildEntryDispatchRouters(workspace, this, true);
     const debugPrependLines: string[] = [];
     if (usedSharedDebug && sharedInfo.moduleName) {
       debugPrependLines.push(
@@ -829,5 +870,6 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
       variableScopes,
       isEventDriven: eventDriven,
     };
+    });
   }
 }

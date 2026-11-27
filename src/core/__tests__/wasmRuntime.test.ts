@@ -22,7 +22,7 @@ import {
   setActiveHandleScripts,
   setActiveHandleSharedFunctions,
   setActiveHandleSharedVariables,
-} from '../blocks/timerConfigBridge';
+} from '../blocks/workspaceContextBridge';
 import { WorkerDebugSession } from '../../workers/debugSession';
 import { WorkerRuntimeScheduler } from '../../workers/runtimeScheduler';
 
@@ -367,7 +367,7 @@ describe('Real WASM Runtime Integration (Lua 5.4 & MicroPython + Coroutine Schem
       lua.global.set('print', (...args: unknown[]) => {
         luaLogs.push(args.map(String).join(' '));
       });
-      const src = JSON.stringify(VIRTUAL_BOARD_PACK.sandboxMock!.luaSource!);
+      const src = JSON.stringify(VIRTUAL_BOARD_PACK.sandboxMock!.sources.lua!);
       await lua.doString(`
         package.preload["board"] = function()
           local chunk, err = load(${src}, "@board")
@@ -410,7 +410,7 @@ describe('Real WASM Runtime Integration (Lua 5.4 & MicroPython + Coroutine Schem
     mp.runPython(`
 import sys
 _ns = {}
-exec(${JSON.stringify(VIRTUAL_BOARD_PACK.sandboxMock!.pythonSource!)}, _ns)
+exec(${JSON.stringify(VIRTUAL_BOARD_PACK.sandboxMock!.sources.python!)}, _ns)
 class _M: pass
 _m = _M()
 for _k, _v in _ns.items():
@@ -970,7 +970,7 @@ sys.modules["board"] = _m
     // 1. Real Wasmoon Lua 5.4: main.lua & timers.lua (moduleDebugCode!) share `shared.lua` AND central router dispatches on_timer_0/1!
     const { logs } = await runLuaDebugInWasmoon(mainDebugLua, {
       preloadModules: [
-        { name: 'board', luaSource: VIRTUAL_BOARD_PACK.sandboxMock!.luaSource },
+        { name: 'board', luaSource: VIRTUAL_BOARD_PACK.sandboxMock!.sources.lua },
         { name: sharedLuaMod.moduleName, luaSource: sharedLuaMod.debugSource },
         { name: 'timers', luaSource: timersModDebugLua },
       ],
@@ -989,7 +989,7 @@ sys.modules["board"] = _m
     // 2. Real MicroPython WASM: main.py & timers.py (moduleDebugCode!) share `shared.py` state AND main.py central router dispatches timers.py!
     const { logs: pyLogs } = await runPyDebugInMicroPython(mainDebugPy, {
       preloadModules: [
-        { name: 'board', pythonSource: VIRTUAL_BOARD_PACK.sandboxMock!.pythonSource },
+        { name: 'board', pythonSource: VIRTUAL_BOARD_PACK.sandboxMock!.sources.python },
         { name: sharedPyMod.moduleName, pythonSource: sharedPyMod.debugSource, lazyVfs: true },
         { name: 'timers', pythonSource: timersModDebugPy, lazyVfs: true },
       ],

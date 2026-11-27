@@ -2,7 +2,7 @@ import * as Blockly from 'blockly';
 import { describe, expect, it } from 'vitest';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
-import { setActiveHandleSharedVariables } from '../blocks/timerConfigBridge';
+import { setActiveHandleSharedVariables } from '../blocks/workspaceContextBridge';
 import {
   applyHandleVariableMutation,
   collectHandleSharedVariableNames,

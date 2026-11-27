@@ -14,16 +14,7 @@ import {
   formatInitialValuePython,
   normalizeVariableInitialValue,
 } from '../projects/handleVariables';
-import {
-  getActiveHandleScriptId,
-  getActiveHandleScripts,
-  getActiveHandleSharedFunctions,
-  getActiveHandleSharedVariables,
-  setActiveChannelPoolConfigs,
-  setActiveHandleScripts,
-  setActiveHandleSharedFunctions,
-  setActiveHandleSharedVariables,
-} from '../blocks/timerConfigBridge';
+import { withCompileContext } from '../blocks/workspaceContextBridge';
 import {
   computeAsyncFunctionNames,
   resetCodegenPassContext,
@@ -35,6 +26,7 @@ import {
 import { sanitizeLocalIdent } from './scopeAnalysis';
 import { registerLuaBlockGenerators } from './luaBackend';
 import { registerPythonBlockGenerators } from './pythonBackend';
+import { LANGUAGE_DIALECTS } from './types';
 
 export interface HandleSharedModuleVarEntry {
   name: string;
@@ -384,7 +376,7 @@ export function buildHandleSharedModule(
 
   const info = resolveHandleSharedInfo(metas, explicitVars, explicitFns);
   const moduleName = info.moduleName || 'shared';
-  const ext = language === 'lua' ? 'lua' : 'py';
+  const ext = LANGUAGE_DIALECTS[language].extension;
   const fileName = `${moduleName}.${ext}`;
 
   const usedByScript = effectiveHandle.scripts.map((s) => ({
@@ -407,52 +399,44 @@ export function buildHandleSharedModule(
     procSources.filter((p) => p.usesSleep).map((p) => p.name),
   );
 
-  // Save & restore global bridge state around compiling shared functions
-  const prevScripts = getActiveHandleScripts();
-  const prevScriptId = getActiveHandleScriptId();
-  const prevSharedVars = getActiveHandleSharedVariables();
-  const prevSharedFns = getActiveHandleSharedFunctions();
-
   const importSet = new Set<string>();
   const cleanFnBlocks: string[] = [];
   const debugFnBlocks: string[] = [];
   const fnEntries: HandleSharedModuleFnEntry[] = [];
 
-  try {
-    if (channelPoolConfigs) {
-      setActiveChannelPoolConfigs(channelPoolConfigs);
-    }
-    setActiveHandleSharedVariables(explicitVars);
-    setActiveHandleSharedFunctions(explicitFns);
-    setActiveHandleScripts(metas, effectiveHandle.entryScriptId);
-
-    for (const proc of procSources) {
-      const compiled = compileSingleSharedProc(
-        proc,
-        language,
-        moduleName,
-        sharedAttrByName,
-        allAsyncSharedFnNames,
-      );
-      for (const imp of compiled.imports) importSet.add(imp);
-      if (compiled.cleanFnCode) cleanFnBlocks.push(compiled.cleanFnCode);
-      if (compiled.debugFnCode) debugFnBlocks.push(compiled.debugFnCode);
-      fnEntries.push({
-        name: proc.name,
-        ident: compiled.ident,
-        params: proc.params,
-        hasReturn: proc.hasReturn,
-        usesSleep: proc.usesSleep,
-        scriptId: proc.scriptId,
-        scriptName: proc.scriptName,
-        blockId: proc.blockId,
-      });
-    }
-  } finally {
-    setActiveHandleScripts(prevScripts, prevScriptId);
-    setActiveHandleSharedVariables(prevSharedVars);
-    setActiveHandleSharedFunctions(prevSharedFns);
-  }
+  withCompileContext(
+    {
+      channelPoolConfigs,
+      sharedVariables: explicitVars,
+      sharedFunctions: explicitFns,
+      handleScripts: metas,
+      currentScriptId: effectiveHandle.entryScriptId,
+    },
+    () => {
+      for (const proc of procSources) {
+        const compiled = compileSingleSharedProc(
+          proc,
+          language,
+          moduleName,
+          sharedAttrByName,
+          allAsyncSharedFnNames,
+        );
+        for (const imp of compiled.imports) importSet.add(imp);
+        if (compiled.cleanFnCode) cleanFnBlocks.push(compiled.cleanFnCode);
+        if (compiled.debugFnCode) debugFnBlocks.push(compiled.debugFnCode);
+        fnEntries.push({
+          name: proc.name,
+          ident: compiled.ident,
+          params: proc.params,
+          hasReturn: proc.hasReturn,
+          usesSleep: proc.usesSleep,
+          scriptId: proc.scriptId,
+          scriptName: proc.scriptName,
+          blockId: proc.blockId,
+        });
+      }
+    },
+  );
 
   const importLines = Array.from(importSet);
 

@@ -339,7 +339,8 @@ if '_poly_rt' in sys.modules:
 
     // Helper to register dotted module paths (`utils.crc16`) cleanly in sys.modules
     const mountOnePyModule = (mod: NonNullable<typeof mockModules>[number]) => {
-      if (!mod.pythonSource || !mod.moduleName) return;
+      const pySrc = mod.sources?.python;
+      if (!pySrc || !mod.moduleName) return;
       const parts = mod.moduleName.split('.').filter(Boolean);
       for (let pi = 0; pi < parts.length; pi++) {
         const prefix = parts.slice(0, pi + 1).join('.');
@@ -368,7 +369,7 @@ if '_poly_rt' in sys.modules:
           }
         }
         const filePath = `/${parts.join('/')}.py`;
-        mpFs.writeFile(filePath, mod.pythonSource);
+        mpFs.writeFile(filePath, pySrc);
         if (!mountedVfsFiles.includes(filePath)) mountedVfsFiles.push(filePath);
         return;
       }
@@ -391,7 +392,7 @@ if len(_poly_parts) > 1:
         if (!mountedModuleNames.includes(proxyModName)) {
           mountedModuleNames.push(proxyModName);
         }
-        const rewrittenSource = mod.pythonSource.replace(
+        const rewrittenSource = pySrc.replace(
           /\bimport\s+_poly\b/g,
           `import ${proxyModName} as _poly`,
         );
@@ -447,7 +448,7 @@ ${attachDottedPy}
         mp.runPython(`
 import sys
 _poly_mod_ns = {}
-exec(${JSON.stringify(mod.pythonSource)}, _poly_mod_ns)
+exec(${JSON.stringify(mod.sources?.python ?? '')}, _poly_mod_ns)
 class _PolyVirtualMod:
   pass
 _poly_m = _PolyVirtualMod()
@@ -462,7 +463,7 @@ ${attachDottedPy}
     // Multi-pass mount so multi-file Python libs (`crc16.py` importing `crc16_table.py`)
     // succeed regardless of upload order, while preserving higher-tier overwrite semantics!
     let pendingMods = (mockModules ?? []).filter(
-      (m) => Boolean(m.pythonSource && m.moduleName),
+      (m) => Boolean(m.sources?.python && m.moduleName),
     );
     for (let pass = 0; pass < 4 && pendingMods.length > 0; pass++) {
       const nextPending: typeof pendingMods = [];

@@ -18,7 +18,8 @@ import {
   getActiveHandleScripts,
   getActiveHandleSharedFunctions,
   getActiveScriptVarInitials,
-} from '../blocks/timerConfigBridge';
+  withCompileContext,
+} from '../blocks/workspaceContextBridge';
 import { formatInitialValuePython } from '../projects/handleVariables';
 import {
   analyzeWorkspaceScopes,
@@ -30,7 +31,13 @@ import {
   SENTINEL_END_PREFIX,
   SENTINEL_START_PREFIX,
 } from './sourceMap';
-import type { GeneratedCodeResult, ScriptBackendAdapter } from './types';
+import {
+  LANGUAGE_DIALECTS,
+  type CompileContext,
+  type EntryDispatchBranchSpec,
+  type GeneratedCodeResult,
+  type ScriptBackendAdapter,
+} from './types';
 
 let pythonGeneratorsRegistered = false;
 
@@ -623,8 +630,65 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
   readonly accentColor = '#f59e0b';
   readonly description =
     '标准 Python 3 脚本生成器，支持 Style A1 只读 shared 模块、单线程 async 协程 ABI 与伴生脚本断点调试。';
+  readonly dialect = LANGUAGE_DIALECTS.python;
 
-  generate(workspace: Blockly.Workspace): GeneratedCodeResult {
+  formatDispatchRouter(
+    eventName: string,
+    branches: EntryDispatchBranchSpec[],
+    debugPass: boolean,
+  ): { autoImports: string[]; code: string } {
+    if (branches.length === 0) return { autoImports: [], code: '' };
+    const paramsStr = (branches[0].params ?? []).join(', ');
+    const defKw = debugPass ? 'async def' : 'def';
+    const hasSibling = branches.some((br) => !br.isLocal);
+    const lines: string[] = [];
+    branches.forEach((br, idx) => {
+      const kw = idx === 0 ? 'if' : 'elif';
+      const cond = br.condition.python ?? this.dialect.boolTrue;
+      const comment = br.comment.python ?? '';
+      const callArgs = br.passParams ? paramsStr : '';
+      const srcTag = br.isLocal
+        ? ''
+        : comment
+          ? ` (${br.scriptName}.py)`
+          : `  # ${br.scriptName}.py`;
+      if (br.isLocal) {
+        const callExpr = debugPass
+          ? `await ${br.fnName}(${callArgs})`
+          : `${br.fnName}(${callArgs})`;
+        lines.push(`  ${kw} ${cond}:${comment}${srcTag}\n    ${callExpr}`);
+      } else {
+        const modKey = JSON.stringify(sanitizeLocalIdent(br.scriptName));
+        if (debugPass) {
+          lines.push(
+            `  ${kw} ${cond}:${comment}${srcTag}\n` +
+              `    _m = sys.modules.get(${modKey})\n` +
+              `    if _m and hasattr(_m, ${JSON.stringify(br.fnName)}):\n` +
+              `      _ret = getattr(_m, ${JSON.stringify(br.fnName)})(${callArgs})\n` +
+              `      if hasattr(_ret, 'send'):\n` +
+              `        await _ret`,
+          );
+        } else {
+          lines.push(
+            `  ${kw} ${cond}:${comment}${srcTag}\n` +
+              `    _m = sys.modules.get(${modKey})\n` +
+              `    if _m and hasattr(_m, ${JSON.stringify(br.fnName)}):\n` +
+              `      _m.${br.fnName}(${callArgs})`,
+          );
+        }
+      }
+    });
+    return {
+      autoImports: hasSibling ? ['import sys'] : [],
+      code: `${defKw} ${eventName}(${paramsStr}):\n${lines.join('\n')}\n`,
+    };
+  }
+
+  generate(
+    workspace: Blockly.Workspace,
+    context?: CompileContext,
+  ): GeneratedCodeResult {
+    return withCompileContext(context, () => {
     registerPythonBlockGenerators();
 
     const prevPrefix = pythonGenerator.STATEMENT_PREFIX;
@@ -724,7 +788,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       varIdToIdent,
     );
 
-    const cleanRouter = buildEntryDispatchRouters(workspace, 'python', false);
+    const cleanRouter = buildEntryDispatchRouters(workspace, this, false);
     const cleanPrependLines: string[] = [];
     if (usedSharedClean && sharedInfo.moduleName) {
       cleanPrependLines.push(`import ${sharedInfo.moduleName}`);
@@ -913,7 +977,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       ``,
     ].join('\n');
 
-    const debugRouter = buildEntryDispatchRouters(workspace, 'python', true);
+    const debugRouter = buildEntryDispatchRouters(workspace, this, true);
     const debugPrependLines: string[] = [];
     if (usedSharedDebug && sharedInfo.moduleName) {
       debugPrependLines.push(`import ${sharedInfo.moduleName}`);
@@ -959,5 +1023,6 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       variableScopes,
       isEventDriven: eventDriven,
     };
+    });
   }
 }

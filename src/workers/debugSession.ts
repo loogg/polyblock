@@ -1,3 +1,5 @@
+import type { ScriptLanguageId } from '../types/project';
+
 export interface DebugRunConfig {
   runId: string;
   breakpoints: string[];
@@ -11,8 +13,7 @@ export interface DebugRunConfig {
 
 export interface WorkerMockModule {
   moduleName: string;
-  luaSource?: string;
-  pythonSource?: string;
+  sources: Partial<Record<ScriptLanguageId, string>>;
   packId?: string;
 }
 

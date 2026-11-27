@@ -44,7 +44,7 @@ import {
   setActiveChannelPoolConfigs,
   setActiveProjectCapabilities,
   type ChannelAliasPromptRequest,
-} from '../core/blocks/timerConfigBridge';
+} from '../core/blocks/workspaceContextBridge';
 import type { ChannelPoolConfig, ThemeMode } from '../types/project';
 import type {
   HandleVariableMutation,

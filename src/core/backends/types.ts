@@ -5,6 +5,56 @@ import type {
   SourceLineRange,
   VariableScopeNode,
 } from '../../types/project';
+import type {
+  CompileContext,
+  DispatchBranchMeta,
+} from '../blocks/workspaceContextBridge';
+
+export type { CompileContext };
+
+/** Minimal language syntax tokens used by declarative extension template formatters & UI viewers. */
+export interface LanguageDialect {
+  id: ScriptLanguageId;
+  displayName: string;
+  extension: string;
+  boolTrue: string;
+  boolFalse: string;
+  nullLiteral: string;
+  notOp: string;
+  lineCommentPrefix: string;
+}
+
+/** Single source of truth for registered target script languages & their syntax dialects. */
+export const LANGUAGE_DIALECTS: Record<ScriptLanguageId, LanguageDialect> = {
+  lua: {
+    id: 'lua',
+    displayName: 'Lua 5.4',
+    extension: 'lua',
+    boolTrue: 'true',
+    boolFalse: 'false',
+    nullLiteral: 'nil',
+    notOp: 'not ',
+    lineCommentPrefix: ' -- ',
+  },
+  python: {
+    id: 'python',
+    displayName: 'Python 3',
+    extension: 'py',
+    boolTrue: 'True',
+    boolFalse: 'False',
+    nullLiteral: 'None',
+    notOp: 'not ',
+    lineCommentPrefix: '  # ',
+  },
+};
+
+export const SUPPORTED_LANGUAGE_IDS: readonly ScriptLanguageId[] = Object.keys(
+  LANGUAGE_DIALECTS,
+) as ScriptLanguageId[];
+
+export interface EntryDispatchBranchSpec extends DispatchBranchMeta {
+  isLocal: boolean;
+}
 
 export interface GeneratedCodeResult {
   language: ScriptLanguageId;
@@ -30,9 +80,9 @@ export interface GeneratedCodeResult {
 }
 
 /**
- * Unified contract for any target script backend (Lua, Python, future JS/Shell/DSL...).
- * Implementing this interface lets PolyBlock generate code, map lines back to blocks,
- * and surface static diagnostics without touching UI components.
+ * Unified contract for any target script backend (Lua, Python, future JS/C/DSL...).
+ * Implementing this interface lets PolyBlock generate code, format entry dispatch routers,
+ * map lines back to blocks, and surface static diagnostics without touching UI or pack core code.
  */
 export interface ScriptBackendAdapter {
   readonly id: ScriptLanguageId;
@@ -42,5 +92,14 @@ export interface ScriptBackendAdapter {
   readonly fileName: string;
   readonly accentColor: string;
   readonly description: string;
-  generate(workspace: Blockly.Workspace): GeneratedCodeResult;
+  readonly dialect: LanguageDialect;
+  generate(
+    workspace: Blockly.Workspace,
+    context?: CompileContext,
+  ): GeneratedCodeResult;
+  formatDispatchRouter(
+    eventName: string,
+    branches: EntryDispatchBranchSpec[],
+    debugPass: boolean,
+  ): { autoImports: string[]; code: string };
 }

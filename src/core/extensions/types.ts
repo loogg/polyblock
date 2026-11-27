@@ -1,15 +1,20 @@
+import type { ScriptLanguageId } from '../../types/project';
+
 export interface ExtensionBlockShadow {
   type: 'math_number' | 'text';
   value: number | string;
 }
 
-export interface ExtensionPackImports {
-  lua?: string[];
-  python?: string[];
-}
+/** Per-language top-level import lines keyed by ScriptLanguageId (e.g. `{ lua: [...], python: [...] }`). */
+export type ExtensionPackImports = Partial<Record<ScriptLanguageId, string[]>>;
 
 export interface ExtensionCodeTemplate {
-  /** Template string supporting {{ARG}}, {{ARG:json}}, {{ARG:int}}, {{ARG:bool_lua}}, {{ARG:bool_py}}, {{ARG:channel_comment_lua}}, {{ARG:channel_comment_py}} */
+  /**
+   * Language-neutral template string supporting:
+   * `{{ARG}}`, `{{ARG:json}}`, `{{ARG:int}}`, `{{ARG:min10_int}}`,
+   * `{{ARG:bool}}`, `{{ARG:edge:<param>}}`, `{{ARG:edge_zh}}`,
+   * `{{ARG:channel_comment}}`, `{{ARG:channel_label}}`.
+   */
   template: string;
   /** Optional override of pack-level default imports (pass `[]` to suppress default import for a pure-syntax block). */
   imports?: string[];
@@ -28,17 +33,15 @@ export interface ExtensionHatSpec {
   /**
    * - 'singleton': generates a single top-level callback (`function on_run() ... end`).
    * - 'dispatch': aggregates all enabled hats of this block type into ONE top-level function
-   *   with `if / elseif` (Lua) or `if / elif` (Python) branches.
+   *   with language-native branch dispatch.
    */
   mode: 'singleton' | 'dispatch';
   /** Optional module imports hoisted when this hat is present (hats do not auto-hoist pack imports). */
   imports?: ExtensionPackImports;
-  /** Branch condition template for mode='dispatch'. */
-  conditionLua?: string;
-  conditionPython?: string;
-  /** Optional inline comment suffix on each dispatch branch (e.g. `{{TIMER_ID:channel_comment_lua}}`). */
-  branchCommentLua?: string;
-  branchCommentPython?: string;
+  /** Per-language branch condition templates for `mode: 'dispatch'` keyed by ScriptLanguageId. */
+  condition?: Partial<Record<ScriptLanguageId, string>>;
+  /** Per-language inline comment templates on each dispatch branch keyed by ScriptLanguageId. */
+  branchComment?: Partial<Record<ScriptLanguageId, string>>;
   /**
    * Optional Scheme A extraction prefix for mode='dispatch'.
    * When set (e.g. `'on_timer_'`), each hat block generates a standalone global function
@@ -51,7 +54,7 @@ export interface ExtensionHatSpec {
   scopeLabelTemplate?: string;
   scopeShortTemplate?: string;
   scopeCategory?: 'lifecycle' | 'event' | 'function';
-  /** Whether defining this callback keeps the browser sandbox event loop alive waiting for events (default: true). */
+  /** Whether defining this callback keeps the browser sandbox event loop alive waiting for external events (default: true). */
   keepsAlive?: boolean;
 }
 
@@ -73,9 +76,8 @@ export interface ExtensionBlockDef {
   blockStyle?: string;
   fields?: Record<string, unknown>;
   shadows?: Record<string, ExtensionBlockShadow>;
-  /** Required for kind='statement' and kind='value'; optional for kind='hat'. */
-  lua?: ExtensionCodeTemplate;
-  python?: ExtensionCodeTemplate;
+  /** Per-language code templates keyed by ScriptLanguageId (required for statement/value blocks, at least 1 language). */
+  code?: Partial<Record<ScriptLanguageId, ExtensionCodeTemplate>>;
   /** Required when kind='hat'. */
   hat?: ExtensionHatSpec;
   /**
@@ -91,15 +93,15 @@ export interface ExtensionBlockDef {
 }
 
 /**
- * Script module source mounted into Lua `package.preload` / Python `sys.modules`.
+ * Script module source mounted into Lua `package.preload` / Python `sys.modules` (or future target loaders).
  * Used by BOTH:
  * - `sandboxMock`: fake stub for real-hardware C firmware APIs (browser sandbox ONLY, stripped on target export).
  * - `libs[]`: real pure-script library files like `crc16.lua` + `crc16_table.lua` (runs in sandbox AND bundled on target export).
  */
 export interface ExtensionModuleSource {
   moduleName: string;
-  luaSource?: string;
-  pythonSource?: string;
+  /** Per-language module source strings keyed by ScriptLanguageId (e.g. `{ lua: '...', python: '...' }`). */
+  sources: Partial<Record<ScriptLanguageId, string>>;
   /** Optional display hint distinguishing entry library files from internal helper dependencies inside `libs[]`. */
   role?: 'entry' | 'helper';
   /** Auto-populated by registry/resolver when mounting modules for pack-scoped simState isolation. */

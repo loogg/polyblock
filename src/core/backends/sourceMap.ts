@@ -13,11 +13,12 @@ import {
   getActiveModuleConflicts,
   getActiveProjectCapabilities,
   isCurrentHandleScriptEntry,
-} from '../blocks/timerConfigBridge';
+} from '../blocks/workspaceContextBridge';
 import { hasCapability } from '../capabilities/registry';
 import { extensionRegistry } from '../extensions/registry';
 import { computeAsyncFunctionNames } from './codegenContext';
 import { getUnifiedHatSpec, isValidTopHatType } from './eventMode';
+import { LANGUAGE_DIALECTS } from './types';
 
 export const SENTINEL_START_PREFIX = '__PB_S:';
 export const SENTINEL_END_PREFIX = '__PB_E:';
@@ -284,20 +285,14 @@ export function analyzeWorkspaceDiagnostics(
       }
     }
 
-    // Single-language extension block compatibility check
+    // Single-language extension block compatibility check (universal across all registered languages)
     if (owner && targetLanguage && owner.block.kind !== 'hat') {
-      if (targetLanguage === 'lua' && !owner.block.lua?.template) {
+      if (!owner.block.code?.[targetLanguage]?.template) {
+        const targetLabel = LANGUAGE_DIALECTS[targetLanguage].displayName;
         diagnostics.push({
-          id: `lang-unsupported-lua-${blk.id}`,
+          id: `lang-unsupported-${targetLanguage}-${blk.id}`,
           severity: 'error',
-          message: `积木「${owner.block.message0.replace(/%\d/g, '▢')}」（所属「${owner.pack.name}」）仅支持 Python，未提供 lua.template，请切换项目语言或补全 Lua 模板。`,
-          blockId: blk.id,
-        });
-      } else if (targetLanguage === 'python' && !owner.block.python?.template) {
-        diagnostics.push({
-          id: `lang-unsupported-python-${blk.id}`,
-          severity: 'error',
-          message: `积木「${owner.block.message0.replace(/%\d/g, '▢')}」（所属「${owner.pack.name}」）仅支持 Lua，未提供 python.template，请切换项目语言或补全 Python 模板。`,
+          message: `积木「${owner.block.message0.replace(/%\d/g, '▢')}」（所属「${owner.pack.name}」）未提供 ${targetLabel} 代码模板（code.${targetLanguage}.template），请切换项目语言或补全该语言模板。`,
           blockId: blk.id,
         });
       }

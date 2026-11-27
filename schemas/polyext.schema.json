@@ -103,7 +103,7 @@
     },
     "ExtensionModuleSource": {
       "type": "object",
-      "required": ["moduleName"],
+      "required": ["moduleName", "sources"],
       "additionalProperties": false,
       "properties": {
         "moduleName": {
@@ -116,13 +116,11 @@
           "enum": ["entry", "helper"],
           "description": "可选角色标注：entry（入口库，暴露给积木调用）或 helper（辅助依赖表，如 crc16_table.lua）。"
         },
-        "luaSource": {
-          "type": "string",
-          "description": "可选：Lua 5.4 模块源码（需 return M）。"
-        },
-        "pythonSource": {
-          "type": "string",
-          "description": "可选：Python 3 / MicroPython 模块源码。"
+        "sources": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string" },
+          "description": "按目标语言 ID 映射的模块源码（如 { \"lua\": \"...\", \"python\": \"...\" }）。"
         }
       }
     },
@@ -235,7 +233,7 @@
       "properties": {
         "template": {
           "type": "string",
-          "description": "代码模板，支持 {{ARG}}、{{ARG:json}}、{{ARG:int}}、{{ARG:bool_lua}}、{{ARG:bool_py}}、{{ARG:channel_comment_lua}}、{{ARG:channel_comment_py}}。"
+          "description": "代码模板，支持语言中立修饰器 {{ARG}}、{{ARG:json}}、{{ARG:int}}、{{ARG:bool}}、{{ARG:edge:<param>}}、{{ARG:channel_comment}}。"
         },
         "imports": {
           "type": "array",
@@ -265,10 +263,16 @@
           "description": "singleton：全句柄唯一顶层回调；dispatch：将多个帽块聚合成一个 if/elseif 路由函数。"
         },
         "imports": { "$ref": "#/definitions/ExtensionPackImports" },
-        "conditionLua": { "type": "string", "description": "dispatch 模式下 Lua 分支条件模板。" },
-        "conditionPython": { "type": "string", "description": "dispatch 模式下 Python 分支条件模板。" },
-        "branchCommentLua": { "type": "string" },
-        "branchCommentPython": { "type": "string" },
+        "condition": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "dispatch 模式下按语言 ID 映射的分支条件模板（如 { \"lua\": \"...\", \"python\": \"...\" }）。"
+        },
+        "branchComment": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "dispatch 模式下按语言 ID 映射的分支注释模板（如 { \"lua\": \"{{ID:channel_comment}}\", \"python\": \"{{ID:channel_comment}}\" }）。"
+        },
         "extractBranchFnPrefix": {
           "type": "string",
           "description": "可选方案 A 提取前缀（如 on_timer_），将各分支生成独立全局函数并由路由函数调用。"
@@ -325,13 +329,11 @@
             }
           }
         },
-        "lua": {
-          "$ref": "#/definitions/ExtensionCodeTemplate",
-          "description": "Lua 5.4 代码模板（statement/value 积木与 python 至少提供其一，支持单语言扩展包）。"
-        },
-        "python": {
-          "$ref": "#/definitions/ExtensionCodeTemplate",
-          "description": "Python 3 代码模板（statement/value 积木与 lua 至少提供其一，支持单语言扩展包）。"
+        "code": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/definitions/ExtensionCodeTemplate" },
+          "description": "按目标语言 ID 映射的代码模板对象（如 { \"lua\": { \"template\": \"...\" }, \"python\": { \"template\": \"...\" } }；statement/value 积木至少提供一种语言）。"
         },
         "hat": { "$ref": "#/definitions/ExtensionHatSpec" },
         "simWidgetKeys": {

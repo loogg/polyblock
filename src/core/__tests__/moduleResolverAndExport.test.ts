@@ -11,7 +11,7 @@ import {
   setActiveHandleScripts,
   setActiveModuleConflicts,
   setActiveProjectCapabilities,
-} from '../blocks/timerConfigBridge';
+} from '../blocks/workspaceContextBridge';
 import {
   buildProjectTargetBundle,
   buildSingleHandleTargetBundle,
@@ -75,8 +75,10 @@ function makeTestPack(
             kind: 'value',
             outputType: 'Number',
             message0: `${id} ping`,
-            lua: { template: '1' },
-            python: { template: '1' },
+            code: {
+              lua: { template: '1' },
+              python: { template: '1' },
+            },
           },
         ],
       },
@@ -145,7 +147,7 @@ describe('3-tier pure-scope ModuleResolver, Conflict Detection, Scanner & Target
         {
           moduleName: 'crc16',
           role: 'entry',
-          luaSource: 'return { calc = function() return 111 end }',
+          sources: { lua: 'return { calc = function() return 111 end }' },
         },
       ],
     });
@@ -153,7 +155,7 @@ describe('3-tier pure-scope ModuleResolver, Conflict Detection, Scanner & Target
       name: '本项目硬件 C 版 CRC16',
       sandboxMock: {
         moduleName: 'crc16',
-        luaSource: 'return { calc = function() return 222 end }',
+        sources: { lua: 'return { calc = function() return 222 end }' },
       },
     });
 
@@ -171,7 +173,7 @@ describe('3-tier pure-scope ModuleResolver, Conflict Detection, Scanner & Target
     expect(winner?.ownerId).toBe('local:proj-hw-crc');
 
     // Sandbox mounts the winning Project mock (not the shadowed Global lib)
-    expect(res.sandboxMountOrder.map((m) => m.luaSource)).toEqual([
+    expect(res.sandboxMountOrder.map((m) => m.sources.lua)).toEqual([
       'return { calc = function() return 222 end }',
     ]);
 
@@ -190,7 +192,7 @@ describe('3-tier pure-scope ModuleResolver, Conflict Detection, Scanner & Target
           {
             moduleName: 'rt',
             role: 'entry',
-            luaSource: 'return { tick = function() return 99999 end }',
+            sources: { lua: 'return { tick = function() return 99999 end }' },
           },
         ],
       }),
@@ -216,7 +218,7 @@ describe('3-tier pure-scope ModuleResolver, Conflict Detection, Scanner & Target
         {
           scriptId: 'scr_rt',
           scriptName: 'rt',
-          luaSource: 'return { tick = function() return 777 end }',
+          sources: { lua: 'return { tick = function() return 777 end }' },
         },
       ],
     });
@@ -227,8 +229,8 @@ describe('3-tier pure-scope ModuleResolver, Conflict Detection, Scanner & Target
 
   it('standardizes RT_PACK.sandboxMock identically to all other packs (zero worker/resolver special cases) and runs cleanly in Lua 5.4 & MicroPython', async () => {
     expect(RT_PACK.sandboxMock?.moduleName).toBe('rt');
-    expect(RT_PACK.sandboxMock?.luaSource).toContain('__poly_rt_tick');
-    expect(RT_PACK.sandboxMock?.pythonSource).toContain('_poly.rt_tick');
+    expect(RT_PACK.sandboxMock?.sources.lua).toContain('__poly_rt_tick');
+    expect(RT_PACK.sandboxMock?.sources.python).toContain('_poly.rt_tick');
 
     // When `rt` is NOT enabled, resolver does NOT mount `rt` at all
     const withoutRt = resolveProjectModules({ enabledCapabilities: [] });
@@ -243,17 +245,17 @@ describe('3-tier pure-scope ModuleResolver, Conflict Detection, Scanner & Target
     expect(withRt.resolvedByName.get('rt')?.delivery).toBe('sandbox-mock');
     expect(withRt.exportLibs).toHaveLength(0);
     const rtMod = withRt.sandboxMountOrder.find((m) => m.moduleName === 'rt');
-    expect(rtMod?.luaSource).toBeTruthy();
-    expect(rtMod?.pythonSource).toBeTruthy();
+    expect(rtMod?.sources.lua).toBeTruthy();
+    expect(rtMod?.sources.python).toBeTruthy();
 
-    // Execute RT_PACK.sandboxMock.luaSource directly in Wasmoon Lua 5.4
+    // Execute RT_PACK.sandboxMock.sources.lua directly in Wasmoon Lua 5.4
     const lua = await new LuaFactory().createEngine();
     try {
       lua.global.set('__poly_rt_tick', () => 1234);
       lua.global.set('__poly_rt_ms_to_tick', (ms: number) => Math.ceil(ms));
       lua.global.set('__poly_rt_is_expired', (s: number, t: number) => 1234 - s >= t);
       await lua.doString(
-        `package.preload["rt"] = load(${JSON.stringify(rtMod!.luaSource!)})`,
+        `package.preload["rt"] = load(${JSON.stringify(rtMod!.sources.lua!)})`,
       );
       expect(await lua.doString('local rt = require("rt"); return rt.tick()')).toBe(
         1234,
@@ -265,7 +267,7 @@ describe('3-tier pure-scope ModuleResolver, Conflict Detection, Scanner & Target
       lua.global.close();
     }
 
-    // Execute RT_PACK.sandboxMock.pythonSource via the EXACT same scoped-proxy mount as python.worker.ts!
+    // Execute RT_PACK.sandboxMock.sources.python via the EXACT same scoped-proxy mount as python.worker.ts!
     const pyLines: string[] = [];
     const mp = await loadMicroPython({
       linebuffer: true,
@@ -283,7 +285,7 @@ describe('3-tier pure-scope ModuleResolver, Conflict Detection, Scanner & Target
       rt_ms_to_tick: (ms: number) => Math.ceil(ms),
       rt_is_expired: (s: number, t: number) => 5678 - s >= t,
     });
-    const rewrittenPy = rtMod!.pythonSource!.replace(
+    const rewrittenPy = rtMod!.sources.python!.replace(
       /\bimport\s+_poly\b/g,
       'import _poly__rt as _poly',
     );
@@ -317,10 +319,10 @@ print(rt.tick(), rt.is_expired(5000, 500))
 
   it('detects same-tier moduleName conflicts across project and global scopes and surfaces them in workspace diagnostics', () => {
     const localA = makeTestPack('local-a', {
-      libs: [{ moduleName: 'crypto', luaSource: 'return { v = 1 }' }],
+      libs: [{ moduleName: 'crypto', sources: { lua: 'return { v = 1 }' } }],
     });
     const localB = makeTestPack('local-b', {
-      sandboxMock: { moduleName: 'crypto', luaSource: 'return { v = 2 }' },
+      sandboxMock: { moduleName: 'crypto', sources: { lua: 'return { v = 2 }' } },
     });
 
     const projectConflictRes = resolveProjectModules({
@@ -334,7 +336,7 @@ print(rt.tick(), rt.is_expired(5000, 500))
 
     // Global conflict against preinstalled `rt` when another global pack also declares `rt`
     const rougeGlobalRt = makeTestPack('rogue-rt', {
-      libs: [{ moduleName: 'rt', luaSource: 'return {}' }],
+      libs: [{ moduleName: 'rt', sources: { lua: 'return {}' } }],
     });
     const globalConflictRes = resolveProjectModules({
       enabledCapabilities: ['rt', 'rogue-rt'],
@@ -361,8 +363,8 @@ print(rt.tick(), rt.is_expired(5000, 500))
     // Allowed: dht22 (real lib) + i2c (browser sandboxMock)
     const validDual = validateExtensionPack(
       makeTestPack('dht22-sensor', {
-        libs: [{ moduleName: 'dht22', luaSource: 'return { read = function() return 25 end }' }],
-        sandboxMock: { moduleName: 'i2c', luaSource: 'return { read = function() return 1 end }' },
+        libs: [{ moduleName: 'dht22', sources: { lua: 'return { read = function() return 25 end }' } }],
+        sandboxMock: { moduleName: 'i2c', sources: { lua: 'return { read = function() return 1 end }' } },
       }),
     );
     expect(validDual.libs).toHaveLength(1);
@@ -372,8 +374,8 @@ print(rt.tick(), rt.is_expired(5000, 500))
     expect(() =>
       validateExtensionPack(
         makeTestPack('bad-dup-mock-lib', {
-          libs: [{ moduleName: 'foo', luaSource: 'return {}' }],
-          sandboxMock: { moduleName: 'foo', luaSource: 'return {}' },
+          libs: [{ moduleName: 'foo', sources: { lua: 'return {}' } }],
+          sandboxMock: { moduleName: 'foo', sources: { lua: 'return {}' } },
         }),
       ),
     ).toThrow(/同时写入 libs\[\] 与 sandboxMock/);
@@ -383,8 +385,8 @@ print(rt.tick(), rt.is_expired(5000, 500))
       validateExtensionPack(
         makeTestPack('bad-dup-libs', {
           libs: [
-            { moduleName: 'foo', luaSource: 'return {}' },
-            { moduleName: 'foo', luaSource: 'return {}' },
+            { moduleName: 'foo', sources: { lua: 'return {}' } },
+            { moduleName: 'foo', sources: { lua: 'return {}' } },
           ],
         }),
       ),
@@ -475,9 +477,10 @@ def reset():
     const validated = validateExtensionPack(generatedPack);
     expect(validated.imports?.lua).toEqual(['local crc16 = require("crc16")']);
     expect(validated.imports?.python).toBeUndefined();
-    expect(validated.sections[0].blocks[0].lua?.template).toBe('crc16.calc({{ARG1}})');
-    expect(validated.sections[0].blocks[0].python).toBeUndefined();
+    expect(validated.sections[0].blocks[0].code?.lua?.template).toBe('crc16.calc({{ARG1}})');
+    expect(validated.sections[0].blocks[0].code?.python).toBeUndefined();
     expect(getPackSupportedLanguages(validated)).toEqual({
+      supported: ['lua'],
       lua: true,
       python: false,
       label: '仅 Lua 5.4',
@@ -508,7 +511,7 @@ def reset():
     try {
       for (const mod of resolution.sandboxMountOrder) {
         const safeName = JSON.stringify(mod.moduleName);
-        const safeSrc = JSON.stringify(mod.luaSource ?? '');
+        const safeSrc = JSON.stringify(mod.sources.lua ?? '');
         await lua.doString(`
           package.preload[${safeName}] = function()
             local chunk, err = load(${safeSrc}, "@" .. ${safeName})
@@ -526,14 +529,14 @@ def reset():
       // Verify project-local `rt` pack cleanly overrides default preinstalled `rt` at runtime!
       await lua.doString('package.preload["rt"] = function() return { tick = function() return 1 end } end');
       const rtOverridePack = makeTestPack('rt', {
-        libs: [{ moduleName: 'rt', luaSource: 'return { tick = function() return 99999 end }' }],
+        libs: [{ moduleName: 'rt', sources: { lua: 'return { tick = function() return 99999 end }' } }],
       });
       const rtRes = resolveProjectModules({
         enabledCapabilities: ['rt'],
         localExtensions: [rtOverridePack],
       });
       for (const mod of rtRes.sandboxMountOrder) {
-        await lua.doString(`package.preload[${JSON.stringify(mod.moduleName)}] = load(${JSON.stringify(mod.luaSource ?? '')})`);
+        await lua.doString(`package.preload[${JSON.stringify(mod.moduleName)}] = load(${JSON.stringify(mod.sources.lua ?? '')})`);
       }
       const rtTick = await lua.doString('return require("rt").tick()');
       expect(rtTick).toBe(99999);
@@ -550,8 +553,8 @@ def reset():
         role: 'entry',
       },
     ]);
-    expect(merged.find((m) => m.moduleName === 'crc16')?.luaSource).toBeTruthy();
-    expect(merged.find((m) => m.moduleName === 'crc16')?.pythonSource).toContain(
+    expect(merged.find((m) => m.moduleName === 'crc16')?.sources.lua).toBeTruthy();
+    expect(merged.find((m) => m.moduleName === 'crc16')?.sources.python).toContain(
       '0x4B37',
     );
   });
@@ -562,8 +565,8 @@ def reset():
     const crcPack = makeTestPack('crc16-pack', {
       name: 'CRC16 库',
       libs: [
-        { moduleName: 'utils.crc16', role: 'entry', luaSource: 'return { calc = function() return 42 end }\n' },
-        { moduleName: 'crc16_table', role: 'helper', luaSource: 'return { 1, 2, 3 }\n' },
+        { moduleName: 'utils.crc16', role: 'entry', sources: { lua: 'return { calc = function() return 42 end }\n' } },
+        { moduleName: 'crc16_table', role: 'helper', sources: { lua: 'return { 1, 2, 3 }\n' } },
       ],
     });
 
@@ -610,7 +613,7 @@ def reset():
 
     // 3. Same-tier conflict MUST block both single-handle and project ZIP export!
     const conflictingPack = makeTestPack('crc16-conflict', {
-      libs: [{ moduleName: 'utils.crc16', luaSource: 'return {}\n' }],
+      libs: [{ moduleName: 'utils.crc16', sources: { lua: 'return {}\n' } }],
     });
     const badProj = {
       ...proj,
@@ -646,20 +649,23 @@ def reset():
               outputType: 'Number',
               message0: '%1 的绝对值',
               args0: [{ type: 'input_value', name: 'X', check: 'Number' }],
-              lua: { template: 'math.abs({{X}})' },
+              code: {
+                lua: { template: 'math.abs({{X}})' },
+              },
             },
           ],
         },
       ],
     });
     expect(getPackSupportedLanguages(luaOnlyPack)).toEqual({
+      supported: ['lua'],
       lua: true,
       python: false,
       label: '仅 Lua 5.4',
     });
     expect(derivePackBadges(luaOnlyPack).map((b) => b.label)).toContain('仅 Lua');
 
-    // Block with NEITHER lua nor python template must fail validation
+    // Block with NO code templates must fail validation
     expect(() =>
       validateExtensionPack({
         format: 'polyblock-extension',
@@ -680,7 +686,7 @@ def reset():
           },
         ],
       }),
-    ).toThrow(/至少需要提供 lua\.template 或 python\.template 之一/);
+    ).toThrow(/缺少 code 对象/);
 
     // Mount Lua-only pack & verify Lua codegen succeeds (0 diagnostics) while Python codegen emits clear Error without crashing
     extensionRegistry.setActiveProjectLocalPacks([luaOnlyPack]);
@@ -731,13 +737,13 @@ def reset():
     expect(luaRes.diagnostics).toHaveLength(0);
 
     const pyRes = backendRegistry.get('python').generate(ws);
-    expect(pyRes.code).toContain('未提供 Python 模板');
+    expect(pyRes.code).toContain('未提供 code.python.template');
     expect(
       pyRes.diagnostics.some(
         (d) =>
           d.severity === 'error' &&
           d.blockId === 'abs_lang' &&
-          d.message.includes('仅支持 Lua'),
+          d.message.includes('code.python.template'),
       ),
     ).toBe(true);
 

@@ -13,7 +13,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
 import type { GeneratedCodeResult } from '../core/backends/types';
-import { formatChannelLabel } from '../core/blocks/timerConfigBridge';
+import { formatChannelLabel } from '../core/blocks/workspaceContextBridge';
 import {
   CAP_RT_LIFECYCLE,
   CAP_RT_TIMERS,

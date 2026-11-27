@@ -1,5 +1,6 @@
 import type {
   ChannelPoolConfig,
+  ScriptLanguageId,
   VariableInitialValue,
 } from '../../types/project';
 import type { ModuleConflictItem } from '../extensions/moduleResolver';
@@ -27,10 +28,10 @@ export interface DispatchBranchMeta {
   passParams?: boolean;
   /** True when this hat declares an explicit `extractBranchFnPrefix` (always routes via branch fns, e.g. `on_timer`). */
   alwaysExtract?: boolean;
-  conditionLua: string;
-  conditionPython: string;
-  commentLua: string;
-  commentPython: string;
+  /** Per-language rendered dispatch branch condition keyed by ScriptLanguageId. */
+  condition: Partial<Record<ScriptLanguageId, string>>;
+  /** Per-language rendered inline branch comment keyed by ScriptLanguageId. */
+  comment: Partial<Record<ScriptLanguageId, string>>;
   scriptId: string;
   scriptName: string;
 }
@@ -61,6 +62,23 @@ export interface ActiveHandleScriptMeta {
   declaredVariables?: string[];
   /** Top-level custom procedures (`procedures_defnoreturn` / `procedures_defreturn`) defined in this script. */
   declaredFunctions?: DeclaredFunctionMeta[];
+}
+
+/**
+ * Explicit immutable compile context passed to `ScriptBackendAdapter.generate(workspace, ctx)`.
+ * Scoped via `withCompileContext(ctx, fn)` so headless compilation, ZIP export, and multi-handle
+ * pre-run checks execute as pure, re-entrant passes without ever leaking mutable global state.
+ */
+export interface CompileContext {
+  channelPoolConfigs?: Record<string, Partial<ChannelPoolConfig> | undefined>;
+  enabledCapabilities?: string[] | null;
+  handleScripts?: ActiveHandleScriptMeta[];
+  currentScriptId?: string | null;
+  sharedVariables?: string[] | null;
+  sharedVarInitials?: Record<string, VariableInitialValue> | null;
+  scriptVarInitials?: Record<string, VariableInitialValue> | null;
+  sharedFunctions?: string[] | null;
+  moduleConflicts?: ModuleConflictItem[];
 }
 
 export function normalizeChannelPoolConfig(
@@ -96,8 +114,8 @@ export function normalizeChannelPoolConfig(
 }
 
 /**
- * Per-configKey isolated channel pool configurations for the currently active RuntimeHandle.
- * Prevents collisions when multiple sections declare `handleConfigs` (`channel-pool`, e.g. `rt.timers` vs `pwm-driver`).
+ * Live workspace context bridge synced to the currently active Blockly canvas
+ * (read by dynamic Blockly dropdown fields, toolbox flyout builders, and scoped compile passes).
  */
 const activeChannelPools = new Map<string, ChannelPoolConfig>();
 
@@ -109,6 +127,80 @@ let activeHandleSharedVarInitials: Record<string, VariableInitialValue> = {};
 let activeScriptVarInitials: Record<string, VariableInitialValue> = {};
 let activeHandleSharedFunctions: string[] | null = null;
 let activeModuleConflicts: ModuleConflictItem[] = [];
+
+/**
+ * Executes `fn` with an explicit `CompileContext` applied cleanly for the duration of the call,
+ * unconditionally restoring the previous canvas bridge state in `finally`.
+ */
+export function withCompileContext<T>(
+  ctx: CompileContext | undefined,
+  fn: () => T,
+): T {
+  if (!ctx) return fn();
+
+  const prevPools = new Map<string, ChannelPoolConfig>();
+  for (const [k, v] of activeChannelPools.entries()) {
+    prevPools.set(k, { count: v.count, aliases: { ...v.aliases } });
+  }
+  const prevCaps = activeCapabilities ? [...activeCapabilities] : null;
+  const prevScripts = activeHandleScripts;
+  const prevScriptId = activeHandleScriptId;
+  const prevSharedVars = activeHandleSharedVariables
+    ? [...activeHandleSharedVariables]
+    : null;
+  const prevSharedVarInitials = { ...activeHandleSharedVarInitials };
+  const prevScriptVarInitials = { ...activeScriptVarInitials };
+  const prevSharedFns = activeHandleSharedFunctions
+    ? [...activeHandleSharedFunctions]
+    : null;
+  const prevConflicts = [...activeModuleConflicts];
+
+  try {
+    if (ctx.channelPoolConfigs !== undefined) {
+      setActiveChannelPoolConfigs(ctx.channelPoolConfigs);
+    }
+    if (ctx.enabledCapabilities !== undefined) {
+      setActiveProjectCapabilities(ctx.enabledCapabilities);
+    }
+    if (ctx.handleScripts !== undefined) {
+      setActiveHandleScripts(
+        ctx.handleScripts,
+        ctx.currentScriptId !== undefined ? ctx.currentScriptId : prevScriptId,
+      );
+    } else if (ctx.currentScriptId !== undefined) {
+      activeHandleScriptId = ctx.currentScriptId;
+    }
+    if (ctx.sharedVariables !== undefined) {
+      setActiveHandleSharedVariables(ctx.sharedVariables);
+    }
+    if (ctx.sharedVarInitials !== undefined) {
+      setActiveHandleSharedVarInitials(ctx.sharedVarInitials);
+    }
+    if (ctx.scriptVarInitials !== undefined) {
+      setActiveScriptVarInitials(ctx.scriptVarInitials);
+    }
+    if (ctx.sharedFunctions !== undefined) {
+      setActiveHandleSharedFunctions(ctx.sharedFunctions);
+    }
+    if (ctx.moduleConflicts !== undefined) {
+      setActiveModuleConflicts(ctx.moduleConflicts);
+    }
+    return fn();
+  } finally {
+    activeChannelPools.clear();
+    for (const [k, v] of prevPools.entries()) {
+      activeChannelPools.set(k, v);
+    }
+    activeCapabilities = prevCaps;
+    activeHandleScripts = prevScripts;
+    activeHandleScriptId = prevScriptId;
+    activeHandleSharedVariables = prevSharedVars;
+    activeHandleSharedVarInitials = prevSharedVarInitials;
+    activeScriptVarInitials = prevScriptVarInitials;
+    activeHandleSharedFunctions = prevSharedFns;
+    activeModuleConflicts = prevConflicts;
+  }
+}
 
 export function setActiveHandleSharedVariables(names: string[] | null): void {
   activeHandleSharedVariables = names ? [...names] : null;
@@ -177,7 +269,12 @@ export function setActiveHandleScripts(
     declaredEvents: [...s.declaredEvents],
     requiredScripts: [...s.requiredScripts],
     dispatchBranches: s.dispatchBranches
-      ? s.dispatchBranches.map((b) => ({ ...b, params: [...b.params] }))
+      ? s.dispatchBranches.map((b) => ({
+          ...b,
+          params: [...b.params],
+          condition: { ...b.condition },
+          comment: { ...b.comment },
+        }))
       : [],
     declaredVariables: s.declaredVariables ? [...s.declaredVariables] : [],
     declaredFunctions: s.declaredFunctions
@@ -307,13 +404,7 @@ export function buildChannelDropdownOptions(
   }
 
   if (includeEditShortcut) {
-    const curId =
-      currentValue && /^\d+$/.test(currentValue) ? Number(currentValue) : 0;
-    options.push([
-      `✎ 设置 ${prefix}${curId} 通道别名...`,
-      EDIT_TIMER_ALIAS_SENTINEL,
-    ]);
+    options.push(['✎ 修改本通道别名...', EDIT_TIMER_ALIAS_SENTINEL]);
   }
-
   return options;
 }

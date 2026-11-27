@@ -1,5 +1,5 @@
 import type * as Blockly from 'blockly';
-import type { RuntimeHandle, ScriptLanguageId } from '../../types/project';
+import type { RuntimeHandle } from '../../types/project';
 import {
   getActiveHandleScriptId,
   getActiveHandleScripts,
@@ -9,10 +9,11 @@ import {
   type ActiveHandleScriptMeta,
   type DeclaredFunctionMeta,
   type DispatchBranchMeta,
-} from '../blocks/timerConfigBridge';
+} from '../blocks/workspaceContextBridge';
 import { extensionRegistry } from '../extensions/registry';
 import type { ExtensionHatSpec } from '../extensions/types';
 import { sanitizeLocalIdent } from './scopeAnalysis';
+import type { EntryDispatchBranchSpec, ScriptBackendAdapter } from './types';
 
 export interface UnifiedHatSpec {
   eventName: string;
@@ -224,10 +225,8 @@ export function inspectWorkspaceScriptMeta(
           params: info.params,
           passParams: info.passParams,
           alwaysExtract: info.alwaysExtract,
-          conditionLua: info.conditionLua,
-          conditionPython: info.conditionPython,
-          commentLua: info.commentLua,
-          commentPython: info.commentPython,
+          condition: info.condition,
+          comment: info.comment,
           scriptId,
           scriptName,
         });
@@ -477,12 +476,6 @@ function getHandleSiblingScripts() {
   return getActiveHandleScripts().filter((s) => s.id !== currentId);
 }
 
-function sanitizePyIdent(raw: string): string {
-  const cleaned = raw.replace(/[^A-Za-z0-9_]/g, '_');
-  if (!cleaned) return 'mod';
-  return /^[0-9]/.test(cleaned) ? `_${cleaned}` : cleaned;
-}
-
 /**
  * Generates the handle-wide central dispatch router(s) (`on_timer`, `on_button`, etc.)
  * EXCLUSIVELY in the entry script (`main.lua` / `main.py`).
@@ -493,18 +486,14 @@ function sanitizePyIdent(raw: string): string {
  */
 export function buildEntryDispatchRouters(
   workspace: Blockly.Workspace,
-  language: ScriptLanguageId,
+  adapter: ScriptBackendAdapter,
   debugPass: boolean,
 ): { autoImports: string[]; routerCode: string } {
   if (!isCurrentHandleScriptEntry()) {
     return { autoImports: [], routerCode: '' };
   }
 
-  interface AggregatedBranch extends DispatchBranchMeta {
-    isLocal: boolean;
-  }
-
-  const allBranches: AggregatedBranch[] = [];
+  const allBranches: EntryDispatchBranchSpec[] = [];
   const localUsedFnNames = new Set<string>();
   const currentId = getActiveHandleScriptId() ?? 'entry';
   const currentMeta = getActiveHandleScripts().find((s) => s.id === currentId);
@@ -531,10 +520,8 @@ export function buildEntryDispatchRouters(
       params: info.params,
       passParams: info.passParams,
       alwaysExtract: info.alwaysExtract,
-      conditionLua: info.conditionLua,
-      conditionPython: info.conditionPython,
-      commentLua: info.commentLua,
-      commentPython: info.commentPython,
+      condition: info.condition,
+      comment: info.comment,
       scriptId: currentId,
       scriptName: currentName,
       isLocal: true,
@@ -556,14 +543,14 @@ export function buildEntryDispatchRouters(
     return { autoImports: [], routerCode: '' };
   }
 
-  const byEvent = new Map<string, AggregatedBranch[]>();
+  const byEvent = new Map<string, EntryDispatchBranchSpec[]>();
   for (const br of allBranches) {
     const list = byEvent.get(br.eventName) ?? [];
     list.push(br);
     byEvent.set(br.eventName, list);
   }
 
-  const routedEvents = new Map<string, AggregatedBranch[]>();
+  const routedEvents = new Map<string, EntryDispatchBranchSpec[]>();
   for (const [evName, list] of byEvent.entries()) {
     if (list.some((b) => b.alwaysExtract || !b.isLocal)) {
       routedEvents.set(evName, list);
@@ -574,12 +561,7 @@ export function buildEntryDispatchRouters(
     return { autoImports: [], routerCode: '' };
   }
 
-  const hasAnySiblingBranch = Array.from(routedEvents.values()).some((list) =>
-    list.some((br) => !br.isLocal),
-  );
-  const autoImports: string[] =
-    language === 'python' && hasAnySiblingBranch ? ['import sys'] : [];
-
+  const autoImportSet = new Set<string>();
   const routerBlocks: string[] = [];
   for (const [eventName, rawBranches] of routedEvents.entries()) {
     // Sort deterministically by numeric dupKey when possible (T0, T1, T2...)
@@ -589,69 +571,17 @@ export function buildEntryDispatchRouters(
       if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
       return a.dupKey.localeCompare(b.dupKey);
     });
-    const paramsStr = (sorted[0].params ?? []).join(', ');
-
-    if (language === 'lua') {
-      const lines: string[] = [];
-      sorted.forEach((br, idx) => {
-        const kw = idx === 0 ? 'if' : 'elseif';
-        const callArgs = br.passParams ? paramsStr : '';
-        const srcTag = br.isLocal
-          ? ''
-          : br.commentLua
-            ? ` (${br.scriptName}.lua)`
-            : ` -- ${br.scriptName}.lua`;
-        const callLine = br.isLocal
-          ? `    ${br.fnName}(${callArgs})`
-          : `    if ${br.fnName} then ${br.fnName}(${callArgs}) end`;
-        lines.push(`  ${kw} ${br.conditionLua} then${br.commentLua}${srcTag}\n${callLine}`);
-      });
-      routerBlocks.push(
-        `function ${eventName}(${paramsStr})\n${lines.join('\n')}\n  end\nend\n`,
-      );
-    } else {
-      const defKw = debugPass ? 'async def' : 'def';
-      const lines: string[] = [];
-      sorted.forEach((br, idx) => {
-        const kw = idx === 0 ? 'if' : 'elif';
-        const callArgs = br.passParams ? paramsStr : '';
-        const srcTag = br.isLocal
-          ? ''
-          : br.commentPython
-            ? ` (${br.scriptName}.py)`
-            : `  # ${br.scriptName}.py`;
-        if (br.isLocal) {
-          const callExpr = debugPass
-            ? `await ${br.fnName}(${callArgs})`
-            : `${br.fnName}(${callArgs})`;
-          lines.push(`  ${kw} ${br.conditionPython}:${br.commentPython}${srcTag}\n    ${callExpr}`);
-        } else {
-          const modKey = JSON.stringify(sanitizePyIdent(br.scriptName));
-          if (debugPass) {
-            lines.push(
-              `  ${kw} ${br.conditionPython}:${br.commentPython}${srcTag}\n` +
-                `    _m = sys.modules.get(${modKey})\n` +
-                `    if _m and hasattr(_m, ${JSON.stringify(br.fnName)}):\n` +
-                `      _ret = getattr(_m, ${JSON.stringify(br.fnName)})(${callArgs})\n` +
-                `      if hasattr(_ret, 'send'):\n` +
-                `        await _ret`,
-            );
-          } else {
-            lines.push(
-              `  ${kw} ${br.conditionPython}:${br.commentPython}${srcTag}\n` +
-                `    _m = sys.modules.get(${modKey})\n` +
-                `    if _m and hasattr(_m, ${JSON.stringify(br.fnName)}):\n` +
-                `      _m.${br.fnName}(${callArgs})`,
-            );
-          }
-        }
-      });
-      routerBlocks.push(`${defKw} ${eventName}(${paramsStr}):\n${lines.join('\n')}\n`);
+    const formatted = adapter.formatDispatchRouter(eventName, sorted, debugPass);
+    for (const imp of formatted.autoImports) {
+      autoImportSet.add(imp);
+    }
+    if (formatted.code) {
+      routerBlocks.push(formatted.code);
     }
   }
 
   return {
-    autoImports,
+    autoImports: Array.from(autoImportSet),
     routerCode: routerBlocks.join('\n'),
   };
 }

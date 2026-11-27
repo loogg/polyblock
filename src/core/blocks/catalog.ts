@@ -7,7 +7,7 @@ import {
   getActiveHandleScripts,
   getActiveHandleSharedFunctions,
   getActiveHandleSharedVariables,
-} from './timerConfigBridge';
+} from './workspaceContextBridge';
 
 export interface ToolboxBlockSpec {
   kind: 'block';

@@ -5,12 +5,14 @@ import { buildHandleSharedModule } from '../backends/sharedModule';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
 import {
+  getActiveChannelPoolConfig,
+  getActiveHandleSharedVariables,
   setActiveChannelPoolConfig,
   setActiveHandleScripts,
   setActiveHandleSharedFunctions,
   setActiveHandleSharedVariables,
   setActiveProjectCapabilities,
-} from '../blocks/timerConfigBridge';
+} from '../blocks/workspaceContextBridge';
 import { CAP_RT_TIMERS } from '../capabilities/registry';
 import { extensionRegistry } from '../extensions/registry';
 import {
@@ -372,10 +374,8 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
               fnName: 'on_timer_0',
               dupKey: '0',
               params: ['id'],
-              conditionLua: 'id == 0',
-              conditionPython: 'id == 0',
-              commentLua: '',
-              commentPython: '',
+              condition: { lua: 'id == 0', python: 'id == 0' },
+              comment: { lua: '', python: '' },
               scriptId: 's_main',
               scriptName: 'main',
             },
@@ -395,10 +395,8 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
               fnName: 'on_timer_0',
               dupKey: '0',
               params: ['id'],
-              conditionLua: 'id == 0',
-              conditionPython: 'id == 0',
-              commentLua: '',
-              commentPython: '',
+              condition: { lua: 'id == 0', python: 'id == 0' },
+              comment: { lua: '', python: '' },
               scriptId: 's_timers',
               scriptName: 'timers',
             },
@@ -467,10 +465,8 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
             fnName: 'on_timer_0',
             dupKey: '0',
             params: ['id'],
-            conditionLua: 'id == 0',
-            conditionPython: 'id == 0',
-            commentLua: '',
-            commentPython: '',
+            condition: { lua: 'id == 0', python: 'id == 0' },
+            comment: { lua: '', python: '' },
             scriptId: 's_split_a',
             scriptName: 'timers_a',
           },
@@ -490,10 +486,8 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
             fnName: 'on_timer_1',
             dupKey: '1',
             params: ['id'],
-            conditionLua: 'id == 1',
-            conditionPython: 'id == 1',
-            commentLua: '',
-            commentPython: '',
+            condition: { lua: 'id == 1', python: 'id == 1' },
+            comment: { lua: '', python: '' },
             scriptId: 's_split_b',
             scriptName: 'timers_b',
           },
@@ -670,10 +664,8 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
               fnName: 'on_timer_0',
               dupKey: '0',
               params: ['id'],
-              conditionLua: 'id == 0',
-              conditionPython: 'id == 0',
-              commentLua: '',
-              commentPython: '',
+              condition: { lua: 'id == 0', python: 'id == 0' },
+              comment: { lua: '', python: '' },
               scriptId: 's_timers_hat',
               scriptName: 'timers',
             },
@@ -1320,5 +1312,97 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     const hoistPy = backendRegistry.get('python').generate(hoistWs);
     expect(hoistPy.code).toContain('async def on_start():\n  msg = None\n  temp = 42');
     hoistWs.dispose();
+  });
+
+  it('keeps explicit CompileContext passes 100% pure and restores live workspaceContextBridge state unconditionally', () => {
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, {
+      count: 8,
+      aliases: { '0': '主画布心跳' },
+    });
+    setActiveHandleSharedVariables(['canvas_shared']);
+
+    const ws = loadWs({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'ctx_s',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'variables_set',
+                  id: 'ctx_set',
+                  fields: { VAR: { id: 'v_iso' } },
+                  inputs: {
+                    VALUE: {
+                      block: { type: 'math_number', id: 'ctx_n', fields: { NUM: 7 } },
+                    },
+                  },
+                  next: {
+                    block: {
+                      type: 'poly_start_timer',
+                      id: 'ctx_t0',
+                      fields: { TIMER_ID: '0' },
+                      inputs: {
+                        PERIOD_MS: {
+                          block: {
+                            type: 'math_number',
+                            id: 'ctx_ms',
+                            fields: { NUM: 200 },
+                          },
+                        },
+                        REPEAT: {
+                          block: {
+                            type: 'math_number',
+                            id: 'ctx_rep',
+                            fields: { NUM: 0 },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [{ name: 'isolated_flag', id: 'v_iso' }],
+    });
+
+    const isolatedCtx = {
+      channelPoolConfigs: {
+        [CAP_RT_TIMERS]: { count: 4, aliases: { '0': '隔离通道' } },
+      },
+      sharedVariables: ['isolated_flag'],
+      handleScripts: [
+        {
+          id: 'iso_main',
+          name: 'main',
+          isEntry: true,
+          declaredEvents: ['on_start'],
+          requiredScripts: [],
+        },
+      ],
+      currentScriptId: 'iso_main',
+    };
+
+    const luaRes = backendRegistry.get('lua').generate(ws, isolatedCtx);
+    expect(luaRes.code).toContain('shared.isolated_flag = 7');
+    expect(luaRes.code).toContain('T0: 隔离通道');
+
+    const pyRes = backendRegistry.get('python').generate(ws, isolatedCtx);
+    expect(pyRes.code).toContain('shared.isolated_flag = 7');
+    expect(pyRes.code).toContain('T0: 隔离通道');
+
+    // Previous live bridge state MUST remain completely intact!
+    expect(getActiveChannelPoolConfig(CAP_RT_TIMERS).count).toBe(8);
+    expect(getActiveChannelPoolConfig(CAP_RT_TIMERS).aliases['0']).toBe('主画布心跳');
+    expect(getActiveHandleSharedVariables()).toEqual(['canvas_shared']);
+
+    ws.dispose();
+    setActiveHandleSharedVariables(null);
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
   });
 });

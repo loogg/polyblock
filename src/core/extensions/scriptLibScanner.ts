@@ -341,10 +341,10 @@ export function buildExtensionPackFromScriptLibs(
   for (const f of opts.files) {
     const existing = libMap.get(f.moduleName) ?? {
       moduleName: f.moduleName,
+      sources: {},
       role: f.scanForBlocks ? 'entry' : 'helper',
     };
-    if (f.language === 'lua') existing.luaSource = f.source;
-    if (f.language === 'python') existing.pythonSource = f.source;
+    existing.sources[f.language] = f.source;
     if (f.scanForBlocks) existing.role = 'entry';
     libMap.set(f.moduleName, existing);
   }
@@ -352,8 +352,8 @@ export function buildExtensionPackFromScriptLibs(
 
   // Determine which modules & languages are actually provided by uploaded files
   const usedModuleNames = Array.from(new Set(selectedFns.map((f) => f.moduleName)));
-  const luaModules = usedModuleNames.filter((mn) => Boolean(libMap.get(mn)?.luaSource));
-  const pyModules = usedModuleNames.filter((mn) => Boolean(libMap.get(mn)?.pythonSource));
+  const luaModules = usedModuleNames.filter((mn) => Boolean(libMap.get(mn)?.sources.lua));
+  const pyModules = usedModuleNames.filter((mn) => Boolean(libMap.get(mn)?.sources.python));
   const luaImports = luaModules.map(
     (mn) => `local ${mn.replace(/[^A-Za-z0-9_]/g, '_')} = require("${mn}")`,
   );
@@ -381,8 +381,12 @@ export function buildExtensionPackFromScriptLibs(
     const callExpr = `${safeModIdent}.${fn.funcName}(${callPlaceholders.join(', ')})`;
     const pyCallExpr = `${fn.moduleName}.${fn.funcName}(${callPlaceholders.join(', ')})`;
     const modEntry = libMap.get(fn.moduleName);
-    const hasLua = Boolean(modEntry?.luaSource);
-    const hasPy = Boolean(modEntry?.pythonSource);
+    const hasLua = Boolean(modEntry?.sources.lua);
+    const hasPy = Boolean(modEntry?.sources.python);
+    const code: ExtensionBlockDef['code'] = {
+      ...(hasLua ? { lua: { template: callExpr } } : {}),
+      ...(hasPy ? { python: { template: pyCallExpr } } : {}),
+    };
 
     return {
       type: blockType,
@@ -394,8 +398,7 @@ export function buildExtensionPackFromScriptLibs(
       ...(Object.keys(shadows).length > 0 ? { shadows } : {}),
       tooltip: `调用库模块 ${fn.moduleName}.${fn.funcName}(${fn.params.join(', ')})`,
       keywords: `${opts.packName} ${fn.moduleName} ${fn.funcName} ${msgBase}`,
-      ...(hasLua ? { lua: { template: callExpr } } : {}),
-      ...(hasPy ? { python: { template: pyCallExpr } } : {}),
+      code,
     };
   });
 
@@ -449,17 +452,17 @@ export function mergeAttachedLibFiles(
 ): ExtensionModuleSource[] {
   const map = new Map<string, ExtensionModuleSource>();
   for (const lib of existingLibs ?? []) {
-    map.set(lib.moduleName, { ...lib });
+    map.set(lib.moduleName, { ...lib, sources: { ...(lib.sources ?? {}) } });
   }
   for (const f of files) {
     const cleanName = f.moduleName.trim();
     if (!cleanName) continue;
     const prev = map.get(cleanName) ?? {
       moduleName: cleanName,
+      sources: {},
       role: f.role ?? 'helper',
     };
-    if (f.language === 'lua') prev.luaSource = f.source;
-    if (f.language === 'python') prev.pythonSource = f.source;
+    prev.sources[f.language] = f.source;
     if (f.role) prev.role = f.role;
     map.set(cleanName, prev);
   }

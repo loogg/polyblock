@@ -5,7 +5,7 @@ import {
   EDIT_TIMER_ALIAS_SENTINEL,
   MAX_CHANNEL_COUNT,
   triggerChannelAliasPrompt,
-} from './timerConfigBridge';
+} from './workspaceContextBridge';
 
 export interface ChannelFieldOptions {
   configKey?: string;
