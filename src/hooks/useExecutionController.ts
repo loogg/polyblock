@@ -446,6 +446,12 @@ export function useExecutionController({
      ======================================================================== */
   const launchSingleHandleExecution = useCallback(
     async (startInStepMode: boolean) => {
+      const runner = runnerManager.findForLanguage(language);
+      if (!runner) {
+        notify('当前语言仅支持代码生成与导出，暂无内置沙箱');
+        return;
+      }
+
       if (activePage !== 'blocks') navigateTo('blocks');
       if (settings.autoOpenConsoleOnRun) setShowConsole(true);
 
@@ -573,7 +579,6 @@ export function useExecutionController({
 
       const exportOnlyBlocks = scanHandleExportOnlyBlocks(handleForRun);
 
-      const runner = runnerManager.getForLanguage(language);
       runnerManager.setActive(runner);
 
       const siblingMocks = buildHandleScriptModules(
@@ -756,6 +761,12 @@ export function useExecutionController({
   );
 
   const launchMultiHandleSimulation = useCallback(async () => {
+    const currentProj = getActiveProject(storeRef.current);
+    if (!runnerManager.hasRunnerForLanguage(currentProj.language)) {
+      notify('当前语言仅支持代码生成与导出，暂无内置沙箱');
+      return;
+    }
+
     if (activePage !== 'blocks') navigateTo('blocks');
     if (settings.autoOpenConsoleOnRun) setShowConsole(true);
 

@@ -25,6 +25,7 @@ import { useEffect, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
 import { LANGUAGE_DIALECTS } from '../core/backends/types';
 import { countProjectScripts } from '../core/projects/store';
+import { runnerManager } from '../core/runners/manager';
 import type { RunnerStatus } from '../core/runners/types';
 import type {
   ExecutionSpeedId,
@@ -114,6 +115,10 @@ export function TopBar({
 
   const backends = backendRegistry.list();
   const activeBackend = backendRegistry.get(activeProject.language);
+  const hasSandboxRunner = runnerManager.hasRunnerForLanguage(
+    activeProject.language,
+  );
+  const noSandboxTooltip = '当前语言仅支持代码生成与导出，暂无内置沙箱';
   const isRunning = runnerStatus === 'running';
   const isPaused = runnerStatus === 'paused';
   const activeFileName = `${activeScriptName}.${activeBackend.extension}`;
@@ -355,7 +360,12 @@ export function TopBar({
         <select
           className="speed-select"
           aria-label="执行速度档位"
-          title="调节沙箱逐块高亮节奏（极速仍会在断点处暂停）"
+          disabled={!hasSandboxRunner}
+          title={
+            hasSandboxRunner
+              ? '调节沙箱逐块高亮节奏（极速仍会在断点处暂停）'
+              : noSandboxTooltip
+          }
           value={executionSpeed}
           onChange={(e) => onSelectSpeed(e.target.value as ExecutionSpeedId)}
         >
@@ -369,8 +379,13 @@ export function TopBar({
             <button
               type="button"
               className="btn-run"
+              disabled={!hasSandboxRunner}
               onClick={onRun}
-              title={`运行当前句柄 [${activeHandleName}] 的 ${activeFileName}`}
+              title={
+                hasSandboxRunner
+                  ? `运行当前句柄 [${activeHandleName}] 的 ${activeFileName}`
+                  : noSandboxTooltip
+              }
             >
               <Play size={12} fill="currentColor" />
               <span>运行</span>
@@ -379,8 +394,13 @@ export function TopBar({
               <button
                 type="button"
                 className="btn-step"
+                disabled={!hasSandboxRunner}
                 onClick={onRunAllHandles}
-                title={`同时启动 ${activeProject.handles.filter((h) => h.autoStart).length} 个自启动隔离句柄（多 Worker 并发模拟）`}
+                title={
+                  hasSandboxRunner
+                    ? `同时启动 ${activeProject.handles.filter((h) => h.autoStart).length} 个自启动隔离句柄（多 Worker 并发模拟）`
+                    : noSandboxTooltip
+                }
               >
                 <Layers size={12} />
                 <span>并发</span>
@@ -389,8 +409,13 @@ export function TopBar({
             <button
               type="button"
               className="btn-outline"
+              disabled={!hasSandboxRunner}
               onClick={onStartStepMode}
-              title={`从第 1 块积木单步调试 ${activeFileName}`}
+              title={
+                hasSandboxRunner
+                  ? `从第 1 块积木单步调试 ${activeFileName}`
+                  : noSandboxTooltip
+              }
             >
               <StepForward size={13} />
               <span>单步</span>

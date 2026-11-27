@@ -35,10 +35,11 @@ export function StatusBar({
   selectedBlockId,
 }: StatusBarProps) {
   const backend = backendRegistry.get(language);
-  const runner = runnerManager.getForLanguage(language);
+  const runner = runnerManager.findForLanguage(language);
 
-  const statusText =
-    runnerStatus === 'paused'
+  const statusText = !runner
+    ? '仅代码生成与导出（无内置沙箱）'
+    : runnerStatus === 'paused'
       ? `已暂停（断点 / 单步）· ${runner.shortLabel}`
       : runnerStatus === 'running'
         ? multiHandleRunning
@@ -54,13 +55,15 @@ export function StatusBar({
         <span>
           <span
             className={`status-dot ${
-              runnerStatus === 'paused'
-                ? 'paused'
-                : runnerStatus === 'running'
-                  ? 'running'
-                  : runnerStatus === 'error'
-                    ? 'error'
-                    : ''
+              !runner
+                ? ''
+                : runnerStatus === 'paused'
+                  ? 'paused'
+                  : runnerStatus === 'running'
+                    ? 'running'
+                    : runnerStatus === 'error'
+                      ? 'error'
+                      : ''
             }`}
           />
           {statusText}
@@ -91,7 +94,7 @@ export function StatusBar({
 
       <div className="status-group">
         {selectedBlockId && <span>选中块: {selectedBlockId.slice(0, 12)}</span>}
-        <span>纯净导出 / 沙箱调试分离</span>
+        <span>{runner ? '纯净导出 / 沙箱调试分离' : '仅代码生成与导出'}</span>
         <span>UTF-8</span>
       </div>
     </footer>

@@ -1,8 +1,8 @@
 import { Download, FileCode2, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import {
-  LANGUAGE_DIALECTS,
-  SUPPORTED_LANGUAGE_IDS,
+  formatSupportedExtensionsLabel,
+  getSupportedScriptAcceptAttr,
 } from '../../core/backends/types';
 import {
   CORE_TOOLBOX_ORDERS,
@@ -63,12 +63,8 @@ export function CapabilitiesTab({
   const customGlobalPacks = allExtensionPacks.filter((p) => !p.builtin);
   const globalPackIds = new Set(allExtensionPacks.map((p) => p.id));
 
-  const supportedExtList = SUPPORTED_LANGUAGE_IDS.map(
-    (id) => `.${LANGUAGE_DIALECTS[id].extension}`,
-  );
-  const supportedExtAccept = supportedExtList.join(',');
-  const supportedExtSlashLabel = supportedExtList.join(' / ');
-  const supportedExtCompactLabel = supportedExtList.join('/');
+  const supportedExtAccept = getSupportedScriptAcceptAttr();
+  const supportedExtLabel = formatSupportedExtensionsLabel();
 
   const downloadPackJson = (
     fileName: string,
@@ -147,7 +143,7 @@ export function CapabilitiesTab({
               onClick={() => onOpenScriptLibImportModal(project.id)}
             >
               <FileCode2 size={11} />
-              <span>导入脚本库 ({supportedExtCompactLabel})</span>
+              <span>导入脚本库 ({supportedExtLabel})</span>
             </button>
             <button
               type="button"
@@ -192,7 +188,7 @@ export function CapabilitiesTab({
           </div>
         </div>
         <p className="settings-hint">
-          支持直接导入 <code>{supportedExtCompactLabel}</code> 脚本库自动扫描生成积木，或导入手写{' '}
+          支持直接导入 <code>{supportedExtLabel}</code> 脚本库自动扫描生成积木，或导入手写{' '}
           <code>.polyext.json</code>。仅保存在本项目内，按「句柄 &gt; 项目 &gt; 全局」作用域无条件覆盖全局包（含预装包）。
         </p>
         {localPacks.length === 0 ? (
@@ -216,7 +212,6 @@ export function CapabilitiesTab({
                 variant="local"
                 enabledCapabilities={project.enabledCapabilities}
                 overridesGlobal={globalPackIds.has(pack.id)}
-                supportedExtSlashLabel={supportedExtSlashLabel}
                 onViewSource={() => onViewPack(pack, '项目内嵌包')}
                 onToggleCapability={(capId) =>
                   onToggleCapabilityForProject(project.id, capId)
@@ -252,7 +247,6 @@ export function CapabilitiesTab({
               variant="builtin"
               enabledCapabilities={project.enabledCapabilities}
               overriddenByLocal={localPackIds.has(pack.id)}
-              supportedExtSlashLabel={supportedExtSlashLabel}
               onViewSource={() => onViewPack(pack, '预装全局包')}
               onToggleCapability={(capId) =>
                 onToggleCapabilityForProject(project.id, capId)
@@ -307,7 +301,6 @@ export function CapabilitiesTab({
                 variant="global"
                 enabledCapabilities={project.enabledCapabilities}
                 overriddenByLocal={localPackIds.has(pack.id)}
-                supportedExtSlashLabel={supportedExtSlashLabel}
                 onViewSource={() => onViewPack(pack, '自定义全局包')}
                 onToggleCapability={(capId) =>
                   onToggleCapabilityForProject(project.id, capId)

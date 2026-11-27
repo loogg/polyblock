@@ -613,12 +613,18 @@ select {
   white-space: nowrap;
 }
 
-.btn-run:hover {
+.btn-run:hover:not(:disabled) {
   filter: brightness(1.08);
 }
 
-.btn-run:active {
+.btn-run:active:not(:disabled) {
   transform: scale(0.97);
+}
+
+.btn-run:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .btn-run.running {
@@ -641,12 +647,18 @@ select {
   white-space: nowrap;
 }
 
-.btn-step:hover {
+.btn-step:hover:not(:disabled) {
   background: var(--accent-hover);
 }
 
-.btn-step:active {
+.btn-step:active:not(:disabled) {
   transform: scale(0.97);
+}
+
+.btn-step:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .btn-pause {
@@ -683,8 +695,13 @@ select {
   flex-shrink: 0;
 }
 
-.speed-select:hover {
+.speed-select:hover:not(:disabled) {
   border-color: var(--border-strong);
+}
+
+.speed-select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .btn-outline {
@@ -702,8 +719,13 @@ select {
   white-space: nowrap;
 }
 
-.btn-outline:hover {
+.btn-outline:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+
+.btn-outline:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .btn-ghost {

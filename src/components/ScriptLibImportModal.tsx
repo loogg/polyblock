@@ -9,8 +9,9 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  formatSupportedExtensionsLabel,
+  getSupportedScriptAcceptAttr,
   LANGUAGE_DIALECTS,
-  SUPPORTED_LANGUAGE_IDS,
 } from '../core/backends/types';
 import {
   buildExtensionPackFromScriptLibs,
@@ -48,11 +49,8 @@ export function ScriptLibImportModal({
   const [color, setColor] = useState('#10b981');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const supportedExtList = SUPPORTED_LANGUAGE_IDS.map(
-    (id) => `.${LANGUAGE_DIALECTS[id].extension}`,
-  );
-  const supportedExtAccept = supportedExtList.join(',');
-  const supportedExtSlashLabel = supportedExtList.join(' / ');
+  const supportedExtAccept = getSupportedScriptAcceptAttr();
+  const supportedExtSlashLabel = formatSupportedExtensionsLabel();
 
   useModalFocusTrap(modalRef, true);
 

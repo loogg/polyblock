@@ -1,9 +1,6 @@
 import { BookOpen, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import {
-  LANGUAGE_DIALECTS,
-  SUPPORTED_LANGUAGE_IDS,
-} from '../core/backends/types';
+import { formatSupportedExtensionsLabel } from '../core/backends/types';
 import { CORE_TOOLBOX_ORDERS } from '../core/blocks/catalog';
 import { useModalFocusTrap } from '../hooks/useModalFocusTrap';
 
@@ -16,9 +13,7 @@ type SpecTab = 'pack' | 'sections' | 'blocks' | 'sim';
 export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
   const [tab, setTab] = useState<SpecTab>('pack');
   const modalRef = useRef<HTMLDivElement | null>(null);
-  const supportedExtCompactLabel = SUPPORTED_LANGUAGE_IDS.map(
-    (id) => `.${LANGUAGE_DIALECTS[id].extension}`,
-  ).join('/');
+  const supportedExtLabel = formatSupportedExtensionsLabel();
 
   useModalFocusTrap(modalRef, true);
 
@@ -149,7 +144,7 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                     <td><code>libs</code></td>
                     <td>可选</td>
                     <td>
-                      <strong>真实纯脚本库源码数组</strong>（支持入口库与辅助依赖同包打包，可选 <code>role: "entry" | "helper"</code>）：既在浏览器沙箱直接运行真实现，也在打包导出真机 <code>.zip</code> 时随行输出。建议直接用「导入脚本库 ({supportedExtCompactLabel})」或卡片回形针按钮自动写入，无需手写 JSON 转义。
+                      <strong>真实纯脚本库源码数组</strong>（支持入口库与辅助依赖同包打包，可选 <code>role: "entry" | "helper"</code>）：既在浏览器沙箱直接运行真实现，也在打包导出真机 <code>.zip</code> 时随行输出。建议直接用「导入脚本库 ({supportedExtLabel})」或卡片回形针按钮自动写入，无需手写 JSON 转义。
                     </td>
                   </tr>
                   <tr>

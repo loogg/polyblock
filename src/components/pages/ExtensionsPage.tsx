@@ -15,8 +15,8 @@ import {
 import { useRef, useState, type CSSProperties } from 'react';
 import { backendRegistry } from '../../core/backends/registry';
 import {
-  LANGUAGE_DIALECTS,
-  SUPPORTED_LANGUAGE_IDS,
+  formatSupportedExtensionsLabel,
+  getSupportedScriptAcceptAttr,
 } from '../../core/backends/types';
 import {
   CORE_TOOLBOX_ORDERS,
@@ -112,12 +112,8 @@ export function ExtensionsPage({
   const builtinPacks = allPacks.filter((p) => Boolean(p.builtin));
   const customPacks = allPacks.filter((p) => !p.builtin);
   const backends = backendRegistry.list();
-  const supportedExtList = SUPPORTED_LANGUAGE_IDS.map(
-    (id) => `.${LANGUAGE_DIALECTS[id].extension}`,
-  );
-  const supportedExtAccept = supportedExtList.join(',');
-  const supportedExtCompactLabel = supportedExtList.join('/');
-  const supportedExtSlashLabel = supportedExtList.join(' / ');
+  const supportedExtAccept = getSupportedScriptAcceptAttr();
+  const supportedExtLabel = formatSupportedExtensionsLabel();
 
   const handleImportExtFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -333,7 +329,7 @@ export function ExtensionsPage({
                   type="button"
                   className="btn-ghost"
                   style={{ padding: '4px 6px' }}
-                  title={`附加或替换此包的真实库源码 (${supportedExtSlashLabel} -> libs[])`}
+                  title={`附加或替换此包的真实库源码 (${supportedExtLabel} -> libs[])`}
                   aria-label={`为 ${pack.name} 附加库源码`}
                   onClick={() => {
                     setAttachTargetPackId(pack.id);
@@ -405,7 +401,7 @@ export function ExtensionsPage({
               onClick={onOpenScriptLibImportModal}
             >
               <FileCode2 size={14} />
-              <span>导入脚本库 ({supportedExtCompactLabel})</span>
+              <span>导入脚本库 ({supportedExtLabel})</span>
             </button>
             <button
               type="button"

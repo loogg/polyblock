@@ -557,7 +557,7 @@ export function App() {
                   breakpoints={breakpoints}
                   variables={execution.liveVariables}
                   errorLine={execution.errorLine}
-                  enabledCapabilities={activeProject.enabledCapabilities}
+                  runtimeMonitorSummary={extActions.runtimeMonitorSummary}
                   channelPools={extActions.activeChannelPools}
                   simPacks={extActions.activeSimPacks}
                   simState={execution.simState}

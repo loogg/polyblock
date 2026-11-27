@@ -4,12 +4,6 @@ import {
   PLANNED_RUNNER_SLOTS,
   runnerManager,
 } from '../../core/runners/manager';
-import type { ScriptLanguageId } from '../../types/project';
-
-const RUNNER_LANG_GRADIENTS: Partial<Record<ScriptLanguageId, string>> = {
-  lua: 'linear-gradient(135deg, #2563eb, #4f46e5)',
-  python: 'linear-gradient(135deg, #0d9488, #10b981)',
-};
 
 const DEFAULT_RUNNER_GRADIENT = 'linear-gradient(135deg, #475569, #334155)';
 
@@ -42,8 +36,9 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
           {builtinRunners.map((runner) => {
             const primaryLang = runner.supportedLanguages[0];
             const iconBackground =
-              (primaryLang ? RUNNER_LANG_GRADIENTS[primaryLang] : undefined) ??
-              DEFAULT_RUNNER_GRADIENT;
+              (primaryLang
+                ? LANGUAGE_DIALECTS[primaryLang]?.accentGradient
+                : undefined) ?? DEFAULT_RUNNER_GRADIENT;
             return (
               <div key={runner.id} className="ui-card">
                 <div className="card-top">

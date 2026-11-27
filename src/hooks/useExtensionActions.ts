@@ -175,6 +175,15 @@ export function useExtensionActions({
     [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
   );
 
+  const runtimeMonitorSummary = useMemo(
+    () =>
+      extensionRegistry.getRuntimeMonitorSummary(
+        activeProject.enabledCapabilities,
+        activeProject.localExtensions,
+      ),
+    [activeProject.enabledCapabilities, activeProject.localExtensions, extRevision],
+  );
+
   const syncModuleConflictsAndRegenerate = useCallback(
     (
       proj: ProjectModel,
@@ -555,6 +564,7 @@ export function useExtensionActions({
     allTargetProfiles,
     extraCategories,
     activeSimPacks,
+    runtimeMonitorSummary,
     activeChannelPools,
     activeChannelPoolConfigs,
     activeChannelCounts,

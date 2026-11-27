@@ -27,6 +27,7 @@ import {
   validateTargetProfile,
 } from '../capabilities/registry';
 import {
+  BUILTIN_EXTENSION_PACKS,
   RT_PACK,
   SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
   VIRTUAL_BOARD_PACK,
@@ -1479,6 +1480,161 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     } finally {
       warnSpy.mockRestore();
       extensionRegistry.setActiveProjectLocalPacks([]);
+    }
+  });
+
+  it('keeps built-in packs, target profiles, and JSON schemas consistent and enforces zero UI/hook hardcoding', async () => {
+    const fsMod = 'node:fs';
+    const pathMod = 'node:path';
+    const procMod = 'node:process';
+    const fs = (await import(/* @vite-ignore */ fsMod)) as {
+      readFileSync(p: string, enc: string): string;
+      readdirSync(p: string, opts: { withFileTypes: true }): Array<{
+        name: string;
+        isDirectory(): boolean;
+        isFile(): boolean;
+      }>;
+    };
+    const path = (await import(/* @vite-ignore */ pathMod)) as {
+      join(...segments: string[]): string;
+    };
+    const proc = (await import(/* @vite-ignore */ procMod)) as {
+      default?: { cwd(): string };
+      cwd?: () => string;
+    };
+
+    const repoRoot = proc.cwd ? proc.cwd() : proc.default!.cwd();
+    const polyextSchema = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, 'schemas/polyext.schema.json'), 'utf8'),
+    ) as {
+      properties: Record<string, unknown>;
+      definitions: {
+        ExtensionPackImports: { additionalProperties: unknown };
+        ExtensionSectionSpec: {
+          properties: {
+            categoryTarget: { enum: string[] };
+            runtimeMonitor: { enum: string[] };
+          } & Record<string, unknown>;
+        };
+        ExtensionBlockDef: {
+          properties: Record<string, unknown>;
+        };
+        SimWidgetSpec: {
+          properties: { kind: { enum: string[] } } & Record<string, unknown>;
+        };
+      };
+    };
+    const polyboardSchema = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, 'schemas/polyboard.schema.json'), 'utf8'),
+    ) as {
+      properties: {
+        defaultLanguage: { pattern?: string; enum?: unknown };
+      } & Record<string, unknown>;
+    };
+
+    // 1. Verify schema stays open to future languages & covers all Layer 0 categories
+    expect(polyextSchema.definitions.ExtensionPackImports.additionalProperties).not.toBe(
+      false,
+    );
+    expect(polyboardSchema.properties.defaultLanguage.enum).toBeUndefined();
+    expect(typeof polyboardSchema.properties.defaultLanguage.pattern).toBe('string');
+
+    const schemaCategories =
+      polyextSchema.definitions.ExtensionSectionSpec.properties.categoryTarget.enum;
+    for (const coreCat of CORE_TOOLBOX_ORDERS) {
+      expect(schemaCategories).toContain(coreCat.id);
+    }
+
+    const allowedPackKeys = new Set(Object.keys(polyextSchema.properties));
+    const allowedSectionKeys = new Set(
+      Object.keys(polyextSchema.definitions.ExtensionSectionSpec.properties),
+    );
+    const allowedBlockKeys = new Set(
+      Object.keys(polyextSchema.definitions.ExtensionBlockDef.properties),
+    );
+    const allowedRuntimeMonitors = new Set(
+      polyextSchema.definitions.ExtensionSectionSpec.properties.runtimeMonitor.enum,
+    );
+    const allowedWidgetKinds = new Set(
+      polyextSchema.definitions.SimWidgetSpec.properties.kind.enum,
+    );
+
+    // 2. Verify all built-in packs + sample template conform to validator AND schema keys
+    for (const pack of [...BUILTIN_EXTENSION_PACKS, SAMPLE_CUSTOM_EXTENSION_TEMPLATE]) {
+      const validated = validateExtensionPack(pack);
+      for (const key of Object.keys(pack)) {
+        expect(allowedPackKeys.has(key), `unexpected pack key "${key}" in ${pack.id}`).toBe(
+          true,
+        );
+      }
+      for (const sec of pack.sections) {
+        for (const key of Object.keys(sec)) {
+          expect(
+            allowedSectionKeys.has(key),
+            `unexpected section key "${key}" in ${pack.id}.${sec.id}`,
+          ).toBe(true);
+        }
+        if (sec.runtimeMonitor) {
+          expect(allowedRuntimeMonitors.has(sec.runtimeMonitor)).toBe(true);
+        }
+        for (const blk of sec.blocks) {
+          for (const key of Object.keys(blk)) {
+            expect(
+              allowedBlockKeys.has(key),
+              `unexpected block key "${key}" in ${pack.id}.${sec.id}.${blk.type}`,
+            ).toBe(true);
+          }
+        }
+      }
+      for (const widget of validated.simWidgets ?? []) {
+        expect(allowedWidgetKinds.has(widget.kind)).toBe(true);
+      }
+    }
+
+    // 3. Verify all built-in target profiles + sample board template conform to schema keys
+    const allowedBoardKeys = new Set(Object.keys(polyboardSchema.properties));
+    for (const prof of [
+      ...targetProfileRegistry.listAll(),
+      SAMPLE_CUSTOM_BOARD_TEMPLATE,
+    ]) {
+      expect(() => validateTargetProfile(prof)).not.toThrow();
+      for (const key of Object.keys(prof)) {
+        expect(
+          allowedBoardKeys.has(key),
+          `unexpected board profile key "${key}" in ${prof.id}`,
+        ).toBe(true);
+      }
+    }
+
+    // 4. Architecture guardrail: zero CAP_RT_*, === 'lua'|'python', or getForLanguage in UI/hooks
+    const collectSourceFiles = (dir: string): string[] => {
+      const files: string[] = [];
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          files.push(...collectSourceFiles(full));
+        } else if (entry.isFile() && /\.(ts|tsx)$/.test(entry.name)) {
+          files.push(full);
+        }
+      }
+      return files;
+    };
+
+    const uiFiles = [
+      path.join(repoRoot, 'src/App.tsx'),
+      ...collectSourceFiles(path.join(repoRoot, 'src/components')),
+      ...collectSourceFiles(path.join(repoRoot, 'src/hooks')),
+    ];
+    for (const filePath of uiFiles) {
+      const src = fs.readFileSync(filePath, 'utf8');
+      expect(src, `${filePath} must not hardcode CAP_RT_*`).not.toMatch(/\bCAP_RT_/);
+      expect(src, `${filePath} must not branch on literal 'lua'/'python'`).not.toMatch(
+        /(===|!==)\s*['"](lua|python)['"]/,
+      );
+      expect(
+        src,
+        `${filePath} must use runnerManager.findForLanguage/hasRunnerForLanguage`,
+      ).not.toContain('runnerManager.getForLanguage');
     }
   });
 });

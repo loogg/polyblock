@@ -15,11 +15,6 @@ import { backendRegistry } from '../core/backends/registry';
 import type { GeneratedCodeResult } from '../core/backends/types';
 import { formatChannelLabel } from '../core/blocks/workspaceContextBridge';
 import {
-  CAP_RT_LIFECYCLE,
-  CAP_RT_TIMERS,
-  hasCapability,
-} from '../core/capabilities/registry';
-import {
   readPackWidgetValue,
   resolveTricolorState,
 } from '../core/extensions/simState';
@@ -51,7 +46,11 @@ interface CodeInspectorProps {
   breakpoints: string[];
   variables: Record<string, string>;
   errorLine: number | null;
-  enabledCapabilities: string[];
+  runtimeMonitorSummary: {
+    hasSchedulerMonitor: boolean;
+    hasTimerMonitor: boolean;
+    timerPoolConfigKey: string | null;
+  };
   channelPools: ResolvedHandleChannelPoolSpec[];
   simPacks: PolyExtensionPack[];
   simState: SimStateMap;
@@ -87,7 +86,7 @@ export function CodeInspector({
   breakpoints,
   variables,
   errorLine,
-  enabledCapabilities,
+  runtimeMonitorSummary,
   channelPools,
   simPacks,
   simState,
@@ -121,11 +120,12 @@ export function CodeInspector({
   );
 
   const hasSimPacks = simPacks.length > 0;
-  const hasRtLifecycle = hasCapability(enabledCapabilities, CAP_RT_LIFECYCLE);
-  const hasRtTimers = hasCapability(enabledCapabilities, CAP_RT_TIMERS);
-  const showRtMonitor = hasRtLifecycle || hasRtTimers || anyEventLoopRunning;
+  const { hasSchedulerMonitor, hasTimerMonitor, timerPoolConfigKey } =
+    runtimeMonitorSummary;
+  const showRtMonitor =
+    hasSchedulerMonitor || hasTimerMonitor || anyEventLoopRunning;
 
-  const showSimTab = hasSimPacks || hasRtLifecycle || hasRtTimers || anyEventLoopRunning;
+  const showSimTab = hasSimPacks || showRtMonitor;
 
   const allSimWidgets = useMemo<Array<{ pack: PolyExtensionPack; widget: SimWidgetSpec }>>(
     () =>
@@ -549,11 +549,13 @@ export function CodeInspector({
                     </span>
                   );
                 })}
-                {!hasSimPacks && (hasRtLifecycle || hasRtTimers) && !anyEventLoopRunning && (
-                  <span style={{ color: 'var(--text-secondary)' }}>
-                    {hasRtTimers ? 'RT 周期与多路定时器' : 'RT 周期调度'}
-                  </span>
-                )}
+                {!hasSimPacks &&
+                  (hasSchedulerMonitor || hasTimerMonitor) &&
+                  !anyEventLoopRunning && (
+                    <span style={{ color: 'var(--text-secondary)' }}>
+                      {hasTimerMonitor ? 'RT 周期与多路定时器' : 'RT 周期调度'}
+                    </span>
+                  )}
                 {anyEventLoopRunning && (
                   <span
                     style={{
@@ -591,7 +593,7 @@ export function CodeInspector({
             />
           )}
 
-          {/* Per-Handle Runtime & Timer Monitor Card(s) — ONLY when rt.lifecycle or rt.timers is enabled */}
+          {/* Per-Handle Runtime & Timer Monitor Card(s) — driven declaratively by section.runtimeMonitor metadata */}
           {showRtMonitor &&
             monitoredHandles.map((hdl) => {
               const tele =
@@ -600,16 +602,18 @@ export function CodeInspector({
               const hRunning =
                 (runnerStatus === 'running' || runnerStatus === 'paused') &&
                 Boolean(tele?.eventLoopActive);
-              const timerPoolSpec = channelPools.find(
-                (p) => p.configKey === CAP_RT_TIMERS,
-              );
-              const hdlTimerCfg = getHandleChannelPoolConfig(
-                hdl,
-                CAP_RT_TIMERS,
-                timerPoolSpec?.defaultCount,
-                timerPoolSpec?.min,
-                timerPoolSpec?.max,
-              );
+              const timerPoolSpec = timerPoolConfigKey
+                ? channelPools.find((p) => p.configKey === timerPoolConfigKey)
+                : undefined;
+              const hdlTimerCfg = timerPoolConfigKey
+                ? getHandleChannelPoolConfig(
+                    hdl,
+                    timerPoolConfigKey,
+                    timerPoolSpec?.defaultCount,
+                    timerPoolSpec?.min,
+                    timerPoolSpec?.max,
+                  )
+                : null;
 
               return (
                 <div
@@ -639,7 +643,9 @@ export function CodeInspector({
                         }}
                       >
                         {hdl.name}
-                        {hasRtTimers ? ` (0~${hdlTimerCfg.count - 1})` : ''}
+                        {hasTimerMonitor && hdlTimerCfg
+                          ? ` (0~${hdlTimerCfg.count - 1})`
+                          : ''}
                       </span>
                     </span>
                     <div
@@ -683,7 +689,7 @@ export function CodeInspector({
                     </div>
                   )}
 
-                  {(hasRtLifecycle || Boolean(tele?.hasOnRun)) && (
+                  {(hasSchedulerMonitor || Boolean(tele?.hasOnRun)) && (
                     <div className="rt-run-meta">
                       <span>
                         <code>on_run</code>：
@@ -696,7 +702,7 @@ export function CodeInspector({
                     </div>
                   )}
 
-                  {hasRtTimers &&
+                  {hasTimerMonitor &&
                     (tele && tele.timers.length > 0 ? (
                       <div className="rt-timer-list">
                         {tele.timers.map((t) => {
@@ -712,7 +718,11 @@ export function CodeInspector({
                             <div key={t.id} className="rt-timer-row">
                               <div className="rt-timer-head">
                                 <span className="rt-timer-label">
-                                  {formatChannelLabel(t.id, hdlTimerCfg, 'T')}
+                                  {formatChannelLabel(
+                                    t.id,
+                                    hdlTimerCfg ?? { count: 0, aliases: {} },
+                                    timerPoolSpec?.prefix ?? 'T',
+                                  )}
                                 </span>
                                 <span className="rt-timer-meta">
                                   {t.elapsedMs}/{t.periodMs}ms · {repText}

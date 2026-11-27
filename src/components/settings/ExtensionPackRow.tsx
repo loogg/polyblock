@@ -9,6 +9,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { CSSProperties } from 'react';
+import { formatSupportedExtensionsLabel } from '../../core/backends/types';
 import { hasCapability } from '../../core/capabilities/registry';
 import { inspectPackImportSourceMatch } from '../../core/extensions/moduleResolver';
 import {
@@ -29,7 +30,6 @@ interface ExtensionPackRowProps {
   enabledCapabilities: string[];
   overridesGlobal?: boolean;
   overriddenByLocal?: boolean;
-  supportedExtSlashLabel: string;
   onViewSource: () => void;
   onToggleCapability: (capId: string) => void;
   onAttachLibs?: () => void;
@@ -44,7 +44,6 @@ export function ExtensionPackRow({
   enabledCapabilities,
   overridesGlobal = false,
   overriddenByLocal = false,
-  supportedExtSlashLabel,
   onViewSource,
   onToggleCapability,
   onAttachLibs,
@@ -204,7 +203,7 @@ export function ExtensionPackRow({
               type="button"
               className="btn-ghost"
               style={{ padding: '4px 6px' }}
-              title={`附加或替换此包的真实库源码 (${supportedExtSlashLabel} -> libs[])`}
+              title={`附加或替换此包的真实库源码 (${formatSupportedExtensionsLabel()} -> libs[])`}
               aria-label={`为 ${pack.name} 附加库源码`}
               onClick={onAttachLibs}
             >
