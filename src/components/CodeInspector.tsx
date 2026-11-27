@@ -70,7 +70,7 @@ interface CodeInspectorProps {
 
 const KIND_BADGE: Record<string, { text: string; cls: string }> = {
   shared: { text: '共享', cls: 'scope-tag shared' },
-  local: { text: 'local', cls: 'scope-tag local' },
+  local: { text: '局部', cls: 'scope-tag local' },
   param: { text: '形参', cls: 'scope-tag param' },
   'scope-global': { text: '本域', cls: 'scope-tag single' },
 };
@@ -232,9 +232,11 @@ export function CodeInspector({
   return (
     <aside className="inspector-pane" aria-label="实时代码、模拟外设、变量与校验面板">
       <div className={`pane-header ${showSimTab ? 'has-board' : ''}`}>
-        <div className="pane-tabs">
+        <div className="pane-tabs" role="tablist" aria-label="检视面板切换">
           <button
             type="button"
+            role="tab"
+            aria-selected={activeTab === 'code'}
             className={`pane-tab pane-tab-code ${activeTab === 'code' ? 'active' : ''}`}
             onClick={() => setActiveTab('code')}
           >
@@ -255,6 +257,8 @@ export function CodeInspector({
           {showSimTab && (
             <button
               type="button"
+              role="tab"
+              aria-selected={activeTab === 'board'}
               className={`pane-tab ${activeTab === 'board' ? 'active' : ''}`}
               onClick={() => setActiveTab('board')}
               title="虚拟硬件外设与多句柄事件定时器模拟面板"
@@ -278,6 +282,8 @@ export function CodeInspector({
 
           <button
             type="button"
+            role="tab"
+            aria-selected={activeTab === 'vars'}
             className={`pane-tab ${activeTab === 'vars' ? 'active' : ''}`}
             onClick={() => setActiveTab('vars')}
           >
@@ -288,6 +294,8 @@ export function CodeInspector({
 
           <button
             type="button"
+            role="tab"
+            aria-selected={activeTab === 'diagnostics'}
             className={`pane-tab ${activeTab === 'diagnostics' ? 'active' : ''}`}
             onClick={() => setActiveTab('diagnostics')}
           >
@@ -445,7 +453,15 @@ export function CodeInspector({
           {showSimTab && !isPaused && (
             <div
               className="vboard-mini-strip"
+              role="button"
+              tabIndex={0}
               onClick={() => setActiveTab('board')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setActiveTab('board');
+                }
+              }}
               title="点击展开虚拟外设与定时器调度面板"
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -544,7 +560,7 @@ export function CodeInspector({
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 4,
-                      color: 'var(--success)',
+                      color: 'var(--success-text)',
                       fontWeight: 600,
                     }}
                   >
@@ -555,7 +571,7 @@ export function CodeInspector({
                   </span>
                 )}
               </div>
-              <span style={{ color: 'var(--accent)', fontWeight: 600, flexShrink: 0 }}>
+              <span style={{ color: 'var(--accent-text)', fontWeight: 600, flexShrink: 0 }}>
                 打开模拟面板 →
               </span>
             </div>
@@ -644,6 +660,7 @@ export function CodeInspector({
                         type="button"
                         className="script-tab-icon-btn"
                         title={`配置句柄 ${hdl.name}`}
+                        aria-label={`配置句柄 ${hdl.name}`}
                         onClick={() => onOpenHandleTimerSettings(hdl.id)}
                       >
                         <Settings2 size={12} />
@@ -726,7 +743,7 @@ export function CodeInspector({
         <div className="var-tree" aria-label="作用域树形变量监视器">
           {scopeNodes.length === 0 ? (
             <div className="console-empty" style={{ padding: 24 }}>
-              当前脚本暂无变量或回调作用域；拖入「共享变量」或「局部变量 (local)」积木后将在此按作用域树形展示。
+              当前脚本暂无变量或回调作用域；拖入「共享变量」或「局部变量」积木后将在此按作用域树形展示。
             </div>
           ) : (
             scopeNodes.map((node) => {
@@ -824,7 +841,7 @@ export function CodeInspector({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
-                color: 'var(--success)',
+                color: 'var(--success-text)',
                 fontSize: 12.5,
                 padding: '10px 4px',
               }}

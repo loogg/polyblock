@@ -1,8 +1,17 @@
 import { ArrowLeft, Cpu, Globe, Terminal } from 'lucide-react';
+import { LANGUAGE_DIALECTS } from '../../core/backends/types';
 import {
   PLANNED_RUNNER_SLOTS,
   runnerManager,
 } from '../../core/runners/manager';
+import type { ScriptLanguageId } from '../../types/project';
+
+const RUNNER_LANG_GRADIENTS: Partial<Record<ScriptLanguageId, string>> = {
+  lua: 'linear-gradient(135deg, #2563eb, #4f46e5)',
+  python: 'linear-gradient(135deg, #0d9488, #10b981)',
+};
+
+const DEFAULT_RUNNER_GRADIENT = 'linear-gradient(135deg, #475569, #334155)';
 
 interface DevicesPageProps {
   onReturnToBlocks: () => void;
@@ -19,7 +28,7 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
           <div>
             <h1 className="subpage-title">执行目标与设备下载（可插拔 Runner 管理）</h1>
             <p className="subpage-sub">
-              PolyBlock 采用统一 <code>ScriptRunner</code> 契约：Phase 1 已内置纯前端 WASM 沙箱；后续接入网络设备、本机桥接或串口烧录只需插入新 Runner，画布与日志控制台零改动复用。
+              PolyBlock 采用统一 <code>ScriptRunner</code> 契约：已内置纯前端 WASM 沙箱；后续接入网络设备、本机桥接或串口烧录只需注册新 Runner，画布与日志控制台零改动复用。
             </p>
           </div>
           <button type="button" className="btn-outline" onClick={onReturnToBlocks}>
@@ -28,50 +37,66 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
           </button>
         </div>
 
-        <h2 className="section-heading">当前可用执行器（Phase 1 内置 · 零后端）</h2>
+        <h2 className="section-heading">当前可用执行器（内置 · 零后端）</h2>
         <div className="card-grid">
-          {builtinRunners.map((runner) => (
-            <div key={runner.id} className="ui-card">
-              <div className="card-top">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div
-                    className="card-icon"
-                    style={{
-                      background: runner.supportedLanguages.includes('lua')
-                        ? 'linear-gradient(135deg, #2563eb, #4f46e5)'
-                        : 'linear-gradient(135deg, #0d9488, #10b981)',
-                    }}
-                  >
-                    WASM
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 700 }}>{runner.name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      Web Worker 沙箱 · 兼容 GitHub Pages
+          {builtinRunners.map((runner) => {
+            const primaryLang = runner.supportedLanguages[0];
+            const iconBackground =
+              (primaryLang ? RUNNER_LANG_GRADIENTS[primaryLang] : undefined) ??
+              DEFAULT_RUNNER_GRADIENT;
+            return (
+              <div key={runner.id} className="ui-card">
+                <div className="card-top">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div
+                      className="card-icon"
+                      style={{ background: iconBackground }}
+                    >
+                      WASM
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 700 }}>{runner.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        Web Worker 沙箱 · 兼容 GitHub Pages
+                      </div>
                     </div>
                   </div>
+                  <span className="status-pill ok">已就绪</span>
                 </div>
-                <span className="status-pill ok">已就绪</span>
+                <p className="card-desc">{runner.description}</p>
+                <div className="card-footer">
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      fontSize: 11.5,
+                      color: 'var(--text-muted)',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <span>支持：</span>
+                    {runner.supportedLanguages.map((lang) => (
+                      <span key={lang} className="count-badge">
+                        {LANGUAGE_DIALECTS[lang]?.shortLabel ?? lang}
+                      </span>
+                    ))}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    onClick={onReturnToBlocks}
+                  >
+                    <Terminal size={13} />
+                    <span>前往试跑</span>
+                  </button>
+                </div>
               </div>
-              <p className="card-desc">{runner.description}</p>
-              <div className="card-footer">
-                <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                  支持：{runner.supportedLanguages.join(' / ').toUpperCase()}
-                </span>
-                <button
-                  type="button"
-                  className="btn-outline"
-                  onClick={onReturnToBlocks}
-                >
-                  <Terminal size={13} />
-                  <span>前往试跑</span>
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        <h2 className="section-heading">预留扩展槽位（Phase 2 按需接入）</h2>
+        <h2 className="section-heading">预留扩展槽位（按需接入）</h2>
         <div className="card-grid">
           {PLANNED_RUNNER_SLOTS.map((slot) => (
             <div key={slot.id} className="ui-card">
@@ -109,7 +134,7 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
               </p>
               <div className="card-footer">
                 <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                  本期不引入设备通信代码
+                  暂未接入设备通信协议
                 </span>
                 <button
                   type="button"

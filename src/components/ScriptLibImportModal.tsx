@@ -8,7 +8,10 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LANGUAGE_DIALECTS } from '../core/backends/types';
+import {
+  LANGUAGE_DIALECTS,
+  SUPPORTED_LANGUAGE_IDS,
+} from '../core/backends/types';
 import {
   buildExtensionPackFromScriptLibs,
   scanScriptLibraryFile,
@@ -16,6 +19,7 @@ import {
   type UploadedScriptLibFile,
 } from '../core/extensions/scriptLibScanner';
 import type { PolyExtensionPack } from '../core/extensions/types';
+import { useModalFocusTrap } from '../hooks/useModalFocusTrap';
 import type { ScriptLanguageId } from '../types/project';
 
 interface ScriptLibImportModalProps {
@@ -34,6 +38,7 @@ export function ScriptLibImportModal({
   onClose,
 }: ScriptLibImportModalProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const modalRef = useRef<HTMLDivElement | null>(null);
   const [files, setFiles] = useState<UploadedScriptLibFile[]>([]);
   const [functions, setFunctions] = useState<ScannedLibFunction[]>([]);
   const [packId, setPackId] = useState('');
@@ -42,6 +47,14 @@ export function ScriptLibImportModal({
   const [toolboxOrder, setToolboxOrder] = useState<number>(120);
   const [color, setColor] = useState('#10b981');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const supportedExtList = SUPPORTED_LANGUAGE_IDS.map(
+    (id) => `.${LANGUAGE_DIALECTS[id].extension}`,
+  );
+  const supportedExtAccept = supportedExtList.join(',');
+  const supportedExtSlashLabel = supportedExtList.join(' / ');
+
+  useModalFocusTrap(modalRef, true);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -176,7 +189,7 @@ export function ScriptLibImportModal({
     try {
       setErrorMsg(null);
       if (files.length === 0) {
-        setErrorMsg('请先选择至少 1 个 .lua 或 .py 源码文件');
+        setErrorMsg(`请先选择至少 1 个脚本源码文件（${supportedExtSlashLabel}）`);
         return;
       }
       if (!packId.trim() || !/^[a-zA-Z0-9_-]{2,48}$/.test(packId.trim())) {
@@ -209,11 +222,13 @@ export function ScriptLibImportModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal-shell script-lib-modal">
+      <div className="modal-shell script-lib-modal" ref={modalRef} tabIndex={-1}>
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <FileCode2 size={16} style={{ color: 'var(--accent)' }} />
-            <span className="modal-title">导入原生脚本库 (.lua / .py) 自动生成扩展包</span>
+            <span className="modal-title">
+              导入原生脚本库 ({supportedExtSlashLabel}) 自动生成扩展包
+            </span>
             <span className="count-badge">
               {targetScope === 'project'
                 ? `项目内嵌 · ${projectName}`
@@ -238,7 +253,7 @@ export function ScriptLibImportModal({
                 1. 选择 1 个或多个脚本源码文件（支持入口库 + 辅助依赖表同包打包）
               </div>
               <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>
-                自动跳过 Lua <code>local function</code> 与 Python <code>_私有函数</code>；源码将写入扩展包 <code>libs[]</code>，沙箱仿真与真机 <code>.zip</code> 导出共用。
+                自动跳过各语言的私有函数定义；源码将写入扩展包 <code>libs[]</code>，沙箱仿真与真机 <code>.zip</code> 导出共用。
               </div>
             </div>
             <button
@@ -248,12 +263,16 @@ export function ScriptLibImportModal({
               onClick={() => fileInputRef.current?.click()}
             >
               <Upload size={13} />
-              <span>{files.length > 0 ? '继续添加源码...' : '选择 .lua / .py 文件'}</span>
+              <span>
+                {files.length > 0
+                  ? '继续添加源码...'
+                  : `选择 ${supportedExtSlashLabel} 文件`}
+              </span>
             </button>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".lua,.py"
+              accept={supportedExtAccept}
               multiple
               style={{ display: 'none' }}
               onChange={handleSelectFiles}
@@ -436,7 +455,7 @@ export function ScriptLibImportModal({
 
                 {visibleFunctions.length === 0 ? (
                   <div className="lib-empty-hint">
-                    当前勾选为「入口库」的文件中未扫描到公开导出函数（如 <code>function M.foo(...)</code> 或 Python 顶层 <code>def foo(...)</code>）。可切换上方文件勾选，或先导出 JSON 后手动编排积木。
+                    当前勾选为「入口库」的文件中未扫描到公开导出函数。可切换上方文件勾选，或先导出 JSON 后手动编排积木。
                   </div>
                 ) : (
                   <div className="lib-fn-table-wrap">

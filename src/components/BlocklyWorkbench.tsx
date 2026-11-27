@@ -389,6 +389,7 @@ export const BlocklyWorkbench = forwardRef<
 
   const [activeCat, setActiveCat] = useState<string>('print');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [flyoutCollapsed, setFlyoutCollapsed] = useState<boolean>(false);
   const [zoomPct, setZoomPct] = useState<number>(100);
   const [flyoutWidth, setFlyoutWidth] = useState<number>(230);
   const activeCatRef = useRef<string>(activeCat);
@@ -442,6 +443,13 @@ export const BlocklyWorkbench = forwardRef<
     },
     [syncFlyoutWidth],
   );
+
+  useEffect(() => {
+    const ws = workspaceRef.current;
+    if (!ws) return;
+    ws.getFlyout()?.setVisible(!flyoutCollapsed);
+    Blockly.svgResize(ws);
+  }, [flyoutCollapsed]);
 
   // Initialize Blockly workspace once
   useEffect(() => {
@@ -935,14 +943,22 @@ export const BlocklyWorkbench = forwardRef<
             <button
               type="button"
               className={`cat-btn ${
-                !searchQuery && activeCat === cat.id ? 'active' : ''
+                !searchQuery && !flyoutCollapsed && activeCat === cat.id
+                  ? 'active'
+                  : ''
               }`}
               style={{ '--cat-color': cat.color } as React.CSSProperties}
+              aria-pressed={!searchQuery && !flyoutCollapsed && activeCat === cat.id}
               onClick={() => {
-                setSearchQuery('');
-                setActiveCat(cat.id);
+                if (!searchQuery && activeCat === cat.id) {
+                  setFlyoutCollapsed((prev) => !prev);
+                } else {
+                  setSearchQuery('');
+                  setActiveCat(cat.id);
+                  setFlyoutCollapsed(false);
+                }
               }}
-              title={`${cat.isExtension ? '扩展分类：' : ''}${cat.label}（分类序 #${cat.order}）`}
+              title={`${cat.isExtension ? '扩展分类：' : ''}${cat.label}（分类序 #${cat.order} · 再次点击可收起抽屉）`}
             >
               <span className="cat-dot" />
               <span>{cat.label}</span>
@@ -961,34 +977,41 @@ export const BlocklyWorkbench = forwardRef<
         </button>
       </nav>
 
-      <div className="canvas-container">
-        <div
-          className={`flyout-search-dock ${flyoutWidth < 185 ? 'compact' : ''}`}
-          style={{
-            width: Math.max(96, Math.min(248, flyoutWidth - 16)),
-          }}
-        >
-          <Search size={flyoutWidth < 185 ? 11 : 13} style={{ flexShrink: 0 }} />
-          <input
-            type="text"
-            aria-label="搜索积木"
-            placeholder={
-              flyoutWidth < 185 ? '搜索积木' : '搜索积木 (打印 / 等待 / 循环)'
-            }
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              className="flyout-search-clear"
-              onClick={() => setSearchQuery('')}
-              aria-label="清除搜索"
-            >
-              <X size={12} />
-            </button>
-          )}
-        </div>
+      <div
+        className={`canvas-container ${flyoutCollapsed ? 'flyout-collapsed' : ''}`}
+      >
+        {!flyoutCollapsed && (
+          <div
+            className={`flyout-search-dock ${flyoutWidth < 185 ? 'compact' : ''}`}
+            style={{
+              width: Math.max(96, Math.min(248, flyoutWidth - 16)),
+            }}
+          >
+            <Search size={flyoutWidth < 185 ? 11 : 13} style={{ flexShrink: 0 }} />
+            <input
+              type="text"
+              aria-label="搜索积木"
+              placeholder={
+                flyoutWidth < 185 ? '搜索积木' : '搜索积木 (打印 / 等待 / 循环)'
+              }
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                if (flyoutCollapsed) setFlyoutCollapsed(false);
+              }}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className="flyout-search-clear"
+                onClick={() => setSearchQuery('')}
+                aria-label="清除搜索"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="blockly-mount" ref={mountRef} />
 

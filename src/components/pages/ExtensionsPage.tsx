@@ -12,8 +12,12 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useRef, useState, type CSSProperties } from 'react';
 import { backendRegistry } from '../../core/backends/registry';
+import {
+  LANGUAGE_DIALECTS,
+  SUPPORTED_LANGUAGE_IDS,
+} from '../../core/backends/types';
 import {
   CORE_TOOLBOX_ORDERS,
   DEFAULT_EXTENSION_TOOLBOX_ORDER,
@@ -108,6 +112,12 @@ export function ExtensionsPage({
   const builtinPacks = allPacks.filter((p) => Boolean(p.builtin));
   const customPacks = allPacks.filter((p) => !p.builtin);
   const backends = backendRegistry.list();
+  const supportedExtList = SUPPORTED_LANGUAGE_IDS.map(
+    (id) => `.${LANGUAGE_DIALECTS[id].extension}`,
+  );
+  const supportedExtAccept = supportedExtList.join(',');
+  const supportedExtCompactLabel = supportedExtList.join('/');
+  const supportedExtSlashLabel = supportedExtList.join(' / ');
 
   const handleImportExtFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -264,11 +274,7 @@ export function ExtensionsPage({
                   className={`pack-section-chip ${secOn ? 'active' : ''}`}
                   style={
                     secOn
-                      ? {
-                          borderColor: `${sec.color}99`,
-                          color: sec.color,
-                          background: `${sec.color}12`,
-                        }
+                      ? ({ '--chip-accent': sec.color } as CSSProperties)
                       : undefined
                   }
                   title={`${sec.label}（${posText}）${sec.description ? `：${sec.description}` : ''} · 点击单独${secOn ? '取消勾选' : '勾选启用'}`}
@@ -310,7 +316,7 @@ export function ExtensionsPage({
               type="button"
               className="btn-ghost"
               style={{ padding: '4px 6px' }}
-              title="只读查看扩展包 .polyext.json 与 Lua/Python 源码"
+              title="只读查看扩展包 .polyext.json 与脚本源码"
               aria-label={`查看 ${pack.name} 源码`}
               onClick={() =>
                 setViewingPack({
@@ -327,7 +333,7 @@ export function ExtensionsPage({
                   type="button"
                   className="btn-ghost"
                   style={{ padding: '4px 6px' }}
-                  title="附加或替换此包的真实库源码 (.lua / .py -> libs[])"
+                  title={`附加或替换此包的真实库源码 (${supportedExtSlashLabel} -> libs[])`}
                   aria-label={`为 ${pack.name} 附加库源码`}
                   onClick={() => {
                     setAttachTargetPackId(pack.id);
@@ -341,6 +347,7 @@ export function ExtensionsPage({
                   className="btn-ghost"
                   style={{ padding: '4px 6px' }}
                   title="导出此全局扩展包 (.polyext.json) 分享给他人"
+                  aria-label={`导出扩展包 ${pack.name}`}
                   onClick={() => {
                     downloadJsonFile(`${pack.id}.polyext.json`, pack);
                     onNotify(`已导出全局扩展包 ${pack.id}.polyext.json`);
@@ -353,6 +360,7 @@ export function ExtensionsPage({
                   className="btn-ghost"
                   style={{ padding: '4px 6px', color: 'var(--danger)' }}
                   title="删除自定义扩展包"
+                  aria-label={`删除自定义扩展包 ${pack.name}`}
                   onClick={() => onRemoveCustomPack(pack.id)}
                 >
                   <Trash2 size={13} />
@@ -397,7 +405,7 @@ export function ExtensionsPage({
               onClick={onOpenScriptLibImportModal}
             >
               <FileCode2 size={14} />
-              <span>导入脚本库 (.lua/.py)</span>
+              <span>导入脚本库 ({supportedExtCompactLabel})</span>
             </button>
             <button
               type="button"
@@ -478,7 +486,7 @@ export function ExtensionsPage({
             <input
               ref={attachLibsInputRef}
               type="file"
-              accept=".lua,.py"
+              accept={supportedExtAccept}
               multiple
               style={{ display: 'none' }}
               onChange={handleAttachLibsInput}
@@ -530,7 +538,7 @@ export function ExtensionsPage({
               }}
             >
               暂未导入自定义全局扩展包。点击右上角{' '}
-              <strong>「导入到全局库 (.polyext.json)」</strong>{' '}
+              <strong>「导入 .polyext.json」</strong>{' '}
               可导入团队复用的硬件驱动、底层 C 接口或纯脚本算法库（点击「扩展包规范」可随时查看全部字段说明）；若仅归属单个项目，请在「项目配置 → 能力与外设」导入为项目内嵌包。
             </div>
           </div>
@@ -598,6 +606,7 @@ export function ExtensionsPage({
                           className="btn-ghost"
                           style={{ padding: '4px 6px' }}
                           title="导出此目标板型规格 (.polyboard.json)"
+                          aria-label={`导出板型规格 ${prof.name}`}
                           onClick={() => {
                             downloadJsonFile(`${prof.id}.polyboard.json`, prof);
                             onNotify(`已导出板型规格 ${prof.id}.polyboard.json`);
@@ -610,6 +619,7 @@ export function ExtensionsPage({
                           className="btn-ghost"
                           style={{ padding: '4px 6px', color: 'var(--danger)' }}
                           title="删除自定义板型"
+                          aria-label={`删除自定义板型 ${prof.name}`}
                           onClick={() => onRemoveCustomProfile(prof.id)}
                         >
                           <Trash2 size={13} />

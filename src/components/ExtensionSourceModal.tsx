@@ -1,8 +1,10 @@
 import { Check, Copy, Download, FileCode2, FileJson, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { LANGUAGE_DIALECTS } from '../core/backends/types';
 import { getAllPackBlocks } from '../core/extensions/registry';
 import type { PolyExtensionPack } from '../core/extensions/types';
+import { triggerFileDownload } from '../hooks/fileDownload';
+import { useModalFocusTrap } from '../hooks/useModalFocusTrap';
 import type { ScriptLanguageId } from '../types/project';
 
 interface ExtensionSourceModalProps {
@@ -19,18 +21,6 @@ interface SourceTabItem {
   kind: 'json' | ScriptLanguageId;
   banner: string;
   content: string;
-}
-
-function downloadTextFile(fileName: string, content: string, mime: string) {
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 const KEYWORD_REGEX_CACHE = new Map<ScriptLanguageId, RegExp>();
@@ -114,6 +104,9 @@ export function ExtensionSourceModal({
   onNotify,
 }: ExtensionSourceModalProps) {
   const [copied, setCopied] = useState(false);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+
+  useModalFocusTrap(modalRef, true);
 
   const tabs = useMemo<SourceTabItem[]>(() => {
     const list: SourceTabItem[] = [];
@@ -204,7 +197,7 @@ export function ExtensionSourceModal({
   };
 
   const handleDownloadJson = () => {
-    downloadTextFile(
+    triggerFileDownload(
       `${pack.id}.polyext.json`,
       `${JSON.stringify(pack, null, 2)}\n`,
       'application/json;charset=utf-8',
@@ -222,7 +215,7 @@ export function ExtensionSourceModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal-shell source-viewer-modal">
+      <div className="modal-shell source-viewer-modal" ref={modalRef} tabIndex={-1}>
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
             <span

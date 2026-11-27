@@ -29,6 +29,7 @@ interface ScriptTabBarProps {
   disabled?: boolean;
   sharedModuleTab?: {
     fileName: string;
+    moduleName?: string;
     itemCount: number;
     varCount: number;
     fnCount: number;
@@ -87,8 +88,18 @@ export function ScriptTabBar({
         setShowHandleMenu(false);
       }
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMenuState(null);
+        setShowHandleMenu(false);
+      }
+    };
     document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKeyDown);
+    };
   }, []);
 
   const openScriptMenu = (scriptId: string, anchorEl: HTMLElement) => {
@@ -262,13 +273,6 @@ export function ScriptTabBar({
             <div
               key={script.id}
               className={`script-tab ${isActive ? 'active' : ''}`}
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => {
-                if (!isEditing && (!disabled || isActive)) {
-                  onSelectScript(script.id);
-                }
-              }}
               onDoubleClick={() => {
                 if (!disabled) startRename(script);
               }}
@@ -280,41 +284,63 @@ export function ScriptTabBar({
                 isEntry ? '（句柄入口脚本）' : '（同句柄辅助模块）'
               } · 双击重命名`}
             >
-              {isEntry && (
-                <Star
-                  size={11}
-                  className="entry-star"
-                  fill="currentColor"
-                  aria-label="入口脚本"
-                />
-              )}
-
               {isEditing ? (
-                <input
-                  type="text"
-                  className="script-tab-input"
-                  value={draftName}
-                  autoFocus
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => setDraftName(e.target.value)}
-                  onBlur={commitRename}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') commitRename();
-                    if (e.key === 'Escape') setEditingId(null);
-                  }}
-                />
+                <>
+                  {isEntry && (
+                    <Star
+                      size={11}
+                      className="entry-star"
+                      fill="currentColor"
+                      aria-label="入口脚本"
+                    />
+                  )}
+                  <input
+                    type="text"
+                    className="script-tab-input"
+                    aria-label={`重命名脚本 ${script.name}`}
+                    value={draftName}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setDraftName(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitRename();
+                      if (e.key === 'Escape') setEditingId(null);
+                    }}
+                  />
+                </>
               ) : (
-                <span className="script-tab-name">
-                  {script.name}
-                  <span className="script-tab-ext">.{extension}</span>
-                </span>
-              )}
-
-              {script.breakpoints.length > 0 && (
-                <span
-                  className="script-tab-bp"
-                  title={`${script.breakpoints.length} 个断点`}
-                />
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  className="script-tab-trigger"
+                  disabled={disabled && !isActive}
+                  onClick={() => {
+                    if (!disabled || isActive) {
+                      onSelectScript(script.id);
+                    }
+                  }}
+                >
+                  {isEntry && (
+                    <Star
+                      size={11}
+                      className="entry-star"
+                      fill="currentColor"
+                      aria-label="入口脚本"
+                    />
+                  )}
+                  <span className="script-tab-name">
+                    {script.name}
+                    <span className="script-tab-ext">.{extension}</span>
+                  </span>
+                  {script.breakpoints.length > 0 && (
+                    <span
+                      className="script-tab-bp"
+                      title={`${script.breakpoints.length} 个断点`}
+                    />
+                  )}
+                </button>
               )}
 
               {!isEditing && (
@@ -366,24 +392,32 @@ export function ScriptTabBar({
         </button>
       </div>
 
-      {/* Pinned Far-Right Read-Only `shared.lua` / `shared.py` Tab (Style A1) */}
-      {sharedModuleTab && onSelectSharedModule && (
-        <button
-          type="button"
-          role="tab"
-          aria-selected={viewingSharedModule}
-          className={`script-tab-pinned ${viewingSharedModule ? 'active' : ''}`}
-          onClick={onSelectSharedModule}
-          title={`自动生成的同句柄跨文件共享模块 ${sharedModuleTab.fileName}（${sharedModuleTab.varCount} 变量 · ${sharedModuleTab.fnCount} 公共函数 · 只读，随目标运行包一起导出）`}
-        >
-          <Lock size={11} className="script-tab-lock" />
-          <span className="script-tab-name">
-            {sharedModuleTab.fileName.replace(/\.(lua|py)$/, '')}
-            <span className="script-tab-ext">.{extension}</span>
-          </span>
-          <span className="count-badge">{sharedModuleTab.itemCount}</span>
-        </button>
-      )}
+      {/* Pinned Far-Right Read-Only `shared.<ext>` Tab (Style A1) */}
+      {sharedModuleTab && onSelectSharedModule && (() => {
+        const extSuffix = `.${extension}`;
+        const sharedBaseName =
+          sharedModuleTab.moduleName ??
+          (sharedModuleTab.fileName.endsWith(extSuffix)
+            ? sharedModuleTab.fileName.slice(0, -extSuffix.length)
+            : sharedModuleTab.fileName.replace(/\.[^.]+$/, ''));
+        return (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewingSharedModule}
+            className={`script-tab-pinned ${viewingSharedModule ? 'active' : ''}`}
+            onClick={onSelectSharedModule}
+            title={`自动生成的同句柄跨文件共享模块 ${sharedModuleTab.fileName}（${sharedModuleTab.varCount} 变量 · ${sharedModuleTab.fnCount} 公共函数 · 只读，随目标运行包一起导出）`}
+          >
+            <Lock size={11} className="script-tab-lock" />
+            <span className="script-tab-name">
+              {sharedBaseName}
+              <span className="script-tab-ext">.{extension}</span>
+            </span>
+            <span className="count-badge">{sharedModuleTab.itemCount}</span>
+          </button>
+        );
+      })()}
 
       {/* Unclipped Tab Context Menu */}
       {menuState && menuScript && (
