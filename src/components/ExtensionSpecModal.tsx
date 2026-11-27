@@ -1,6 +1,11 @@
 import { BookOpen, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  LANGUAGE_DIALECTS,
+  SUPPORTED_LANGUAGE_IDS,
+} from '../core/backends/types';
 import { CORE_TOOLBOX_ORDERS } from '../core/blocks/catalog';
+import { useModalFocusTrap } from '../hooks/useModalFocusTrap';
 
 interface ExtensionSpecModalProps {
   onClose: () => void;
@@ -10,6 +15,12 @@ type SpecTab = 'pack' | 'sections' | 'blocks' | 'sim';
 
 export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
   const [tab, setTab] = useState<SpecTab>('pack');
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const supportedExtCompactLabel = SUPPORTED_LANGUAGE_IDS.map(
+    (id) => `.${LANGUAGE_DIALECTS[id].extension}`,
+  ).join('/');
+
+  useModalFocusTrap(modalRef, true);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -29,7 +40,7 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal-shell spec-modal">
+      <div className="modal-shell spec-modal" ref={modalRef} tabIndex={-1}>
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <BookOpen size={16} style={{ color: 'var(--accent)' }} />
@@ -138,7 +149,7 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                     <td><code>libs</code></td>
                     <td>可选</td>
                     <td>
-                      <strong>真实纯脚本库源码数组</strong>（支持多文件如 <code>crc16.lua</code> + <code>crc16_table.lua</code>，可选 <code>role: "entry" | "helper"</code>）：既在浏览器沙箱直接运行真实现，也在打包导出真机 <code>.zip</code> 时随行输出。建议直接用「导入脚本库 (.lua/.py)」或卡片回形针按钮自动写入，无需手写 JSON 转义。
+                      <strong>真实纯脚本库源码数组</strong>（支持入口库与辅助依赖同包打包，可选 <code>role: "entry" | "helper"</code>）：既在浏览器沙箱直接运行真实现，也在打包导出真机 <code>.zip</code> 时随行输出。建议直接用「导入脚本库 ({supportedExtCompactLabel})」或卡片回形针按钮自动写入，无需手写 JSON 转义。
                     </td>
                   </tr>
                   <tr>
@@ -214,6 +225,13 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                     </td>
                   </tr>
                   <tr>
+                    <td><code>runtimeMonitor</code></td>
+                    <td>无</td>
+                    <td>
+                      可选运行时监视器声明：<code>"scheduler"</code>（启用事件循环 / <code>on_start</code> 协程状态监控）或 <code>"timers"</code>（启用多路定时器进度监控，自动关联同组件 <code>channel-pool</code> 配置），零包 ID 硬编码。
+                    </td>
+                  </tr>
+                  <tr>
                     <td><code>blocks</code></td>
                     <td>必填</td>
                     <td>直接内嵌属于本组件的积木定义数组，无重复 ID 引用。</td>
@@ -271,7 +289,7 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                   <tr>
                     <td><code>code</code></td>
                     <td>
-                      按语言映射的代码生成模板对象 <code>{`{ lua?: { template, imports? }, python?: { template, imports? }, ... }`}</code>，<strong>至少提供一种目标语言即可</strong>（支持单语言扩展包；切到未提供模板的语言时校验面板会自动报 Error）。占位符修饰器统一语言中立：<code>:json</code>、<code>:int</code>、<code>:bool</code>、<code>:edge:&lt;param&gt;</code>、<code>:channel_comment</code>（由当前目标语言方言自动展开）。不写 <code>imports</code> 时自动继承包顶层 <code>imports</code>，写 <code>[]</code> 可显式取消导入。
+                      按语言映射的代码生成模板对象 <code>{`{ lua?: { template, imports? }, python?: { template, imports? }, ... }`}</code>，<strong>至少提供一种目标语言即可</strong>（支持单语言扩展包；切到未提供模板的语言时校验面板会自动报 Error）。占位符修饰器统一语言中立：<code>:json</code>、<code>:int</code>、<code>:min10_int</code>、<code>:bool</code>、<code>:edge:&lt;param&gt;</code>、<code>:edge_zh</code>、<code>:channel_label</code>、<code>:channel_comment</code>（由当前目标语言方言自动展开）。不写 <code>imports</code> 时自动继承包顶层 <code>imports</code>，写 <code>[]</code> 可显式取消导入。
                     </td>
                   </tr>
                   <tr>
@@ -297,8 +315,8 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                 <tbody>
                   <tr>
                     <td><code>input_value</code></td>
-                    <td>凹进去的值插槽（可拖入数字/文本/表达式）</td>
-                    <td><code>name</code>、可选 <code>check</code>（<code>"Number"</code>/<code>"String"</code>/<code>"Boolean"</code>）；可配合积木 <code>shadows</code> 填默认阴影值，模板写 <code>{`{{X}}`}</code>。</td>
+                    <td>凹进去的值插槽（可拖入数字/文本/列表/字典/变量表达式）</td>
+                    <td><code>name</code>、可选 <code>check</code>（<code>"Number"</code>/<code>"String"</code>/<code>"Boolean"</code>）；可配合积木 <code>shadows</code> 填默认阴影值，模板写 <code>{`{{X}}`}</code>。容器操作积木须遵循纯值槽原则，统一用 <code>input_value</code> 接收容器表达式（禁止使用 <code>field_variable</code> 推断作用域）。</td>
                   </tr>
                   <tr>
                     <td><code>field_number</code></td>
@@ -319,11 +337,6 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                     <td><code>field_checkbox</code></td>
                     <td>积木上的勾选框（布尔开关）</td>
                     <td><code>name</code>、<code>checked: true | false</code>；模板写 <code>{`{{EN:bool}}`}</code>（按目标语言方言自动展开为 <code>true/false</code> 或 <code>True/False</code>）。</td>
-                  </tr>
-                  <tr>
-                    <td><code>field_variable</code></td>
-                    <td>工作区变量选择器下拉框</td>
-                    <td><code>name</code>、<code>variable</code>（默认变量名如 <code>"cfg"</code>）；模板写 <code>{`{{DICT}}`}</code> 自动输出合法变量标识符。</td>
                   </tr>
                   <tr>
                     <td><code>field_channel_id</code></td>

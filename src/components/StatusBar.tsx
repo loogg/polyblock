@@ -8,6 +8,7 @@ interface StatusBarProps {
   handleCount: number;
   activeHandleName: string;
   activeScriptName: string;
+  activeFileLabel?: string;
   language: ScriptLanguageId;
   runnerStatus: RunnerStatus;
   multiHandleRunning?: boolean;
@@ -23,6 +24,7 @@ export function StatusBar({
   handleCount,
   activeHandleName,
   activeScriptName,
+  activeFileLabel,
   language,
   runnerStatus,
   multiHandleRunning = false,
@@ -67,7 +69,8 @@ export function StatusBar({
           项目: {projectName} ({handleCount} 句柄)
         </span>
         <span>
-          当前: {activeHandleName}/{activeScriptName}.{backend.extension}
+          当前: {activeHandleName}/
+          {activeFileLabel ?? `${activeScriptName}.${backend.extension}`}
         </span>
         <span>积木数: {blockCount}</span>
         {breakpointCount > 0 && (

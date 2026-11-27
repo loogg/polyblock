@@ -434,7 +434,7 @@ export function HandlesTab({
             className="settings-ext-row"
             style={{
               marginTop: 6,
-              background: 'var(--bg-subtle)',
+              background: 'var(--bg-panel-subtle)',
               borderStyle: 'dashed',
             }}
           >

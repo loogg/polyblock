@@ -28,7 +28,7 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
           <div>
             <h1 className="subpage-title">执行目标与设备下载（可插拔 Runner 管理）</h1>
             <p className="subpage-sub">
-              PolyBlock 采用统一 <code>ScriptRunner</code> 契约：Phase 1 已内置纯前端 WASM 沙箱；后续接入网络设备、本机桥接或串口烧录只需插入新 Runner，画布与日志控制台零改动复用。
+              PolyBlock 采用统一 <code>ScriptRunner</code> 契约：已内置纯前端 WASM 沙箱；后续接入网络设备、本机桥接或串口烧录只需注册新 Runner，画布与日志控制台零改动复用。
             </p>
           </div>
           <button type="button" className="btn-outline" onClick={onReturnToBlocks}>
@@ -37,7 +37,7 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
           </button>
         </div>
 
-        <h2 className="section-heading">当前可用执行器（Phase 1 内置 · 零后端）</h2>
+        <h2 className="section-heading">当前可用执行器（内置 · 零后端）</h2>
         <div className="card-grid">
           {builtinRunners.map((runner) => {
             const primaryLang = runner.supportedLanguages[0];
@@ -96,7 +96,7 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
           })}
         </div>
 
-        <h2 className="section-heading">预留扩展槽位（Phase 2 按需接入）</h2>
+        <h2 className="section-heading">预留扩展槽位（按需接入）</h2>
         <div className="card-grid">
           {PLANNED_RUNNER_SLOTS.map((slot) => (
             <div key={slot.id} className="ui-card">
@@ -134,7 +134,7 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
               </p>
               <div className="card-footer">
                 <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                  本期不引入设备通信代码
+                  暂未接入设备通信协议
                 </span>
                 <button
                   type="button"

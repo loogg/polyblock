@@ -670,6 +670,11 @@ export function App() {
         handleCount={activeProject.handles.length}
         activeHandleName={activeHandle.name}
         activeScriptName={activeScript.name}
+        activeFileLabel={
+          viewingSharedModule && extActions.activeSharedModule
+            ? `${extActions.activeSharedModule.fileName} (只读)`
+            : undefined
+        }
         language={language}
         runnerStatus={execution.runnerStatus}
         multiHandleRunning={execution.multiHandleRunning}

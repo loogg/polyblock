@@ -1,8 +1,9 @@
 import { Cpu, Puzzle, Settings2, Sliders, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { UploadedScriptLibFile } from '../core/extensions/scriptLibScanner';
 import type { PolyExtensionPack } from '../core/extensions/types';
 import { countProjectScripts } from '../core/projects/store';
+import { useModalFocusTrap } from '../hooks/useModalFocusTrap';
 import type { HandleConfigPatch } from '../hooks/useProjectStore';
 import type {
   ProjectModel,
@@ -90,6 +91,9 @@ export function ProjectSettingsModal({
     pack: PolyExtensionPack;
     scopeLabel: string;
   } | null>(null);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+
+  useModalFocusTrap(modalRef, !viewingPack);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -109,7 +113,7 @@ export function ProjectSettingsModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal-shell settings-modal">
+      <div className="modal-shell settings-modal" ref={modalRef} tabIndex={-1}>
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Settings2 size={16} style={{ color: 'var(--accent)' }} />

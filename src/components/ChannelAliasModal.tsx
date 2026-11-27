@@ -1,5 +1,6 @@
 import { Tag, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useModalFocusTrap } from '../hooks/useModalFocusTrap';
 
 interface ChannelAliasModalProps {
   handleName: string;
@@ -23,6 +24,9 @@ export function ChannelAliasModal({
   onClose,
 }: ChannelAliasModalProps) {
   const [draft, setDraft] = useState(currentAlias);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+
+  useModalFocusTrap(modalRef, true);
 
   useEffect(() => {
     setDraft(currentAlias);
@@ -51,7 +55,7 @@ export function ChannelAliasModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal-shell alias-modal">
+      <div className="modal-shell alias-modal" ref={modalRef} tabIndex={-1}>
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             <Tag size={15} style={{ color: 'var(--accent)' }} />

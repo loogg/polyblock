@@ -846,7 +846,9 @@ export function useProjectStore({
       setStore(nextStore);
       mountScriptIntoCanvas(nextStore);
       const nextProj = getActiveProject(nextStore);
-      if (nextProj.handles.length > 1) setShowExplorer(true);
+      if (nextProj.handles.length > 1 && window.innerWidth >= 1280) {
+        setShowExplorer(true);
+      }
       notify(`已切换至项目：${nextProj.name}`);
     },
     [
@@ -873,7 +875,7 @@ export function useProjectStore({
       };
       setStore(nextStore);
       mountScriptIntoCanvas(nextStore);
-      setShowExplorer(created.handles.length > 1);
+      setShowExplorer(created.handles.length > 1 && window.innerWidth >= 1280);
       setIsDirty(false);
       navigateTo('blocks');
       notify(`已创建项目：${created.name}`);
@@ -1012,7 +1014,7 @@ export function useProjectStore({
       };
       setStore(nextStore);
       mountScriptIntoCanvas(nextStore);
-      setShowExplorer(imported.handles.length > 1);
+      setShowExplorer(imported.handles.length > 1 && window.innerWidth >= 1280);
       setIsDirty(false);
       navigateTo('blocks');
       notify(

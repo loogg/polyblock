@@ -88,8 +88,18 @@ export function ScriptTabBar({
         setShowHandleMenu(false);
       }
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMenuState(null);
+        setShowHandleMenu(false);
+      }
+    };
     document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKeyDown);
+    };
   }, []);
 
   const openScriptMenu = (scriptId: string, anchorEl: HTMLElement) => {
@@ -263,13 +273,6 @@ export function ScriptTabBar({
             <div
               key={script.id}
               className={`script-tab ${isActive ? 'active' : ''}`}
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => {
-                if (!isEditing && (!disabled || isActive)) {
-                  onSelectScript(script.id);
-                }
-              }}
               onDoubleClick={() => {
                 if (!disabled) startRename(script);
               }}
@@ -281,41 +284,63 @@ export function ScriptTabBar({
                 isEntry ? '（句柄入口脚本）' : '（同句柄辅助模块）'
               } · 双击重命名`}
             >
-              {isEntry && (
-                <Star
-                  size={11}
-                  className="entry-star"
-                  fill="currentColor"
-                  aria-label="入口脚本"
-                />
-              )}
-
               {isEditing ? (
-                <input
-                  type="text"
-                  className="script-tab-input"
-                  value={draftName}
-                  autoFocus
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => setDraftName(e.target.value)}
-                  onBlur={commitRename}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') commitRename();
-                    if (e.key === 'Escape') setEditingId(null);
-                  }}
-                />
+                <>
+                  {isEntry && (
+                    <Star
+                      size={11}
+                      className="entry-star"
+                      fill="currentColor"
+                      aria-label="入口脚本"
+                    />
+                  )}
+                  <input
+                    type="text"
+                    className="script-tab-input"
+                    aria-label={`重命名脚本 ${script.name}`}
+                    value={draftName}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setDraftName(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitRename();
+                      if (e.key === 'Escape') setEditingId(null);
+                    }}
+                  />
+                </>
               ) : (
-                <span className="script-tab-name">
-                  {script.name}
-                  <span className="script-tab-ext">.{extension}</span>
-                </span>
-              )}
-
-              {script.breakpoints.length > 0 && (
-                <span
-                  className="script-tab-bp"
-                  title={`${script.breakpoints.length} 个断点`}
-                />
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  className="script-tab-trigger"
+                  disabled={disabled && !isActive}
+                  onClick={() => {
+                    if (!disabled || isActive) {
+                      onSelectScript(script.id);
+                    }
+                  }}
+                >
+                  {isEntry && (
+                    <Star
+                      size={11}
+                      className="entry-star"
+                      fill="currentColor"
+                      aria-label="入口脚本"
+                    />
+                  )}
+                  <span className="script-tab-name">
+                    {script.name}
+                    <span className="script-tab-ext">.{extension}</span>
+                  </span>
+                  {script.breakpoints.length > 0 && (
+                    <span
+                      className="script-tab-bp"
+                      title={`${script.breakpoints.length} 个断点`}
+                    />
+                  )}
+                </button>
               )}
 
               {!isEditing && (

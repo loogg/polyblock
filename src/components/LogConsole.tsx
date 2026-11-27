@@ -62,6 +62,7 @@ export function LogConsole({
               <button
                 key={opt.id}
                 type="button"
+                aria-pressed={filter === opt.id}
                 className={`filter-pill ${filter === opt.id ? 'active' : ''}`}
                 onClick={() => setFilter(opt.id)}
               >
@@ -93,6 +94,7 @@ export function LogConsole({
             onClick={onCollapse}
             style={{ padding: '2px 6px', fontSize: 11.5 }}
             title="收起日志面板"
+            aria-label="收起日志面板"
           >
             <ChevronDown size={14} />
           </button>

@@ -161,7 +161,7 @@ export function SharedVarsView({
         <div className="shared-vars-banner">
           该模块由 PolyBlock 根据当前句柄「{handleName}」的
           <strong>跨文件全局变量</strong>与<strong>跨文件公共函数</strong>
-          自动生成（Style A1 统一只读模块，当前目标语言 {dialect.displayName} 导出为{' '}
+          自动生成（只读共享模块，当前目标语言 {dialect.displayName} 导出为{' '}
           <code>{fileName}</code>）；任意引用它的脚本顶部会自动引入，导出目标运行包（
           <code>.zip</code>）时一并打包。
         </div>

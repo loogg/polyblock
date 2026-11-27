@@ -13,6 +13,7 @@ import {
   validateSharedVariableName,
   type VariableScopeKind,
 } from '../core/projects/handleVariables';
+import { useModalFocusTrap } from '../hooks/useModalFocusTrap';
 import type {
   ScriptLanguageId,
   VariableInitialValue,
@@ -112,6 +113,9 @@ export function BlocklyDialogModal({
   const [initString, setInitString] = useState<string>('');
   const [touched, setTouched] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+
+  useModalFocusTrap(modalRef, true);
 
   useEffect(() => {
     setDraft(request.kind === 'prompt' ? request.defaultValue : '');
@@ -336,7 +340,12 @@ export function BlocklyDialogModal({
         if (e.target === e.currentTarget) cancel();
       }}
     >
-      <div className="modal-shell alias-modal" style={{ maxWidth: 460 }}>
+      <div
+        className="modal-shell alias-modal"
+        style={{ maxWidth: 460 }}
+        ref={modalRef}
+        tabIndex={-1}
+      >
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             {isCreateFn ? (
@@ -344,7 +353,7 @@ export function BlocklyDialogModal({
             ) : isCreateVar || isPrompt ? (
               <Variable size={15} style={{ color: '#db2777' }} />
             ) : request.kind === 'confirm' ? (
-              <AlertTriangle size={15} style={{ color: 'var(--warn)' }} />
+              <AlertTriangle size={15} style={{ color: 'var(--warning)' }} />
             ) : (
               <Info size={15} style={{ color: 'var(--accent)' }} />
             )}

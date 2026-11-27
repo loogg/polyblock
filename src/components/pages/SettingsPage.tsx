@@ -64,6 +64,7 @@ export function SettingsPage({
           </div>
           <select
             className="template-select"
+            aria-label="默认执行高亮速度"
             value={settings.executionSpeed}
             onChange={(e) =>
               onUpdateSettings({
@@ -83,7 +84,7 @@ export function SettingsPage({
               <code>on_start</code> 协程时间片（抢占让出）
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              当 <code>on_start</code> 内存在死循环或长计算且未调用 <code>sleep_ms</code> 时，每连续运行满该时间片即自动让出给事件调度器（对应实板 <code>LUA_MASKCOUNT</code> 时间片让出）
+              当 <code>on_start</code> 内存在死循环或长计算且未调用 <code>sleep_ms</code> 时，每连续运行满该时间片即自动让出给事件调度器（防止阻塞事件响应）
             </div>
           </div>
           <select
@@ -146,7 +147,7 @@ export function SettingsPage({
           <div>
             <div style={{ fontWeight: 600, marginBottom: 2 }}>重置默认示例画布</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              清除本地缓存并恢复“日志打印与循环累加”默认示例工作区
+              清除本地缓存并恢复内置的 4 个渐进式演示项目（L1 入门 ~ L4 旗舰）
             </div>
           </div>
           <button

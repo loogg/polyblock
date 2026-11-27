@@ -99,7 +99,7 @@ export function ProjectsPage({
           <div>
             <h1 className="subpage-title">项目管理（三层工程 · 多句柄隔离）</h1>
             <p className="subpage-sub">
-              以项目为根管理目标板型规格、按需装配的能力/外设以及多个隔离运行句柄（独立 <code>lua_State*</code>）；点击项目卡片左下「⚙」配置板型与句柄。
+              以项目为根管理目标板型规格、按需装配的能力/外设以及多个独立隔离运行句柄；点击项目卡片左下配置按钮可调整板型与句柄。
             </p>
           </div>
 
@@ -234,6 +234,7 @@ export function ProjectsPage({
                       className="btn-ghost"
                       style={{ padding: '4px 6px' }}
                       title="重命名项目"
+                      aria-label={`重命名项目 ${proj.name}`}
                       onClick={() => {
                         setEditingId(proj.id);
                         setDraftName(proj.name);
@@ -246,6 +247,7 @@ export function ProjectsPage({
                       className="btn-ghost"
                       style={{ padding: '4px 6px' }}
                       title="复制项目"
+                      aria-label={`复制项目 ${proj.name}`}
                       onClick={() => onDuplicateProject(proj.id)}
                     >
                       <Copy size={13} />
@@ -255,6 +257,7 @@ export function ProjectsPage({
                       className="btn-ghost"
                       style={{ padding: '4px 6px' }}
                       title="导出整项目 .polyblock.json"
+                      aria-label={`导出项目 ${proj.name}`}
                       onClick={() => onSaveProjectFile(proj.id)}
                     >
                       <Download size={13} />
@@ -265,6 +268,7 @@ export function ProjectsPage({
                         className="btn-ghost"
                         style={{ padding: '4px 6px', color: 'var(--danger)' }}
                         title="删除项目"
+                        aria-label={`删除项目 ${proj.name}`}
                         onClick={() => onDeleteProject(proj.id)}
                       >
                         <Trash2 size={13} />

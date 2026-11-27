@@ -8,6 +8,7 @@ import {
   Square,
   Trash2,
 } from 'lucide-react';
+import type { CSSProperties } from 'react';
 import { hasCapability } from '../../core/capabilities/registry';
 import { inspectPackImportSourceMatch } from '../../core/extensions/moduleResolver';
 import {
@@ -286,11 +287,7 @@ export function ExtensionPackRow({
                 className={`pack-section-chip ${secOn ? 'active' : ''}`}
                 style={
                   secOn
-                    ? {
-                        borderColor: `${sec.color}99`,
-                        color: sec.color,
-                        background: `${sec.color}12`,
-                      }
+                    ? ({ '--chip-accent': sec.color } as CSSProperties)
                     : undefined
                 }
                 title={`${sec.label}（${posText}）${sec.description ? `：${sec.description}` : ''} · 点击单独${secOn ? '取消勾选' : '勾选启用'}`}

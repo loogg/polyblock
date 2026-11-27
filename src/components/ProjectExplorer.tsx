@@ -87,52 +87,74 @@ export function ProjectExplorer({
             <div key={handle.id} className="explorer-handle-group">
               <div
                 className={`explorer-handle-row ${isActiveHandle ? 'active' : ''}`}
+                role="button"
+                tabIndex={0}
+                aria-expanded={!isCollapsed}
                 onClick={() =>
                   setCollapsed((prev) => ({
                     ...prev,
                     [handle.id]: !prev[handle.id],
                   }))
                 }
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setCollapsed((prev) => ({
+                      ...prev,
+                      [handle.id]: !prev[handle.id],
+                    }));
+                  }
+                }}
               >
-                {isCollapsed ? (
-                  <ChevronRight size={12} style={{ flexShrink: 0 }} />
-                ) : (
-                  <ChevronDown size={12} style={{ flexShrink: 0 }} />
-                )}
-                <span
-                  className="lang-dot"
-                  style={{ background: handle.color, flexShrink: 0 }}
-                />
-                <span className="explorer-handle-name" title={handle.name}>
-                  {handle.name}
-                </span>
-                {channelPools.length > 0 && (
-                  <span className="explorer-handle-meta">
-                    {formatHandleChannelPoolsSummary(handle, channelPools)}
+                <div className="explorer-handle-top">
+                  {isCollapsed ? (
+                    <ChevronRight size={12} style={{ flexShrink: 0 }} />
+                  ) : (
+                    <ChevronDown size={12} style={{ flexShrink: 0 }} />
+                  )}
+                  <span
+                    className="lang-dot"
+                    style={{ background: handle.color, flexShrink: 0 }}
+                  />
+                  <span className="explorer-handle-name" title={handle.name}>
+                    {handle.name}
                   </span>
-                )}
-                <div
-                  className="explorer-row-actions"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    className="script-tab-icon-btn"
-                    disabled={disabled}
-                    onClick={() => onAddScriptInHandle(handle.id)}
-                    title={`在句柄 ${handle.name} 内新建脚本`}
+                  <div
+                    className="explorer-row-actions"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    <Plus size={11} />
-                  </button>
-                  <button
-                    type="button"
-                    className="script-tab-icon-btn"
-                    onClick={() => onOpenHandleSettings(handle.id)}
-                    title={`配置句柄 ${handle.name}`}
-                  >
-                    <Settings2 size={11} />
-                  </button>
+                    <button
+                      type="button"
+                      className="script-tab-icon-btn"
+                      disabled={disabled}
+                      onClick={() => onAddScriptInHandle(handle.id)}
+                      title={`在句柄 ${handle.name} 内新建脚本`}
+                      aria-label={`在句柄 ${handle.name} 内新建脚本`}
+                    >
+                      <Plus size={11} />
+                    </button>
+                    <button
+                      type="button"
+                      className="script-tab-icon-btn"
+                      onClick={() => onOpenHandleSettings(handle.id)}
+                      title={`配置句柄 ${handle.name}`}
+                      aria-label={`配置句柄 ${handle.name}`}
+                    >
+                      <Settings2 size={11} />
+                    </button>
+                  </div>
                 </div>
+                {channelPools.length > 0 && (() => {
+                  const poolSummary = formatHandleChannelPoolsSummary(
+                    handle,
+                    channelPools,
+                  );
+                  return poolSummary ? (
+                    <span className="explorer-handle-meta" title={poolSummary}>
+                      {poolSummary}
+                    </span>
+                  ) : null;
+                })()}
               </div>
 
               {!isCollapsed && (

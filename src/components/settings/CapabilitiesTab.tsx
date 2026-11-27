@@ -199,7 +199,7 @@ export function CapabilitiesTab({
           <div
             className="settings-ext-row"
             style={{
-              background: 'var(--bg-subtle)',
+              background: 'var(--bg-panel-subtle)',
               borderStyle: 'dashed',
               fontSize: 11.5,
               color: 'var(--text-muted)',
@@ -290,7 +290,7 @@ export function CapabilitiesTab({
           <div
             className="settings-ext-row"
             style={{
-              background: 'var(--bg-subtle)',
+              background: 'var(--bg-panel-subtle)',
               borderStyle: 'dashed',
               fontSize: 11.5,
               color: 'var(--text-muted)',
