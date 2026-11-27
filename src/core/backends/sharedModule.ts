@@ -217,11 +217,7 @@ function compileSingleSharedProc(
         ).definitions_;
         imports = Object.entries(defs)
           .filter(([k]) => !k.startsWith('%') && k !== 'variables')
-          .map(([, v]) =>
-            v
-              .trim()
-              .replace(/(^|\n)function\s+([A-Za-z0-9_]+)\s*\(/g, '$1local function $2('),
-          )
+          .map(([, v]) => v.trim())
           .filter(Boolean);
         cleanFnCode = (defs[`%${procIdent}`] ?? '').trim();
         luaGenerator.finish('');

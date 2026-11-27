@@ -341,23 +341,6 @@ export function registerLuaBlockGenerators(): void {
     return [emitLuaSharedFnCall(block, generator), Order.HIGH];
   };
 
-  // Ensure any Blockly `provideFunction_` helper in Lua is emitted as `local function` (never leaks `_G`)
-  const origLuaFinish = luaGenerator.finish.bind(luaGenerator);
-  luaGenerator.finish = (code: string) => {
-    const defs = (
-      luaGenerator as unknown as { definitions_: Record<string, string> }
-    ).definitions_;
-    if (defs) {
-      for (const [k, v] of Object.entries(defs)) {
-        if (k.startsWith('%') || k === 'variables' || typeof v !== 'string') continue;
-        if (/^function\s+[A-Za-z0-9_]+\s*\(/.test(v.trimStart())) {
-          defs[k] = v.replace(/(^|\n)function\s+/, '$1local function ');
-        }
-      }
-    }
-    return origLuaFinish(code);
-  };
-
   luaGeneratorsRegistered = true;
 }
 
