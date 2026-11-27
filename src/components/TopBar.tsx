@@ -351,9 +351,7 @@ export function TopBar({
                 className="lang-dot"
                 style={{ background: b.accentColor }}
               />
-              <span>
-                {b.name} {b.version}
-              </span>
+              <span>{b.dialect.displayName}</span>
             </button>
           ))}
         </div>

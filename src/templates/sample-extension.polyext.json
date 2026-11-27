@@ -18,6 +18,9 @@
     ],
     "python": [
       "import robot"
+    ],
+    "js": [
+      "const robot = require(\"robot\");"
     ]
   },
   "sections": [
@@ -79,6 +82,9 @@
             },
             "python": {
               "template": "robot.move({{DIR:json}}, {{SPEED}})"
+            },
+            "js": {
+              "template": "robot.move({{DIR:json}}, {{SPEED}});"
             }
           }
         },
@@ -97,6 +103,9 @@
               "template": "robot.battery()"
             },
             "python": {
+              "template": "robot.battery()"
+            },
+            "js": {
               "template": "robot.battery()"
             }
           }
@@ -135,7 +144,8 @@
             "mode": "dispatch",
             "condition": {
               "lua": "{{STATE:edge:active}}",
-              "python": "{{STATE:edge:active}}"
+              "python": "{{STATE:edge:active}}",
+              "js": "{{STATE:edge:active}}"
             },
             "duplicateKeyTemplate": "{{STATE}}",
             "scopeLabelTemplate": "on_robot_estop · {{STATE:edge_zh}}",
@@ -151,7 +161,8 @@
     "moduleName": "robot",
     "sources": {
       "lua": "\nlocal M = {}\nfunction M.move(dir, speed)\n  if __poly_sim_get(\"estop\") == true then\n    __poly_sim_set(\"moving\", false)\n    __poly_sim_set(\"speed\", 0)\n    __poly_sim_set(\"log:append\", \"[ESTOP] 急停已触发，忽略移动指令\")\n    print(\"[WARN] [Mock Robot] E-Stop active, move ignored\")\n    return\n  end\n  local spd = tonumber(speed) or 0\n  __poly_sim_set(\"moving\", spd > 0)\n  __poly_sim_set(\"speed\", spd)\n  __poly_sim_set(\"log:append\", \"move(\" .. tostring(dir) .. \", \" .. tostring(spd) .. \"%)\")\n  print(\"[INFO] [Mock Robot] move(\" .. tostring(dir) .. \", speed=\" .. tostring(spd) .. \")\")\nend\nfunction M.battery()\n  local v = tonumber(__poly_sim_get(\"battery\"))\n  return v or 88\nend\nreturn M\n",
-      "python": "\nimport _poly\ndef move(dir_name, speed):\n    if _poly.sim_get(\"estop\") is True:\n        _poly.sim_set(\"moving\", False)\n        _poly.sim_set(\"speed\", 0)\n        _poly.sim_set(\"log:append\", \"[ESTOP] 急停已触发，忽略移动指令\")\n        print(\"[WARN] [Mock Robot] E-Stop active, move ignored\")\n        return\n    spd = float(speed)\n    _poly.sim_set(\"moving\", spd > 0)\n    _poly.sim_set(\"speed\", spd)\n    _poly.sim_set(\"log:append\", f\"move({dir_name}, {int(spd)}%)\")\n    print(\"[INFO] [Mock Robot] move(\" + str(dir_name) + \", speed=\" + str(speed) + \")\")\ndef battery():\n    v = _poly.sim_get(\"battery\")\n    return int(v) if v is not None else 88\n"
+      "python": "\nimport _poly\ndef move(dir_name, speed):\n    if _poly.sim_get(\"estop\") is True:\n        _poly.sim_set(\"moving\", False)\n        _poly.sim_set(\"speed\", 0)\n        _poly.sim_set(\"log:append\", \"[ESTOP] 急停已触发，忽略移动指令\")\n        print(\"[WARN] [Mock Robot] E-Stop active, move ignored\")\n        return\n    spd = float(speed)\n    _poly.sim_set(\"moving\", spd > 0)\n    _poly.sim_set(\"speed\", spd)\n    _poly.sim_set(\"log:append\", f\"move({dir_name}, {int(spd)}%)\")\n    print(\"[INFO] [Mock Robot] move(\" + str(dir_name) + \", speed=\" + str(speed) + \")\")\ndef battery():\n    v = _poly.sim_get(\"battery\")\n    return int(v) if v is not None else 88\n",
+      "js": "const _poly = require(\"_poly\");\nmodule.exports = {\n  move(dir, speed) {\n    if (_poly.sim_get(\"estop\") === true) {\n      _poly.sim_set(\"moving\", false);\n      _poly.sim_set(\"speed\", 0);\n      _poly.sim_set(\"log:append\", \"[ESTOP] 急停已触发，忽略移动指令\");\n      console.log(\"[WARN] [Mock Robot] E-Stop active, move ignored\");\n      return;\n    }\n    const spd = Number(speed) || 0;\n    _poly.sim_set(\"moving\", spd > 0);\n    _poly.sim_set(\"speed\", spd);\n    _poly.sim_set(\"log:append\", `move(${dir}, ${Math.trunc(spd)}%)`);\n    console.log(`[INFO] [Mock Robot] move(${dir}, speed=${spd})`);\n  },\n  battery() {\n    const v = Number(_poly.sim_get(\"battery\"));\n    return Number.isFinite(v) ? Math.trunc(v) : 88;\n  },\n};"
     }
   },
   "simWidgets": [

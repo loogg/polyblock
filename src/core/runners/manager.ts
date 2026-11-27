@@ -1,5 +1,6 @@
 import type { ScriptLanguageId } from '../../types/project';
 import { getSupportedLanguageIds } from '../backends/registry';
+import { BrowserJsWorkerRunner } from './jsRunner';
 import { WasmoonLuaRunner } from './luaRunner';
 import { MicroPythonWasmRunner } from './pythonRunner';
 import type { RunnerKind, ScriptRunner } from './types';
@@ -61,6 +62,7 @@ export class RunnerManager {
   constructor() {
     this.registerFactory('lua', () => new WasmoonLuaRunner());
     this.registerFactory('python', () => new MicroPythonWasmRunner());
+    this.registerFactory('js', () => new BrowserJsWorkerRunner());
   }
 
   register(runner: ScriptRunner): void {

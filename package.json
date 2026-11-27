@@ -2,7 +2,7 @@
   "name": "polyblock",
   "version": "0.1.0",
   "private": true,
-  "description": "PolyBlock - 多语言积木编程工作台（Blockly + MicroBlocks 视觉风格 + Lua / Python 纯前端 WASM 沙箱）",
+  "description": "PolyBlock - 多语言积木编程工作台（Blockly + MicroBlocks 视觉风格 + Lua / Python / JavaScript 纯前端沙箱）",
   "type": "module",
   "scripts": {
     "dev": "vite",

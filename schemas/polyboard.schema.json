@@ -37,8 +37,8 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9_-]{0,23}$",
       "default": "lua",
-      "examples": ["lua", "python"],
-      "description": "新建或应用此板型时的默认目标脚本语言 ID（如 lua、python 及未来扩展语言；未识别时回退至默认语言）。"
+      "examples": ["lua", "python", "js"],
+      "description": "新建或应用此板型时的默认目标脚本语言 ID（内置 lua、python、js 及未来扩展语言；未识别时回退至默认语言）。"
     },
     "maxHandles": {
       "type": "integer",

@@ -47,7 +47,7 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
                       className="card-icon"
                       style={{ background: iconBackground }}
                     >
-                      WASM
+                      {runner.engineBadge ?? 'WASM'}
                     </div>
                     <div>
                       <div style={{ fontWeight: 700 }}>{runner.name}</div>

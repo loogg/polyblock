@@ -17,6 +17,9 @@
     ],
     "python": [
       "import rt"
+    ],
+    "js": [
+      "const rt = require(\"rt\");"
     ]
   },
   "sections": [
@@ -74,6 +77,9 @@
             },
             "python": {
               "template": "rt.set_run_period({{MS}})"
+            },
+            "js": {
+              "template": "rt.set_run_period({{MS}});"
             }
           }
         },
@@ -110,6 +116,9 @@
             },
             "python": {
               "template": "rt.{{ACTION}}()"
+            },
+            "js": {
+              "template": "rt.{{ACTION}}();"
             }
           }
         },
@@ -186,11 +195,13 @@
             "extractBranchFnPrefix": "on_timer_",
             "condition": {
               "lua": "id == {{TIMER_ID:int}}",
-              "python": "id == {{TIMER_ID:int}}"
+              "python": "id == {{TIMER_ID:int}}",
+              "js": "id === {{TIMER_ID:int}}"
             },
             "branchComment": {
               "lua": "{{TIMER_ID:channel_comment}}",
-              "python": "{{TIMER_ID:channel_comment}}"
+              "python": "{{TIMER_ID:channel_comment}}",
+              "js": "{{TIMER_ID:channel_comment}}"
             },
             "duplicateKeyTemplate": "{{TIMER_ID:int}}",
             "scopeLabelTemplate": "on_timer · {{TIMER_ID:channel_label}}",
@@ -242,6 +253,9 @@
             },
             "python": {
               "template": "rt.start_timer({{TIMER_ID:int}}, {{PERIOD_MS}}, {{REPEAT}}){{TIMER_ID:channel_comment}}"
+            },
+            "js": {
+              "template": "rt.start_timer({{TIMER_ID:int}}, {{PERIOD_MS}}, {{REPEAT}});{{TIMER_ID:channel_comment}}"
             }
           }
         },
@@ -268,6 +282,9 @@
             },
             "python": {
               "template": "rt.stop_timer({{TIMER_ID:int}}){{TIMER_ID:channel_comment}}"
+            },
+            "js": {
+              "template": "rt.stop_timer({{TIMER_ID:int}});{{TIMER_ID:channel_comment}}"
             }
           }
         },
@@ -294,6 +311,9 @@
               "template": "rt.get_timer_value({{TIMER_ID:int}})"
             },
             "python": {
+              "template": "rt.get_timer_value({{TIMER_ID:int}})"
+            },
+            "js": {
               "template": "rt.get_timer_value({{TIMER_ID:int}})"
             }
           }
@@ -322,6 +342,9 @@
             },
             "python": {
               "template": "rt.is_timer_running({{TIMER_ID:int}})"
+            },
+            "js": {
+              "template": "rt.is_timer_running({{TIMER_ID:int}})"
             }
           }
         }
@@ -348,6 +371,9 @@
               "template": "rt.tick()"
             },
             "python": {
+              "template": "rt.tick()"
+            },
+            "js": {
               "template": "rt.tick()"
             }
           }
@@ -378,6 +404,9 @@
               "template": "rt.ms_to_tick({{MS}})"
             },
             "python": {
+              "template": "rt.ms_to_tick({{MS}})"
+            },
+            "js": {
               "template": "rt.ms_to_tick({{MS}})"
             }
           }
@@ -418,6 +447,9 @@
             },
             "python": {
               "template": "rt.is_expired({{START}}, {{TIMEOUT}})"
+            },
+            "js": {
+              "template": "rt.is_expired({{START}}, {{TIMEOUT}})"
             }
           }
         }
@@ -428,7 +460,8 @@
     "moduleName": "rt",
     "sources": {
       "lua": "local M = {\n  set_run_period = __poly_rt_set_run_period,\n  start_run = __poly_rt_start_run,\n  stop_run = __poly_rt_stop_run,\n  start_timer = __poly_rt_start_timer,\n  stop_timer = __poly_rt_stop_timer,\n  get_timer_value = __poly_rt_get_timer_value,\n  is_timer_running = __poly_rt_is_timer_running,\n  tick = __poly_rt_tick,\n  ms_to_tick = __poly_rt_ms_to_tick,\n  is_expired = __poly_rt_is_expired,\n}\nreturn M",
-      "python": "import _poly\n\ndef set_run_period(ms):\n    return _poly.rt_set_run_period(ms)\n\ndef start_run():\n    return _poly.rt_start_run()\n\ndef stop_run():\n    return _poly.rt_stop_run()\n\ndef start_timer(tid, period_ms, repeat=0):\n    return _poly.rt_start_timer(tid, period_ms, repeat)\n\ndef stop_timer(tid):\n    return _poly.rt_stop_timer(tid)\n\ndef get_timer_value(tid):\n    return _poly.rt_get_timer_value(tid)\n\ndef is_timer_running(tid):\n    return _poly.rt_is_timer_running(tid)\n\ndef tick():\n    return _poly.rt_tick()\n\ndef ms_to_tick(ms):\n    return _poly.rt_ms_to_tick(ms)\n\ndef is_expired(start_tick, timeout_ticks):\n    return _poly.rt_is_expired(start_tick, timeout_ticks)"
+      "python": "import _poly\n\ndef set_run_period(ms):\n    return _poly.rt_set_run_period(ms)\n\ndef start_run():\n    return _poly.rt_start_run()\n\ndef stop_run():\n    return _poly.rt_stop_run()\n\ndef start_timer(tid, period_ms, repeat=0):\n    return _poly.rt_start_timer(tid, period_ms, repeat)\n\ndef stop_timer(tid):\n    return _poly.rt_stop_timer(tid)\n\ndef get_timer_value(tid):\n    return _poly.rt_get_timer_value(tid)\n\ndef is_timer_running(tid):\n    return _poly.rt_is_timer_running(tid)\n\ndef tick():\n    return _poly.rt_tick()\n\ndef ms_to_tick(ms):\n    return _poly.rt_ms_to_tick(ms)\n\ndef is_expired(start_tick, timeout_ticks):\n    return _poly.rt_is_expired(start_tick, timeout_ticks)",
+      "js": "const _poly = require(\"_poly\");\nmodule.exports = {\n  set_run_period: (ms) => _poly.rt_set_run_period(ms),\n  start_run: () => _poly.rt_start_run(),\n  stop_run: () => _poly.rt_stop_run(),\n  start_timer: (tid, periodMs, repeat = 0) => _poly.rt_start_timer(tid, periodMs, repeat),\n  stop_timer: (tid) => _poly.rt_stop_timer(tid),\n  get_timer_value: (tid) => _poly.rt_get_timer_value(tid),\n  is_timer_running: (tid) => _poly.rt_is_timer_running(tid),\n  tick: () => _poly.rt_tick(),\n  ms_to_tick: (ms) => _poly.rt_ms_to_tick(ms),\n  is_expired: (startTick, timeoutTicks) => _poly.rt_is_expired(startTick, timeoutTicks),\n};"
     }
   }
 }

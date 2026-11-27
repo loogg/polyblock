@@ -17,6 +17,9 @@
     ],
     "python": [
       "import board"
+    ],
+    "js": [
+      "const board = require(\"board\");"
     ]
   },
   "sections": [
@@ -57,6 +60,9 @@
             },
             "python": {
               "template": "board.led({{STATE:bool}})"
+            },
+            "js": {
+              "template": "board.led({{STATE:bool}});"
             }
           }
         },
@@ -100,6 +106,9 @@
             },
             "python": {
               "template": "board.rgb({{COLOR:json}})"
+            },
+            "js": {
+              "template": "board.rgb({{COLOR:json}});"
             }
           }
         },
@@ -131,6 +140,9 @@
             },
             "python": {
               "template": "board.oled_show({{TEXT}})"
+            },
+            "js": {
+              "template": "board.oled_show({{TEXT}});"
             }
           }
         },
@@ -150,6 +162,9 @@
             },
             "python": {
               "template": "board.oled_clear()"
+            },
+            "js": {
+              "template": "board.oled_clear();"
             }
           }
         },
@@ -168,6 +183,9 @@
               "template": "board.read_temp()"
             },
             "python": {
+              "template": "board.read_temp()"
+            },
+            "js": {
               "template": "board.read_temp()"
             }
           }
@@ -204,6 +222,9 @@
               "template": "board.is_pressed({{BTN:json}})"
             },
             "python": {
+              "template": "board.is_pressed({{BTN:json}})"
+            },
+            "js": {
               "template": "board.is_pressed({{BTN:json}})"
             }
           }
@@ -263,7 +284,8 @@
             "mode": "dispatch",
             "condition": {
               "lua": "key == {{KEY:json}} and {{EDGE:edge:pressed}}",
-              "python": "key == {{KEY:json}} and {{EDGE:edge:pressed}}"
+              "python": "key == {{KEY:json}} and {{EDGE:edge:pressed}}",
+              "js": "key === {{KEY:json}} && {{EDGE:edge:pressed}}"
             },
             "duplicateKeyTemplate": "{{KEY}}:{{EDGE}}",
             "scopeLabelTemplate": "on_button · 按键 {{KEY}} {{EDGE:edge_zh}}",
@@ -279,7 +301,8 @@
     "moduleName": "board",
     "sources": {
       "lua": "\nlocal M = {}\nfunction M.led(on)\n  __poly_sim_set(\"led\", on and true or false)\nend\nfunction M.rgb(color)\n  local c = string.lower(tostring(color or \"\"))\n  if c == \"red\" or c == \"#ef4444\" or c == \"#ff0000\" then\n    __poly_sim_set(\"rgb\", \"#ef4444\")\n  elseif c == \"green\" or c == \"#10b981\" or c == \"#00ff00\" then\n    __poly_sim_set(\"rgb\", \"#10b981\")\n  elseif c == \"blue\" or c == \"#3b82f6\" or c == \"#0000ff\" then\n    __poly_sim_set(\"rgb\", \"#3b82f6\")\n  else\n    __poly_sim_set(\"rgb\", \"#1e293b\")\n  end\nend\nfunction M.oled_show(text)\n  __poly_sim_set(\"oled:append\", tostring(text))\nend\nfunction M.oled_clear()\n  __poly_sim_set(\"oled:clear\", true)\nend\nfunction M.read_temp()\n  local v = tonumber(__poly_sim_get(\"temp\"))\n  return v or 28\nend\nfunction M.is_pressed(btn)\n  local key = (tostring(btn) == \"B\") and \"btnB\" or \"btnA\"\n  return __poly_sim_get(key) == true\nend\nreturn M\n",
-      "python": "\nimport _poly\ndef led(on):\n    _poly.sim_set(\"led\", bool(on))\ndef rgb(color):\n    c = str(color or \"\").lower()\n    if c in (\"red\", \"#ef4444\", \"#ff0000\"):\n        _poly.sim_set(\"rgb\", \"#ef4444\")\n    elif c in (\"green\", \"#10b981\", \"#00ff00\"):\n        _poly.sim_set(\"rgb\", \"#10b981\")\n    elif c in (\"blue\", \"#3b82f6\", \"#0000ff\"):\n        _poly.sim_set(\"rgb\", \"#3b82f6\")\n    else:\n        _poly.sim_set(\"rgb\", \"#1e293b\")\ndef oled_show(text):\n    _poly.sim_set(\"oled:append\", str(text))\ndef oled_clear():\n    _poly.sim_set(\"oled:clear\", True)\ndef read_temp():\n    v = _poly.sim_get(\"temp\")\n    return float(v) if v is not None else 28.0\ndef is_pressed(btn):\n    key = \"btnB\" if str(btn) == \"B\" else \"btnA\"\n    return bool(_poly.sim_get(key))\n"
+      "python": "\nimport _poly\ndef led(on):\n    _poly.sim_set(\"led\", bool(on))\ndef rgb(color):\n    c = str(color or \"\").lower()\n    if c in (\"red\", \"#ef4444\", \"#ff0000\"):\n        _poly.sim_set(\"rgb\", \"#ef4444\")\n    elif c in (\"green\", \"#10b981\", \"#00ff00\"):\n        _poly.sim_set(\"rgb\", \"#10b981\")\n    elif c in (\"blue\", \"#3b82f6\", \"#0000ff\"):\n        _poly.sim_set(\"rgb\", \"#3b82f6\")\n    else:\n        _poly.sim_set(\"rgb\", \"#1e293b\")\ndef oled_show(text):\n    _poly.sim_set(\"oled:append\", str(text))\ndef oled_clear():\n    _poly.sim_set(\"oled:clear\", True)\ndef read_temp():\n    v = _poly.sim_get(\"temp\")\n    return float(v) if v is not None else 28.0\ndef is_pressed(btn):\n    key = \"btnB\" if str(btn) == \"B\" else \"btnA\"\n    return bool(_poly.sim_get(key))\n",
+      "js": "const _poly = require(\"_poly\");\nmodule.exports = {\n  led(on) {\n    _poly.sim_set(\"led\", Boolean(on));\n  },\n  rgb(color) {\n    const c = String(color || \"\").toLowerCase();\n    if (c === \"red\" || c === \"#ef4444\" || c === \"#ff0000\") {\n      _poly.sim_set(\"rgb\", \"#ef4444\");\n    } else if (c === \"green\" || c === \"#10b981\" || c === \"#00ff00\") {\n      _poly.sim_set(\"rgb\", \"#10b981\");\n    } else if (c === \"blue\" || c === \"#3b82f6\" || c === \"#0000ff\") {\n      _poly.sim_set(\"rgb\", \"#3b82f6\");\n    } else {\n      _poly.sim_set(\"rgb\", \"#1e293b\");\n    }\n  },\n  oled_show(text) {\n    _poly.sim_set(\"oled:append\", String(text));\n  },\n  oled_clear() {\n    _poly.sim_set(\"oled:clear\", true);\n  },\n  read_temp() {\n    const v = Number(_poly.sim_get(\"temp\"));\n    return Number.isFinite(v) ? v : 28;\n  },\n  is_pressed(btn) {\n    const key = String(btn) === \"B\" ? \"btnB\" : \"btnA\";\n    return Boolean(_poly.sim_get(key));\n  },\n};"
     }
   },
   "simWidgets": [

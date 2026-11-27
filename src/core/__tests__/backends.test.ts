@@ -198,6 +198,39 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     ws.dispose();
   });
 
+  it('generates clean JavaScript (ES2023) code with exact SourceMap and zero hidden magic helpers', () => {
+    const ws = createLoadedWorkspace(STARTER_DEMO_LOGGER_WORKSPACE);
+    const js = backendRegistry.get('js');
+    const res = js.generate(ws);
+
+    expect(res.code).not.toContain('__PB_S:');
+    expect(res.code).not.toContain('__PB_E:');
+    expect(res.code).not.toContain("typeof total === 'number'");
+    expect(res.code).toContain('Target: JavaScript ES2023');
+    expect(res.code).toContain('async function on_start()');
+    expect(res.code).toContain('total += 10;');
+    expect(res.code).toContain('console.log("[INFO] " + String(');
+    expect(res.code).toContain('for (i = 1; i <= 3; i++)');
+    expect(res.code).toContain('console.log("最终 total =", total);');
+    expect(res.code).toContain('console.log("[OK] " + String(');
+    expect(res.debugCode).toContain('_poly.init_scheduler');
+
+    expect(res.sourceMap['loop_main']).toBeDefined();
+    expect(res.sourceMap['add_total']).toBeDefined();
+    expect(res.lineToBlock[res.sourceMap['add_total'].startLine]).toBe('add_total');
+    expect(res.diagnostics).toHaveLength(0);
+
+    ws.dispose();
+
+    // Verify math_random_int emits inline Math.floor(Math.random() ...) with ZERO provideFunction_ helper
+    const alarmWs = createLoadedWorkspace(STARTER_THRESHOLD_ALARM_WORKSPACE);
+    const alarmJs = js.generate(alarmWs);
+    expect(alarmJs.code).toContain('Math.floor(Math.random() *');
+    expect(alarmJs.code).not.toContain('function mathRandomInt');
+    expect(alarmJs.diagnostics).toHaveLength(0);
+    alarmWs.dispose();
+  });
+
   it('generates valid Lua & Python for list primitives (zero hidden helper functions) and random alarm templates', () => {
     for (const workspace of [
       STARTER_STEP_DEBUG_WORKSPACE,
@@ -207,19 +240,24 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
       const ws = createLoadedWorkspace(workspace);
       const luaRes = backendRegistry.get('lua').generate(ws);
       const pyRes = backendRegistry.get('python').generate(ws);
+      const jsRes = backendRegistry.get('js').generate(ws);
 
       expect(luaRes.code).not.toContain('__PB_S:');
       expect(pyRes.code).not.toContain('__PB_S:');
+      expect(jsRes.code).not.toContain('__PB_S:');
       expect(luaRes.blockCount).toBeGreaterThan(3);
       expect(pyRes.blockCount).toBe(luaRes.blockCount);
+      expect(jsRes.blockCount).toBe(luaRes.blockCount);
       ws.dispose();
     }
 
     const listWs = createLoadedWorkspace(LIST_STATS_WORKSPACE);
     const listLua = backendRegistry.get('lua').generate(listWs).code;
     const listPy = backendRegistry.get('python').generate(listWs).code;
+    const listJs = backendRegistry.get('js').generate(listWs).code;
     expect(listLua).toContain('table.insert(items, 40)');
     expect(listPy).toContain('items.append(40)');
+    expect(listJs).toContain('items.push(40);');
     listWs.dispose();
 
     // Pure value-slot list primitives (`poly_list_get`/`set`/`remove`) emit direct indexing with ZERO helper functions!
@@ -278,6 +316,7 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     });
     const opsLua = backendRegistry.get('lua').generate(opsWs).code;
     const opsPy = backendRegistry.get('python').generate(opsWs).code;
+    const opsJs = backendRegistry.get('js').generate(opsWs).code;
     expect(opsLua).toContain('arr[1] = 99');
     expect(opsLua).toContain('print(arr[1])');
     expect(opsLua).toContain('table.remove(arr, 2)');
@@ -285,6 +324,9 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     expect(opsPy).toContain('arr[0] = 99');
     expect(opsPy).toContain('print(arr[0])');
     expect(opsPy).toContain('arr.pop(1)');
+    expect(opsJs).toContain('arr[0] = 99;');
+    expect(opsJs).toContain('console.log(arr[0]);');
+    expect(opsJs).toContain('arr.splice(1, 1);');
     opsWs.dispose();
   });
 
@@ -318,6 +360,14 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     expect(pyRes.debugCode).toContain('await sleep_ms(350)');
     expect(pyRes.debugCode).toContain('["sum","sum2"]');
     expect(pyRes.variableNames).toContain('sum');
+
+    const jsRes = backendRegistry.get('js').generate(ws);
+    expect(jsRes.code).toContain('async function on_start()');
+    expect(jsRes.code).toContain('await sleep_ms(350);');
+    expect(jsRes.code).not.toContain('_poly_tick');
+    expect(jsRes.debugCode).toContain('await _poly_tick(');
+    expect(jsRes.debugCode).toContain('await sleep_ms(350);');
+    expect(jsRes.variableNames).toContain('sum');
 
     ws.dispose();
   });
@@ -407,7 +457,7 @@ describe('Log parser & syntax highlighter', () => {
     });
   });
 
-  it('extracts line numbers from Lua and Python error messages', () => {
+  it('extracts line numbers from Lua, Python, and JavaScript error messages', () => {
     expect(
       extractErrorLine('[string "main"]:8: attempt to index nil value', 'lua'),
     ).toBe(8);
@@ -417,54 +467,65 @@ describe('Log parser & syntax highlighter', () => {
         'python',
       ),
     ).toBe(12);
+    expect(
+      extractErrorLine('ReferenceError: foo is not defined\n    at eval (<anonymous>:19:5)', 'js'),
+    ).toBe(19);
   });
 
-  it('safely escapes HTML and highlights Lua/Python keywords', () => {
+  it('safely escapes HTML and highlights Lua/Python/JS keywords', () => {
     const html = highlightCodeLine('if x < 10 then -- <tag>', 'lua');
     expect(html).toContain('<span class="syn-kw">if</span>');
     expect(html).toContain('&lt; <span class="syn-num">10</span>');
     expect(html).toContain('<span class="syn-cmt">-- &lt;tag&gt;</span>');
+
+    const jsHtml = highlightCodeLine('const v = console.log(42); // ok', 'js');
+    expect(jsHtml).toContain('<span class="syn-kw">const</span>');
+    expect(jsHtml).toContain('<span class="syn-fn">console</span>');
+    expect(jsHtml).toContain('<span class="syn-num">42</span>');
+    expect(jsHtml).toContain('<span class="syn-cmt">// ok</span>');
   });
 });
 
 describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocolHost', () => {
   it('derives accentGradient and script extension helpers dynamically from backendRegistry', () => {
     const supportedIds = getSupportedLanguageIds();
+    expect(supportedIds).toEqual(['lua', 'python', 'js']);
     for (const lang of supportedIds) {
       expect(getLanguageDialect(lang).accentGradient).toMatch(/^linear-gradient\(/);
     }
-    expect(getSupportedScriptAcceptAttr()).toBe('.lua,.py');
-    expect(formatSupportedExtensionsLabel()).toBe('.lua / .py');
+    expect(getSupportedScriptAcceptAttr()).toBe('.lua,.py,.js');
+    expect(formatSupportedExtensionsLabel()).toBe('.lua / .py / .js');
     expect(stripScriptExtension('main.lua')).toBe('main');
     expect(stripScriptExtension('helpers.PY')).toBe('helpers');
+    expect(stripScriptExtension('driver.JS')).toBe('driver');
     expect(stripScriptExtension('utils.crc16.lua')).toBe('utils.crc16');
     expect(stripScriptExtension('readme.md')).toBe('readme.md');
   });
 
-  it('propagates a dynamically registered 3rd backend across all derived dialect helpers, highlighter, scanner, and validators', () => {
-    const mockDialect: LanguageDialect<'js'> = {
-      id: 'js',
-      displayName: 'JavaScript (ES2023)',
-      shortLabel: 'JS',
-      compactLabel: 'JS',
-      extension: 'js',
-      accentGradient: 'linear-gradient(135deg, #f59e0b, #d97706)',
+  it('propagates a dynamically registered 4th backend across all derived dialect helpers, highlighter, scanner, and validators', () => {
+    const mockDialect: LanguageDialect<'dsl'> = {
+      id: 'dsl',
+      displayName: 'PolyDSL',
+      shortLabel: 'DSL',
+      compactLabel: 'DSL',
+      extension: 'dsl',
+      accentGradient: 'linear-gradient(135deg, #ec4899, #db2777)',
       boolTrue: 'true',
       boolFalse: 'false',
-      nullLiteral: 'null',
+      nullLiteral: 'none',
       listLiteral: '[]',
       dictLiteral: '{}',
       notOp: '!',
       commentToken: '//',
       lineCommentPrefix: ' // ',
-      keywords: ['const', 'let', 'function', 'return', 'await', 'async', 'export'],
-      builtinFuncs: ['console', 'Math'],
-      explicitAsyncCoroutine: true,
+      keywords: ['rule', 'emit', 'fn', 'none'],
+      builtinFuncs: ['trace'],
+      explicitAsyncCoroutine: false,
       libBinding: {
-        formatImport: (mod) => `import * as ${mod} from "./${mod}.js";`,
-        formatCall: (mod, fn, args) => `${mod}.${fn}(${args.join(', ')})`,
+        formatImport: (mod) => `use "${mod}"`,
+        formatCall: (mod, fn, args) => `${mod}::${fn}(${args.join(', ')})`,
         extractImportedModuleName: (line) => {
-          const m = /from\s+["']\.\/([^"'.]+)(?:\.js)?["']/.exec(line);
+          const m = /use\s+["']([^"']+)["']/.exec(line);
           return m?.[1]?.trim() || null;
         },
         scanFunctions: (source) => {
@@ -473,7 +534,7 @@ describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocol
             params: string[];
             inferredKind: 'statement' | 'value';
           }> = [];
-          const re = /export\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*\{([^}]*)\}/g;
+          const re = /pub\s+fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*\{([^}]*)\}/g;
           let m: RegExpExecArray | null;
           while ((m = re.exec(source)) !== null) {
             out.push({
@@ -489,27 +550,27 @@ describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocol
         },
       },
       extractErrorLine: (msg) => {
-        const m = /\.js:(\d+):/.exec(msg);
+        const m = /\.dsl:(\d+):/.exec(msg);
         return m ? Number(m[1]) : undefined;
       },
       exportToolchain: {
-        label: 'QuickJS / Node.js',
-        notes: '可直接在嵌入式 QuickJS 或 Node.js 运行导出脚本。',
+        label: 'PolyDSL Compiler',
+        notes: '仅导出型自定义 DSL 演示。',
       },
     };
 
-    const jsLang = 'js' as ScriptLanguageId;
+    const dslLang = 'dsl' as ScriptLanguageId;
     const mockAdapter: ScriptBackendAdapter = {
-      id: jsLang,
-      name: 'JavaScript',
-      version: 'ES2023',
-      extension: 'js',
-      fileName: 'main.js',
-      accentColor: '#f59e0b',
-      description: 'Mock 3rd-language backend for single-entry verification',
+      id: dslLang,
+      name: 'PolyDSL',
+      version: '1.0',
+      extension: 'dsl',
+      fileName: 'main.dsl',
+      accentColor: '#ec4899',
+      description: 'Mock 4th-language backend for single-entry verification',
       dialect: mockDialect,
       generate: () => ({
-        language: jsLang,
+        language: dslLang,
         code: '',
         debugCode: '',
         moduleDebugCode: '',
@@ -534,36 +595,36 @@ describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocol
 
     backendRegistry.register(mockAdapter);
     try {
-      expect(getSupportedLanguageIds()).toContain(jsLang);
-      expect(isSupportedLanguageId('js')).toBe(true);
-      expect(normalizeLanguageId('js')).toBe(jsLang);
-      expect(getLanguageDialect(jsLang).exportToolchain?.label).toBe(
-        'QuickJS / Node.js',
+      expect(getSupportedLanguageIds()).toContain(dslLang);
+      expect(isSupportedLanguageId('dsl')).toBe(true);
+      expect(normalizeLanguageId('dsl')).toBe(dslLang);
+      expect(getLanguageDialect(dslLang).exportToolchain?.label).toBe(
+        'PolyDSL Compiler',
       );
-      expect(getSupportedScriptAcceptAttr()).toBe('.lua,.py,.js');
-      expect(formatSupportedExtensionsLabel()).toBe('.lua / .py / .js');
-      expect(stripScriptExtension('driver.JS')).toBe('driver');
-      expect(formatInitialValueForLanguage({ kind: 'null' }, jsLang)).toBe('null');
+      expect(getSupportedScriptAcceptAttr()).toBe('.lua,.py,.js,.dsl');
+      expect(formatSupportedExtensionsLabel()).toBe('.lua / .py / .js / .dsl');
+      expect(stripScriptExtension('sensor.DSL')).toBe('sensor');
+      expect(formatInitialValueForLanguage({ kind: 'null' }, dslLang)).toBe('none');
 
-      const highlighted = highlightCodeLine('const v = console.log(42) // ok', jsLang);
-      expect(highlighted).toContain('<span class="syn-kw">const</span>');
-      expect(highlighted).toContain('<span class="syn-fn">console</span>');
+      const highlighted = highlightCodeLine('rule v = trace(42) // ok', dslLang);
+      expect(highlighted).toContain('<span class="syn-kw">rule</span>');
+      expect(highlighted).toContain('<span class="syn-fn">trace</span>');
       expect(highlighted).toContain('<span class="syn-num">42</span>');
       expect(highlighted).toContain('<span class="syn-cmt">// ok</span>');
 
       // Newly registered language keywords are automatically reserved by variable validator
-      const kwCheck = validateSharedVariableName('const', []);
+      const kwCheck = validateSharedVariableName('rule', []);
       expect(kwCheck.valid).toBe(false);
 
       // Error line parser delegates to dialect.extractErrorLine
-      expect(extractErrorLine('ReferenceError at main.js:42:5', jsLang)).toBe(42);
+      expect(extractErrorLine('SyntaxError at main.dsl:42:5', dslLang)).toBe(42);
 
-      // Native script library scanner auto-detects `.js` & scans functions via dialect.libBinding
+      // Native script library scanner auto-detects `.dsl` & scans functions via dialect.libBinding
       const scanned = scanScriptLibraryFile(
-        'sensor_drv.js',
-        'export function readTemp(ch) { return ch * 2; }\nexport function reset() { }',
+        'sensor_drv.dsl',
+        'pub fn readTemp(ch) { return ch * 2; }\npub fn reset() { }',
       );
-      expect(scanned.language).toBe(jsLang);
+      expect(scanned.language).toBe(dslLang);
       expect(scanned.moduleName).toBe('sensor_drv');
       expect(
         scanned.scannedFunctions.map(
@@ -576,31 +637,32 @@ describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocol
         extractImportedModuleNames({
           format: 'polyblock-extension',
           version: 1,
-          id: 'mock-js-pack',
-          name: 'Mock JS Pack',
+          id: 'mock-dsl-pack',
+          name: 'Mock DSL Pack',
           packVersion: '1.0.0',
-          iconLabel: 'JS',
-          color: '#f59e0b',
+          iconLabel: 'DSL',
+          color: '#ec4899',
           description: '',
           imports: {
-            [jsLang]: ['import * as sensor_drv from "./sensor_drv.js";'],
+            [dslLang]: ['use "sensor_drv"'],
           },
           sections: [],
         }),
       ).toEqual(['sensor_drv']);
     } finally {
-      backendRegistry.unregister(jsLang);
+      backendRegistry.unregister(dslLang);
     }
 
     // Cleanly reverted after unregister
-    expect(isSupportedLanguageId('js')).toBe(false);
-    expect(getSupportedScriptAcceptAttr()).toBe('.lua,.py');
-    expect(formatSupportedExtensionsLabel()).toBe('.lua / .py');
+    expect(isSupportedLanguageId('dsl')).toBe(false);
+    expect(getSupportedScriptAcceptAttr()).toBe('.lua,.py,.js');
+    expect(formatSupportedExtensionsLabel()).toBe('.lua / .py / .js');
   });
 
-  it('implements Lua and Python backends via BaseScriptBackend and unifies formatSharedVarRef', () => {
+  it('implements Lua, Python, and JavaScript backends via BaseScriptBackend and unifies formatSharedVarRef', () => {
     expect(backendRegistry.get('lua')).toBeInstanceOf(BaseScriptBackend);
     expect(backendRegistry.get('python')).toBeInstanceOf(BaseScriptBackend);
+    expect(backendRegistry.get('js')).toBeInstanceOf(BaseScriptBackend);
 
     const fakeGen = { getVariableName: (id: string) => `local_${id}` };
     try {
@@ -640,8 +702,10 @@ describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocol
     const manager = new RunnerManager();
     expect(manager.hasRunnerForLanguage('lua')).toBe(true);
     expect(manager.hasRunnerForLanguage('python')).toBe(true);
+    expect(manager.hasRunnerForLanguage('js')).toBe(true);
     expect(manager.findForLanguage('lua')?.id).toBe('browser-lua-wasmoon');
     expect(manager.findForLanguage('python')?.id).toBe('browser-python-micropython');
+    expect(manager.findForLanguage('js')?.id).toBe('browser-js-worker');
 
     const exportOnlyLang = 'c' as ScriptLanguageId;
     expect(manager.findForLanguage(exportOnlyLang)).toBeNull();

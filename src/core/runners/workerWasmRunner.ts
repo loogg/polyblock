@@ -35,21 +35,23 @@ export interface WorkerWasmRunnerConfig {
   id: string;
   name: string;
   shortLabel: string;
+  engineBadge?: string;
   language: ScriptLanguageId;
   description: string;
-  wasmAssetUrl: string;
+  wasmAssetUrl?: string;
   createWorker: () => Worker;
 }
 
 /**
- * Unified WebWorker WASM sandbox runner shared across all browser-sandbox languages.
+ * Unified WebWorker sandbox runner shared across all browser-sandbox languages (WASM or native JS Worker).
  * Eliminates duplicated worker lifecycle, watchdog, graceful stop, and message routing code
- * whenever new WASM languages are added.
+ * whenever new sandboxed languages are added.
  */
 export class WorkerWasmRunner implements ScriptRunner {
   readonly id: string;
   readonly name: string;
   readonly shortLabel: string;
+  readonly engineBadge: string;
   readonly kind = 'browser-wasm' as const;
   readonly supportedLanguages: ScriptLanguageId[];
   readonly description: string;
@@ -74,10 +76,11 @@ export class WorkerWasmRunner implements ScriptRunner {
     this.id = config.id;
     this.name = config.name;
     this.shortLabel = config.shortLabel;
+    this.engineBadge = config.engineBadge ?? 'WASM';
     this.language = config.language;
     this.supportedLanguages = [config.language];
     this.description = config.description;
-    this.wasmAssetUrl = config.wasmAssetUrl;
+    this.wasmAssetUrl = config.wasmAssetUrl ?? '';
     this.createWorkerFn = config.createWorker;
   }
 
@@ -86,6 +89,7 @@ export class WorkerWasmRunner implements ScriptRunner {
   }
 
   private resolveWasmUrl(): string {
+    if (!this.wasmAssetUrl) return '';
     return new URL(this.wasmAssetUrl, window.location.href).href;
   }
 

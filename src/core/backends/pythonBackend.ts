@@ -792,7 +792,7 @@ export class PythonBackendAdapter extends BaseScriptBackend<void> {
   readonly version = '3';
   readonly extension = PYTHON_DIALECT.extension;
   readonly fileName = `main.${PYTHON_DIALECT.extension}`;
-  readonly accentColor = '#f59e0b';
+  readonly accentColor = '#10b981';
   readonly description =
     '标准 Python 3 脚本生成器，支持 Style A1 只读 shared 模块、单线程 async 协程 ABI 与伴生脚本断点调试。';
   readonly dialect = PYTHON_DIALECT;

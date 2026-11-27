@@ -3,6 +3,7 @@ import type {
   VariableInitialValue,
 } from '../../types/project';
 import { extensionRegistry } from '../extensions/registry';
+import { JS_DIALECT, JsBackendAdapter } from './jsBackend';
 import { LUA_DIALECT, LuaBackendAdapter } from './luaBackend';
 import { PYTHON_DIALECT, PythonBackendAdapter } from './pythonBackend';
 import {
@@ -13,7 +14,7 @@ import {
 
 /**
  * Single registration entry point for all built-in target language backends.
- * Adding a new target language (e.g. JS / Arduino / DSL) ONLY requires:
+ * Adding a new target language (e.g. Arduino / C / DSL) ONLY requires:
  *   1. Creating `<lang>Backend.ts` exporting `<LANG>_DIALECT` & `<Lang>BackendAdapter`
  *   2. Adding one entry to `BUILTIN_BACKEND_ENTRIES` below.
  * `ScriptLanguageId`, dialect lookup, syntax highlighting, file extension helpers,
@@ -22,6 +23,7 @@ import {
 const BUILTIN_BACKEND_ENTRIES = [
   { getDialect: () => LUA_DIALECT, create: () => new LuaBackendAdapter() },
   { getDialect: () => PYTHON_DIALECT, create: () => new PythonBackendAdapter() },
+  { getDialect: () => JS_DIALECT, create: () => new JsBackendAdapter() },
 ] as const;
 
 export type RegisteredLanguageId = ReturnType<

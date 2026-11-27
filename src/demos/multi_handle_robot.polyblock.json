@@ -33,6 +33,9 @@
         ],
         "python": [
           "import drive"
+        ],
+        "js": [
+          "const drive = require(\"drive\");"
         ]
       },
       "sections": [
@@ -82,6 +85,9 @@
                 },
                 "python": {
                   "template": "drive.set_wheels({{LEFT}}, {{RIGHT}})"
+                },
+                "js": {
+                  "template": "drive.set_wheels({{LEFT}}, {{RIGHT}});"
                 }
               }
             },
@@ -104,6 +110,9 @@
                 },
                 "python": {
                   "template": "drive.stop()"
+                },
+                "js": {
+                  "template": "drive.stop();"
                 }
               }
             },
@@ -123,6 +132,9 @@
                 },
                 "python": {
                   "template": "drive.battery()"
+                },
+                "js": {
+                  "template": "drive.battery()"
                 }
               }
             },
@@ -141,6 +153,9 @@
                   "template": "drive.is_estop()"
                 },
                 "python": {
+                  "template": "drive.is_estop()"
+                },
+                "js": {
                   "template": "drive.is_estop()"
                 }
               }
@@ -182,7 +197,8 @@
                 "mode": "dispatch",
                 "condition": {
                   "lua": "{{STATE:edge:active}}",
-                  "python": "{{STATE:edge:active}}"
+                  "python": "{{STATE:edge:active}}",
+                  "js": "{{STATE:edge:active}}"
                 },
                 "duplicateKeyTemplate": "{{STATE}}",
                 "scopeLabelTemplate": "on_drive_estop · {{STATE:edge_zh}}",
@@ -198,7 +214,8 @@
         "moduleName": "drive",
         "sources": {
           "lua": "\nlocal M = {}\nfunction M.set_wheels(l, r)\n  if __poly_sim_get(\"estop\") == true then\n    __poly_sim_set(\"moving\", false)\n    __poly_sim_set(\"left_speed\", 0)\n    __poly_sim_set(\"right_speed\", 0)\n    __poly_sim_set(\"drive_log:append\", \"[ESTOP] 急停锁定中，拒绝动力输出\")\n    return\n  end\n  local lv = math.max(0, math.min(100, math.floor(tonumber(l) or 0)))\n  local rv = math.max(0, math.min(100, math.floor(tonumber(r) or 0)))\n  __poly_sim_set(\"left_speed\", lv)\n  __poly_sim_set(\"right_speed\", rv)\n  __poly_sim_set(\"moving\", (lv > 0 or rv > 0))\n  __poly_sim_set(\"drive_log:append\", \"wheels(L=\" .. tostring(lv) .. \"%, R=\" .. tostring(rv) .. \"%)\")\nend\nfunction M.stop()\n  __poly_sim_set(\"left_speed\", 0)\n  __poly_sim_set(\"right_speed\", 0)\n  __poly_sim_set(\"moving\", false)\n  __poly_sim_set(\"drive_log:append\", \"[STOP] 双轮动力已归零\")\nend\nfunction M.battery()\n  local v = tonumber(__poly_sim_get(\"battery\"))\n  return v or 86\nend\nfunction M.is_estop()\n  return __poly_sim_get(\"estop\") == true\nend\nreturn M\n",
-          "python": "\nimport _poly\ndef set_wheels(l, r):\n    if _poly.sim_get(\"estop\") is True:\n        _poly.sim_set(\"moving\", False)\n        _poly.sim_set(\"left_speed\", 0)\n        _poly.sim_set(\"right_speed\", 0)\n        _poly.sim_set(\"drive_log:append\", \"[ESTOP] 急停锁定中，拒绝动力输出\")\n        return\n    lv = max(0, min(100, int(float(l))))\n    rv = max(0, min(100, int(float(r))))\n    _poly.sim_set(\"left_speed\", lv)\n    _poly.sim_set(\"right_speed\", rv)\n    _poly.sim_set(\"moving\", lv > 0 or rv > 0)\n    _poly.sim_set(\"drive_log:append\", f\"wheels(L={lv}%, R={rv}%)\")\ndef stop():\n    _poly.sim_set(\"left_speed\", 0)\n    _poly.sim_set(\"right_speed\", 0)\n    _poly.sim_set(\"moving\", False)\n    _poly.sim_set(\"drive_log:append\", \"[STOP] 双轮动力已归零\")\ndef battery():\n    v = _poly.sim_get(\"battery\")\n    return int(v) if v is not None else 86\ndef is_estop():\n    return _poly.sim_get(\"estop\") is True\n"
+          "python": "\nimport _poly\ndef set_wheels(l, r):\n    if _poly.sim_get(\"estop\") is True:\n        _poly.sim_set(\"moving\", False)\n        _poly.sim_set(\"left_speed\", 0)\n        _poly.sim_set(\"right_speed\", 0)\n        _poly.sim_set(\"drive_log:append\", \"[ESTOP] 急停锁定中，拒绝动力输出\")\n        return\n    lv = max(0, min(100, int(float(l))))\n    rv = max(0, min(100, int(float(r))))\n    _poly.sim_set(\"left_speed\", lv)\n    _poly.sim_set(\"right_speed\", rv)\n    _poly.sim_set(\"moving\", lv > 0 or rv > 0)\n    _poly.sim_set(\"drive_log:append\", f\"wheels(L={lv}%, R={rv}%)\")\ndef stop():\n    _poly.sim_set(\"left_speed\", 0)\n    _poly.sim_set(\"right_speed\", 0)\n    _poly.sim_set(\"moving\", False)\n    _poly.sim_set(\"drive_log:append\", \"[STOP] 双轮动力已归零\")\ndef battery():\n    v = _poly.sim_get(\"battery\")\n    return int(v) if v is not None else 86\ndef is_estop():\n    return _poly.sim_get(\"estop\") is True\n",
+          "js": "const _poly = require(\"_poly\");\nmodule.exports = {\n  set_wheels(l, r) {\n    if (_poly.sim_get(\"estop\") === true) {\n      _poly.sim_set(\"moving\", false);\n      _poly.sim_set(\"left_speed\", 0);\n      _poly.sim_set(\"right_speed\", 0);\n      _poly.sim_set(\"drive_log:append\", \"[ESTOP] 急停锁定中，拒绝动力输出\");\n      return;\n    }\n    const lv = Math.max(0, Math.min(100, Math.floor(Number(l) || 0)));\n    const rv = Math.max(0, Math.min(100, Math.floor(Number(r) || 0)));\n    _poly.sim_set(\"left_speed\", lv);\n    _poly.sim_set(\"right_speed\", rv);\n    _poly.sim_set(\"moving\", lv > 0 || rv > 0);\n    _poly.sim_set(\"drive_log:append\", `wheels(L=${lv}%, R=${rv}%)`);\n  },\n  stop() {\n    _poly.sim_set(\"left_speed\", 0);\n    _poly.sim_set(\"right_speed\", 0);\n    _poly.sim_set(\"moving\", false);\n    _poly.sim_set(\"drive_log:append\", \"[STOP] 双轮动力已归零\");\n  },\n  battery() {\n    const v = Number(_poly.sim_get(\"battery\"));\n    return Number.isFinite(v) ? Math.trunc(v) : 86;\n  },\n  is_estop() {\n    return _poly.sim_get(\"estop\") === true;\n  },\n};"
         }
       },
       "simWidgets": [
@@ -292,6 +309,9 @@
         ],
         "python": [
           "import servo"
+        ],
+        "js": [
+          "const servo = require(\"servo\");"
         ]
       },
       "sections": [
@@ -353,6 +373,9 @@
                 },
                 "python": {
                   "template": "servo.set_angle({{PWM_ID:int}}, {{ANGLE}}){{PWM_ID:channel_comment}}"
+                },
+                "js": {
+                  "template": "servo.set_angle({{PWM_ID:int}}, {{ANGLE}});{{PWM_ID:channel_comment}}"
                 }
               }
             },
@@ -373,6 +396,9 @@
                 },
                 "python": {
                   "template": "servo.center_all()"
+                },
+                "js": {
+                  "template": "servo.center_all();"
                 }
               }
             }
@@ -383,7 +409,8 @@
         "moduleName": "servo",
         "sources": {
           "lua": "\nlocal M = {}\nfunction M.set_angle(ch, deg)\n  local cid = math.floor(tonumber(ch) or 0)\n  local d = math.max(0, math.min(180, math.floor(tonumber(deg) or 90)))\n  if cid == 1 then\n    __poly_sim_set(\"tilt_deg\", d)\n  else\n    __poly_sim_set(\"pan_deg\", d)\n  end\nend\nfunction M.center_all()\n  __poly_sim_set(\"pan_deg\", 90)\n  __poly_sim_set(\"tilt_deg\", 90)\nend\nreturn M\n",
-          "python": "\nimport _poly\ndef set_angle(ch, deg):\n    cid = int(float(ch))\n    d = max(0, min(180, int(float(deg))))\n    if cid == 1:\n        _poly.sim_set(\"tilt_deg\", d)\n    else:\n        _poly.sim_set(\"pan_deg\", d)\ndef center_all():\n    _poly.sim_set(\"pan_deg\", 90)\n    _poly.sim_set(\"tilt_deg\", 90)\n"
+          "python": "\nimport _poly\ndef set_angle(ch, deg):\n    cid = int(float(ch))\n    d = max(0, min(180, int(float(deg))))\n    if cid == 1:\n        _poly.sim_set(\"tilt_deg\", d)\n    else:\n        _poly.sim_set(\"pan_deg\", d)\ndef center_all():\n    _poly.sim_set(\"pan_deg\", 90)\n    _poly.sim_set(\"tilt_deg\", 90)\n",
+          "js": "const _poly = require(\"_poly\");\nmodule.exports = {\n  set_angle(ch, deg) {\n    const cid = Math.floor(Number(ch) || 0);\n    const d = Math.max(0, Math.min(180, Math.floor(Number(deg) || 90)));\n    if (cid === 1) {\n      _poly.sim_set(\"tilt_deg\", d);\n    } else {\n      _poly.sim_set(\"pan_deg\", d);\n    }\n  },\n  center_all() {\n    _poly.sim_set(\"pan_deg\", 90);\n    _poly.sim_set(\"tilt_deg\", 90);\n  },\n};"
         }
       },
       "simWidgets": [

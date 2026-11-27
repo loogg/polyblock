@@ -459,6 +459,25 @@ def reset():
       'reset:statement:',
     ]);
 
+    // JavaScript scanner check
+    const jsFns = scanLibraryFunctionsForLanguage(
+      'js',
+      'crc16',
+      `
+function _private_step(x) { return x ^ 1; }
+exports.calc = function(data, init = 0xFFFF) {
+  return _private_step(init ^ data.length);
+};
+exports.reset = () => {
+  // no return
+};
+`,
+    );
+    expect(jsFns.map((f) => `${f.funcName}:${f.inferredKind}:${f.params.join(',')}`)).toEqual([
+      'calc:value:data,init',
+      'reset:statement:',
+    ]);
+
     const fEntry = scanScriptLibraryFile('crc16.lua', crcEntryLua);
     const fTable = scanScriptLibraryFile('crc16_table.lua', crcTableLua);
     fTable.scanForBlocks = false; // helper table file

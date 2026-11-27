@@ -17,6 +17,9 @@
     ],
     "python": [
       "import poly_clock"
+    ],
+    "js": [
+      "const poly_clock = require(\"poly_clock\");"
     ]
   },
   "sections": [
@@ -38,6 +41,9 @@
             },
             "python": {
               "template": "poly_clock.millis()"
+            },
+            "js": {
+              "template": "poly_clock.millis()"
             }
           }
         },
@@ -53,6 +59,9 @@
             },
             "python": {
               "template": "poly_clock.reset()"
+            },
+            "js": {
+              "template": "poly_clock.reset();"
             }
           }
         }
@@ -63,7 +72,8 @@
     "moduleName": "poly_clock",
     "sources": {
       "lua": "\nlocal M = {}\nlocal base_ms = __poly_now_ms()\nfunction M.millis()\n  return math.floor(__poly_now_ms() - base_ms)\nend\nfunction M.reset()\n  base_ms = __poly_now_ms()\nend\nreturn M\n",
-      "python": "\nimport _poly\n_base_ms = _poly.now_ms()\ndef millis():\n    return int(_poly.now_ms() - _base_ms)\ndef reset():\n    global _base_ms\n    _base_ms = _poly.now_ms()\n"
+      "python": "\nimport _poly\n_base_ms = _poly.now_ms()\ndef millis():\n    return int(_poly.now_ms() - _base_ms)\ndef reset():\n    global _base_ms\n    _base_ms = _poly.now_ms()\n",
+      "js": "const _poly = require(\"_poly\");\nlet baseMs = _poly.now_ms();\nmodule.exports = {\n  millis() {\n    return Math.floor(_poly.now_ms() - baseMs);\n  },\n  reset() {\n    baseMs = _poly.now_ms();\n  },\n};"
     }
   }
 }

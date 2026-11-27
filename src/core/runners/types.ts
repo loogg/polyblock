@@ -65,6 +65,8 @@ export interface ScriptRunner {
   readonly id: string;
   readonly name: string;
   readonly shortLabel: string;
+  /** Optional short badge label rendered in DevicesPage runner cards (defaults to 'WASM'). */
+  readonly engineBadge?: string;
   readonly kind: RunnerKind;
   readonly supportedLanguages: ScriptLanguageId[];
   readonly description: string;

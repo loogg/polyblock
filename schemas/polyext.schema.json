@@ -84,7 +84,7 @@
     "LanguageIdKey": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_-]{0,23}$",
-      "description": "目标脚本语言 ID（如 lua、python，以及未来扩展的 c、js 等）。"
+      "description": "目标脚本语言 ID（内置 lua、python、js，及未来任意扩展语言）。"
     },
     "ExtensionPackImports": {
       "type": "object",
@@ -99,6 +99,11 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Python 3 文件顶层导入语句（如 [\"import mcu\"]）。"
+        },
+        "js": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "JavaScript 文件顶层导入语句（如 [\"const mcu = require(\\\"mcu\\\");\"]）。"
         }
       },
       "additionalProperties": {
@@ -129,7 +134,8 @@
           "propertyNames": { "$ref": "#/definitions/LanguageIdKey" },
           "properties": {
             "lua": { "type": "string", "description": "Lua 5.4 模块源码。" },
-            "python": { "type": "string", "description": "Python 3 模块源码。" }
+            "python": { "type": "string", "description": "Python 3 模块源码。" },
+            "js": { "type": "string", "description": "JavaScript (ES2023 / CommonJS) 模块源码。" }
           },
           "additionalProperties": { "type": "string" },
           "description": "按目标语言 ID 映射的模块源码（至少提供一种语言，如 { \"lua\": \"...\", \"python\": \"...\" }，支持任意未来语言 ID）。"
@@ -289,17 +295,19 @@
           "propertyNames": { "$ref": "#/definitions/LanguageIdKey" },
           "properties": {
             "lua": { "type": "string" },
-            "python": { "type": "string" }
+            "python": { "type": "string" },
+            "js": { "type": "string" }
           },
           "additionalProperties": { "type": "string" },
-          "description": "dispatch 模式下按目标语言 ID 映射的分支条件模板（如 { \"lua\": \"id == {{TIMER_ID:int}}\", \"python\": \"id == {{TIMER_ID:int}}\" }）。"
+          "description": "dispatch 模式下按目标语言 ID 映射的分支条件模板（如 { \"lua\": \"id == {{TIMER_ID:int}}\", \"python\": \"id == {{TIMER_ID:int}}\", \"js\": \"id === {{TIMER_ID:int}}\" }）。"
         },
         "branchComment": {
           "type": "object",
           "propertyNames": { "$ref": "#/definitions/LanguageIdKey" },
           "properties": {
             "lua": { "type": "string" },
-            "python": { "type": "string" }
+            "python": { "type": "string" },
+            "js": { "type": "string" }
           },
           "additionalProperties": { "type": "string" },
           "description": "dispatch 模式下按目标语言 ID 映射的分支尾注模板（如 { \"lua\": \"{{ID:channel_comment}}\", \"python\": \"{{ID:channel_comment}}\" }）。"
@@ -368,7 +376,8 @@
           "propertyNames": { "$ref": "#/definitions/LanguageIdKey" },
           "properties": {
             "lua": { "$ref": "#/definitions/ExtensionCodeTemplate" },
-            "python": { "$ref": "#/definitions/ExtensionCodeTemplate" }
+            "python": { "$ref": "#/definitions/ExtensionCodeTemplate" },
+            "js": { "$ref": "#/definitions/ExtensionCodeTemplate" }
           },
           "additionalProperties": { "$ref": "#/definitions/ExtensionCodeTemplate" },
           "description": "按目标语言 ID 映射的代码模板对象（statement/value 积木必填且至少提供一种语言，支持任意未来语言 ID）。"

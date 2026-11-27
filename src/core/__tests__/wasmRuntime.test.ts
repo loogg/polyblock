@@ -14,6 +14,7 @@ import {
 } from '../extensions/builtinPacks';
 import { extensionRegistry } from '../extensions/registry';
 import {
+  getAllHandleChannelPoolConfigs,
   getHandleChannelPoolConfig,
   instantiateProjectFromTemplate,
 } from '../projects/store';
@@ -24,7 +25,10 @@ import {
   setActiveHandleSharedVariables,
 } from '../blocks/workspaceContextBridge';
 import { WorkerDebugSession } from '../../workers/debugSession';
+import { runJsInSandbox } from '../../workers/jsSandboxCore';
 import { WorkerRuntimeScheduler } from '../../workers/runtimeScheduler';
+import { RT_PACK } from '../extensions/builtinPacks';
+import type { ExtensionModuleSource } from '../extensions/types';
 
 interface HarnessOptions {
   stepDelayMs?: number;
@@ -36,10 +40,87 @@ interface HarnessOptions {
     name: string;
     luaSource?: string;
     pythonSource?: string;
+    jsSource?: string;
+    packId?: string;
     /** When true, mount Python module lazily into MicroPython VFS (`/name.py`) just like Tier 1 handle scripts in python.worker.ts. */
     lazyVfs?: boolean;
   }>;
   onReady?: (sched: WorkerRuntimeScheduler) => void;
+}
+
+async function runJsDebugInSandbox(
+  jsDebug: string,
+  opts: HarnessOptions = {},
+): Promise<{
+  logs: string[];
+  scheduler: WorkerRuntimeScheduler;
+  simState: Record<string, unknown>;
+}> {
+  const logs: string[] = [];
+  const simState: Record<string, unknown> = { 'virtual-board::temp': 28 };
+  const scheduler = new WorkerRuntimeScheduler({
+    runId: 'test-js',
+    timerCount: 8,
+    timeSliceMs: opts.timeSliceMs ?? 20,
+    callbackTimeoutMs: opts.callbackTimeoutMs ?? 5000,
+    post: () => {},
+  });
+  const session = new WorkerDebugSession(
+    {
+      runId: 'test-js',
+      breakpoints: opts.breakpoints ?? [],
+      stepDelayMs: opts.stepDelayMs ?? 0,
+      onClockPause: (paused, creditMs) => {
+        if (paused) scheduler.pauseClock();
+        else scheduler.resumeClock(creditMs ?? 0);
+      },
+      getTimeSliceMs: () => scheduler.getTimeSliceMs(),
+    },
+    (msg) => {
+      if (msg.type === 'PAUSED' && typeof msg.blockId === 'string') {
+        opts.onPaused?.(msg.blockId, session);
+      }
+    },
+  );
+
+  const mockModules: ExtensionModuleSource[] = [];
+  if (RT_PACK.sandboxMock) {
+    mockModules.push({ ...RT_PACK.sandboxMock, packId: RT_PACK.id });
+  }
+  if (VIRTUAL_BOARD_PACK.sandboxMock) {
+    mockModules.push({ ...VIRTUAL_BOARD_PACK.sandboxMock, packId: VIRTUAL_BOARD_PACK.id });
+  }
+  for (const mod of opts.preloadModules ?? []) {
+    if (mod.jsSource) {
+      mockModules.push({
+        moduleName: mod.name,
+        sources: { js: mod.jsSource },
+        ...(mod.packId ? { packId: mod.packId } : {}),
+      });
+    }
+  }
+
+  opts.onReady?.(scheduler);
+  await runJsInSandbox({
+    code: jsDebug,
+    mockModules,
+    scheduler,
+    session,
+    postStdout: (line) => logs.push(line),
+    emitScopedState: (packId, kind, value) => {
+      const qualified = packId ? `${packId}::${kind}` : kind;
+      simState[qualified] = value;
+    },
+    getScopedState: (packId, key) => {
+      const qualified = packId ? `${packId}::${key}` : key;
+      return simState[qualified] ?? simState[key];
+    },
+    emitCustomEvent: (eventName, args) => {
+      scheduler.enqueueEvent(eventName, args);
+    },
+  });
+
+  return { logs, scheduler, simState };
 }
 
 async function runLuaDebugInWasmoon(
@@ -2420,5 +2501,348 @@ sys.modules["board"] = _m
     const pyElapsed = performance.now() - pyT0;
     expect(pyLogs).toEqual(['T10 = 1', 'T10 = 2', 'T10 = 3', 'T10 = 4', 'T10 = 5']);
     expect(pyElapsed).toBeLessThan(2000);
+
+    // 3. Same 5-shot 10ms timer in real JS sandbox at 0ms realtime speed
+    const jsWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(wsJson, jsWs);
+    const jsRes = backendRegistry.get('js').generate(jsWs);
+    jsWs.dispose();
+    const jsT0 = performance.now();
+    const { logs: jsLogs } = await runJsDebugInSandbox(jsRes.debugCode, {
+      stepDelayMs: 0,
+    });
+    const jsElapsed = performance.now() - jsT0;
+    expect(jsLogs).toEqual(['T10 = 1', 'T10 = 2', 'T10 = 3', 'T10 = 4', 'T10 = 5']);
+    expect(jsElapsed).toBeLessThan(1500);
+  });
+
+  it('executes full JavaScript (ES2023) parity suite: coroutines, timers, split timers.js + shared.js, shared functions, companion breakpoints, hoisted locals, dict/list ops, callback watchdog, and all 4 demos compile with 0 errors', async () => {
+    // 1. All 4 built-in demo projects compile cleanly across EVERY handle and script in JavaScript with 0 diagnostics!
+    for (const demoId of [
+      'starter_suite',
+      'virtual_board_demo',
+      'event_timer_demo',
+      'multi_handle_robot',
+    ]) {
+      const proj = instantiateProjectFromTemplate(demoId);
+      extensionRegistry.setActiveProjectLocalPacks(proj.localExtensions ?? []);
+      const jsAdapter = backendRegistry.get('js');
+      const projPools = extensionRegistry
+        .getChannelPools(proj.enabledCapabilities)
+        .map((p) => p.pool);
+      for (const hdl of proj.handles) {
+        const handleMetas = buildHandleScriptsMeta(hdl);
+        const sharedVars = hdl.sharedVariables ?? [];
+        const sharedFns = hdl.sharedFunctions ?? [];
+        const poolConfigs = getAllHandleChannelPoolConfigs(hdl, projPools);
+        for (const scr of hdl.scripts) {
+          const ws = new Blockly.Workspace();
+          Blockly.serialization.workspaces.load(scr.workspace, ws);
+          const res = jsAdapter.generate(ws, {
+            enabledCapabilities: proj.enabledCapabilities,
+            channelPoolConfigs: poolConfigs,
+            handleScripts: handleMetas,
+            currentScriptId: scr.id,
+            sharedVariables: sharedVars,
+            sharedVarInitials: hdl.variableInitialValues,
+            scriptVarInitials: scr.variableInitialValues,
+            sharedFunctions: sharedFns,
+          });
+          expect(
+            res.diagnostics.filter((d) => d.severity === 'error'),
+            `${demoId}/${hdl.name}/${scr.name}.js should have 0 errors`,
+          ).toEqual([]);
+          ws.dispose();
+        }
+      }
+    }
+    extensionRegistry.setActiveProjectLocalPacks([]);
+
+    // 2. Run real split multi-file `event_timer_demo` (main.js + timers.js + shared.js) in JS sandbox!
+    const evProj = instantiateProjectFromTemplate('event_timer_demo');
+    const evPools = extensionRegistry
+      .getChannelPools(evProj.enabledCapabilities)
+      .map((p) => p.pool);
+    const boardHandle = evProj.handles[0];
+    const oneshotHandle = evProj.handles[1];
+    const oneshotPoolCfgs = getAllHandleChannelPoolConfigs(oneshotHandle, evPools);
+    const boardPoolCfgs = getAllHandleChannelPoolConfigs(boardHandle, evPools);
+
+    // 2a. oneshot_vm handle: 1-shot timer fires once and exits cleanly with board LED / print
+    const oneshotMeta = buildHandleScriptsMeta(oneshotHandle);
+    const oneshotWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(oneshotHandle.scripts[0].workspace, oneshotWs);
+    const oneshotJs = backendRegistry.get('js').generate(oneshotWs, {
+      enabledCapabilities: evProj.enabledCapabilities,
+      channelPoolConfigs: oneshotPoolCfgs,
+      handleScripts: oneshotMeta,
+      currentScriptId: oneshotHandle.scripts[0].id,
+      sharedVariables: oneshotHandle.sharedVariables ?? [],
+      sharedVarInitials: oneshotHandle.variableInitialValues,
+      scriptVarInitials: oneshotHandle.scripts[0].variableInitialValues,
+      sharedFunctions: oneshotHandle.sharedFunctions ?? [],
+    });
+    oneshotWs.dispose();
+    const { logs: oneshotLogs } = await runJsDebugInSandbox(oneshotJs.debugCode, {
+      stepDelayMs: 0,
+      onReady: (sched) => {
+        setTimeout(() => sched.requestGracefulStop(), 900);
+      },
+    });
+    expect(oneshotLogs.some((l) => l.includes('[INFO]') || l.includes('[OK]'))).toBe(true);
+
+    // 2b. board_vm split handle: main.js requires timers.js + shared.js, dispatches T0 & T1, pauses on companion breakpoint!
+    const boardMeta = buildHandleScriptsMeta(boardHandle);
+    const sharedMod = buildHandleSharedModule(boardHandle, 'js', boardPoolCfgs);
+    expect(sharedMod).not.toBeNull();
+    expect(sharedMod!.source).toContain('module.exports = shared;');
+
+    const mainScript = boardHandle.scripts.find((s) => s.id === boardHandle.entryScriptId)!;
+    const timersScript = boardHandle.scripts.find((s) => s.id !== boardHandle.entryScriptId)!;
+
+    const mainWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(mainScript.workspace, mainWs);
+    const mainJs = backendRegistry.get('js').generate(mainWs, {
+      enabledCapabilities: evProj.enabledCapabilities,
+      channelPoolConfigs: boardPoolCfgs,
+      handleScripts: boardMeta,
+      currentScriptId: mainScript.id,
+      sharedVariables: boardHandle.sharedVariables ?? [],
+      sharedVarInitials: boardHandle.variableInitialValues,
+      scriptVarInitials: mainScript.variableInitialValues,
+      sharedFunctions: boardHandle.sharedFunctions ?? [],
+    });
+    mainWs.dispose();
+
+    const timersWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(timersScript.workspace, timersWs);
+    const timersJs = backendRegistry.get('js').generate(timersWs, {
+      enabledCapabilities: evProj.enabledCapabilities,
+      channelPoolConfigs: boardPoolCfgs,
+      handleScripts: boardMeta,
+      currentScriptId: timersScript.id,
+      sharedVariables: boardHandle.sharedVariables ?? [],
+      sharedVarInitials: boardHandle.variableInitialValues,
+      scriptVarInitials: timersScript.variableInitialValues,
+      sharedFunctions: boardHandle.sharedFunctions ?? [],
+    });
+    timersWs.dispose();
+
+    // Find a statement block inside timers.js to test companion breakpoint hitting across files
+    const timerBpId = Object.keys(timersJs.sourceMap).find(
+      (id) => timersJs.moduleDebugCode?.includes(`'${id}'`) && !id.startsWith('ev_on_'),
+    );
+    const hitBreakpoints: string[] = [];
+    const { logs: splitLogs, simState } = await runJsDebugInSandbox(mainJs.debugCode, {
+      stepDelayMs: 0,
+      breakpoints: timerBpId ? [timerBpId] : [],
+      onPaused: (bid, sess) => {
+        hitBreakpoints.push(bid);
+        sess.resume();
+      },
+      preloadModules: [
+        { name: sharedMod!.moduleName, jsSource: sharedMod!.debugSource },
+        { name: timersScript.name, jsSource: timersJs.moduleDebugCode! },
+      ],
+      onReady: (sched) => {
+        // Trigger Button A press to start T1 in timers.js, then gracefully stop after T0/T1 fire
+        setTimeout(() => sched.enqueueEvent('on_button', ['A', true]), 120);
+        setTimeout(() => sched.requestGracefulStop(), 950);
+      },
+    });
+    if (timerBpId) {
+      expect(hitBreakpoints).toContain(timerBpId);
+    }
+    expect(splitLogs.some((l) => l.includes('T1'))).toBe(true);
+    expect(simState['virtual-board::led']).toBeDefined();
+
+    // 3. Enforce Option A runtime error when calling sleep_ms inside on_run + watchdog timeout for infinite loop in on_run
+    const illegalSleepWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_run',
+              id: 'js_bad_run',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'poly_wait_ms',
+                    id: 'js_bad_wait',
+                    inputs: { MS: { block: { type: 'math_number', id: 'js_n10', fields: { NUM: 10 } } } },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      illegalSleepWs,
+    );
+    const illegalJs = backendRegistry.get('js').generate(illegalSleepWs);
+    illegalSleepWs.dispose();
+    await expect(runJsDebugInSandbox(illegalJs.debugCode)).rejects.toThrow(/禁止在事件回调/);
+
+    const infRunWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_run',
+              id: 'js_inf_run',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'controls_whileUntil',
+                    id: 'js_inf_while',
+                    fields: { MODE: 'WHILE' },
+                    inputs: {
+                      BOOL: { block: { type: 'logic_boolean', id: 'js_inf_t', fields: { BOOL: 'TRUE' } } },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      infRunWs,
+    );
+    const infJs = backendRegistry.get('js').generate(infRunWs);
+    infRunWs.dispose();
+    await expect(
+      runJsDebugInSandbox(infJs.debugCode, { callbackTimeoutMs: 120 }),
+    ).rejects.toThrow(/超时/);
+
+    // 4. Nested hoisted poly_local_set + dict/list/string/break/continue runtime verification in JS
+    const richWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_start',
+              id: 'js_rich_start',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'controls_if',
+                    id: 'js_if',
+                    inputs: {
+                      IF0: { block: { type: 'logic_boolean', id: 'js_t', fields: { BOOL: 'TRUE' } } },
+                      DO0: {
+                        block: {
+                          type: 'poly_local_set',
+                          id: 'js_loc_nested',
+                          fields: { NAME: 'msg' },
+                          inputs: {
+                            VALUE: {
+                              block: {
+                                type: 'poly_str_replace',
+                                id: 'js_rep',
+                                inputs: {
+                                  SRC: { block: { type: 'text', id: 'js_s1', fields: { TEXT: 'a-b-a' } } },
+                                  OLD: { block: { type: 'text', id: 'js_s2', fields: { TEXT: 'a' } } },
+                                  NEW: { block: { type: 'text', id: 'js_s3', fields: { TEXT: 'X' } } },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                    next: {
+                      block: {
+                        type: 'poly_print',
+                        id: 'js_p_msg',
+                        inputs: {
+                          VALUE: { block: { type: 'poly_local_get', id: 'js_loc_get', fields: { NAME: 'msg' } } },
+                        },
+                        next: {
+                          block: {
+                            type: 'variables_set',
+                            id: 'js_d_init',
+                            fields: { VAR: { id: 'v_cfg' } },
+                            inputs: { VALUE: { block: { type: 'poly_dict_new', id: 'js_d_new' } } },
+                            next: {
+                              block: {
+                                type: 'poly_dict_set',
+                                id: 'js_d_set',
+                                inputs: {
+                                  DICT: { block: { type: 'variables_get', id: 'js_dg1', fields: { VAR: { id: 'v_cfg' } } } },
+                                  KEY: { block: { type: 'text', id: 'js_dk', fields: { TEXT: 'mode' } } },
+                                  VAL: { block: { type: 'text', id: 'js_dv', fields: { TEXT: 'fast' } } },
+                                },
+                                next: {
+                                  block: {
+                                    type: 'poly_print',
+                                    id: 'js_p_dict',
+                                    inputs: {
+                                      VALUE: {
+                                        block: {
+                                          type: 'poly_dict_get',
+                                          id: 'js_d_get',
+                                          inputs: {
+                                            DICT: { block: { type: 'variables_get', id: 'js_dg2', fields: { VAR: { id: 'v_cfg' } } } },
+                                            KEY: { block: { type: 'text', id: 'js_dk2', fields: { TEXT: 'mode' } } },
+                                          },
+                                        },
+                                      },
+                                    },
+                                    next: {
+                                      block: {
+                                        type: 'poly_print',
+                                        id: 'js_p_miss',
+                                        inputs: {
+                                          VALUE: {
+                                            block: {
+                                              type: 'logic_compare',
+                                              id: 'js_cmp_null',
+                                              fields: { OP: 'EQ' },
+                                              inputs: {
+                                                A: {
+                                                  block: {
+                                                    type: 'poly_dict_get',
+                                                    id: 'js_d_miss',
+                                                    inputs: {
+                                                      DICT: { block: { type: 'variables_get', id: 'js_dg3', fields: { VAR: { id: 'v_cfg' } } } },
+                                                      KEY: { block: { type: 'text', id: 'js_dk3', fields: { TEXT: 'nope' } } },
+                                                    },
+                                                  },
+                                                },
+                                                B: { block: { type: 'logic_null', id: 'js_null' } },
+                                              },
+                                            },
+                                          },
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+        variables: [{ name: 'cfg', id: 'v_cfg' }],
+      },
+      richWs,
+    );
+    const richJs = backendRegistry.get('js').generate(richWs);
+    richWs.dispose();
+    const { logs: richLogs } = await runJsDebugInSandbox(richJs.debugCode);
+    expect(richLogs).toEqual(['X-b-X', 'fast', 'true']);
   });
 });
