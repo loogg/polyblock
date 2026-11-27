@@ -12,16 +12,26 @@ import {
   validateSharedVariableName,
   type VariableScopeKind,
 } from '../core/projects/handleVariables';
+import type { VariableInitialValue } from '../types/project';
 
 export type BlocklyDialogRequest =
   | {
       kind: 'create-variable';
       initialScope: VariableScopeKind;
-      onConfirm: (name: string, scope: VariableScopeKind) => void;
+      onConfirm: (
+        name: string,
+        scope: VariableScopeKind,
+        initialValue: VariableInitialValue,
+      ) => void;
     }
   | {
       kind: 'create-function';
-      onConfirm: (name: string, hasReturn: boolean) => void;
+      initialScope: VariableScopeKind;
+      onConfirm: (
+        name: string,
+        scope: VariableScopeKind,
+        hasReturn: boolean,
+      ) => void;
     }
   | {
       kind: 'prompt';
@@ -48,9 +58,23 @@ interface BlocklyDialogModalProps {
   handleSharedVars: string[];
   currentScriptVars: string[];
   allHandleVars: string[];
+  handleSharedFunctions?: string[];
+  currentScriptFunctions?: string[];
   allHandleFunctions?: string[];
   onClose: () => void;
 }
+
+const INIT_KIND_BUTTONS: Array<{
+  kind: VariableInitialValue['kind'];
+  label: string;
+}> = [
+  { kind: 'null', label: '空值' },
+  { kind: 'number', label: '数字' },
+  { kind: 'boolean', label: '布尔' },
+  { kind: 'string', label: '文本' },
+  { kind: 'list', label: '列表 []' },
+  { kind: 'dict', label: '字典 {}' },
+];
 
 export function BlocklyDialogModal({
   request,
@@ -60,6 +84,8 @@ export function BlocklyDialogModal({
   handleSharedVars,
   currentScriptVars,
   allHandleVars,
+  handleSharedFunctions = [],
+  currentScriptFunctions = [],
   allHandleFunctions = [],
   onClose,
 }: BlocklyDialogModalProps) {
@@ -67,16 +93,28 @@ export function BlocklyDialogModal({
     request.kind === 'prompt' ? request.defaultValue : '',
   );
   const [scope, setScope] = useState<VariableScopeKind>(
-    request.kind === 'create-variable' ? request.initialScope : 'file',
+    request.kind === 'create-variable' || request.kind === 'create-function'
+      ? request.initialScope
+      : 'file',
   );
   const [fnHasReturn, setFnHasReturn] = useState<boolean>(false);
+  const [initKind, setInitKind] = useState<VariableInitialValue['kind']>('null');
+  const [initNumberStr, setInitNumberStr] = useState<string>('0');
+  const [initBool, setInitBool] = useState<boolean>(false);
+  const [initString, setInitString] = useState<string>('');
   const [touched, setTouched] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setDraft(request.kind === 'prompt' ? request.defaultValue : '');
-    if (request.kind === 'create-variable') {
+    if (request.kind === 'create-variable' || request.kind === 'create-function') {
       setScope(request.initialScope);
+    }
+    if (request.kind === 'create-variable') {
+      setInitKind('null');
+      setInitNumberStr('0');
+      setInitBool(false);
+      setInitString('');
     }
     if (request.kind === 'create-function') {
       setFnHasReturn(false);
@@ -111,22 +149,48 @@ export function BlocklyDialogModal({
   const renamingIsShared =
     isRenamePrompt && handleSharedVars.includes(request.defaultValue.trim());
 
-  const effectiveScope: VariableScopeKind = isCreateVar
-    ? scope
-    : renamingIsShared
-      ? 'shared'
-      : 'file';
+  const effectiveScope: VariableScopeKind =
+    isCreateVar || isCreateFn
+      ? scope
+      : renamingIsShared
+        ? 'shared'
+        : 'file';
+
+  const resolvedInitialValue = useMemo<VariableInitialValue>(() => {
+    switch (initKind) {
+      case 'number': {
+        const parsed = Number(initNumberStr);
+        return { kind: 'number', value: Number.isFinite(parsed) ? parsed : 0 };
+      }
+      case 'boolean':
+        return { kind: 'boolean', value: initBool };
+      case 'string':
+        return { kind: 'string', value: initString };
+      case 'list':
+        return { kind: 'list' };
+      case 'dict':
+        return { kind: 'dict' };
+      default:
+        return { kind: 'null' };
+    }
+  }, [initKind, initNumberStr, initBool, initString]);
 
   const validation = useMemo(() => {
     if (!isCreateVar && !isCreateFn && !isPrompt) {
       return { valid: true, trimmed: '' } as const;
     }
     if (isCreateFn) {
+      const existingFns =
+        effectiveScope === 'shared'
+          ? allHandleFunctions
+          : Array.from(
+              new Set([...handleSharedFunctions, ...currentScriptFunctions]),
+            );
       return validateSharedVariableName(
         draft,
-        allHandleFunctions,
+        existingFns,
         undefined,
-        '跨文件公共函数',
+        effectiveScope === 'shared' ? '跨文件公共函数' : '本文件函数',
       );
     }
     if (!isVariablePrompt) {
@@ -149,9 +213,11 @@ export function BlocklyDialogModal({
   }, [
     allHandleFunctions,
     allHandleVars,
+    currentScriptFunctions,
     currentScriptVars,
     draft,
     effectiveScope,
+    handleSharedFunctions,
     handleSharedVars,
     isCreateFn,
     isCreateVar,
@@ -175,7 +241,7 @@ export function BlocklyDialogModal({
         inputRef.current?.focus();
         return;
       }
-      request.onConfirm(validation.trimmed, scope);
+      request.onConfirm(validation.trimmed, scope, resolvedInitialValue);
       onClose();
       return;
     }
@@ -185,7 +251,7 @@ export function BlocklyDialogModal({
         inputRef.current?.focus();
         return;
       }
-      request.onConfirm(validation.trimmed, fnHasReturn);
+      request.onConfirm(validation.trimmed, scope, fnHasReturn);
       onClose();
       return;
     }
@@ -228,7 +294,9 @@ export function BlocklyDialogModal({
   });
 
   const modalTitle = isCreateFn
-    ? '新建跨文件公共函数'
+    ? effectiveScope === 'shared'
+      ? '新建跨文件公共函数'
+      : '新建本文件私有函数'
     : isCreateVar
       ? scope === 'shared'
         ? '新建跨文件全局变量'
@@ -260,7 +328,7 @@ export function BlocklyDialogModal({
         if (e.target === e.currentTarget) cancel();
       }}
     >
-      <div className="modal-shell alias-modal" style={{ maxWidth: 440 }}>
+      <div className="modal-shell alias-modal" style={{ maxWidth: 460 }}>
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             {isCreateFn ? (
@@ -295,8 +363,12 @@ export function BlocklyDialogModal({
         >
           {isCreateVar || isCreateFn || isPrompt ? (
             <>
-              {isCreateVar && (
-                <div className="var-scope-switcher" role="radiogroup" aria-label="选择变量作用域">
+              {(isCreateVar || isCreateFn) && (
+                <div
+                  className="var-scope-switcher"
+                  role="radiogroup"
+                  aria-label={isCreateFn ? '选择函数作用域' : '选择变量作用域'}
+                >
                   <button
                     type="button"
                     role="radio"
@@ -305,8 +377,8 @@ export function BlocklyDialogModal({
                     onClick={() => setScope('shared')}
                   >
                     <Globe size={13} />
-                    <span>跨文件全局</span>
-                    <small>同句柄共享</small>
+                    <span>{isCreateFn ? '跨文件公共' : '跨文件全局'}</span>
+                    <small>归入 shared 模块</small>
                   </button>
                   <button
                     type="button"
@@ -316,14 +388,18 @@ export function BlocklyDialogModal({
                     onClick={() => setScope('file')}
                   >
                     <FileCode2 size={13} />
-                    <span>单文件全局</span>
+                    <span>{isCreateFn ? '本文件私有' : '单文件全局'}</span>
                     <small>仅当前脚本</small>
                   </button>
                 </div>
               )}
 
               {isCreateFn && (
-                <div className="var-scope-switcher" role="radiogroup" aria-label="选择函数返回类型">
+                <div
+                  className="var-scope-switcher"
+                  role="radiogroup"
+                  aria-label="选择函数返回类型"
+                >
                   <button
                     type="button"
                     role="radio"
@@ -367,16 +443,18 @@ export function BlocklyDialogModal({
                       style={{ background: handleColor }}
                     />
                     <strong>
-                      {isCreateFn || effectiveScope === 'shared'
+                      {effectiveScope === 'shared'
                         ? handleName
                         : `${handleName}/${activeScriptLabel}`}
                     </strong>
                   </span>
                   <span className="count-badge">
                     {isCreateFn
-                      ? '跨文件公共函数 · 同句柄共享'
+                      ? effectiveScope === 'shared'
+                        ? '跨文件公共 · shared.fn()'
+                        : '本文件私有 · 仅本脚本'
                       : effectiveScope === 'shared'
-                        ? '跨文件全局 · 同句柄共享'
+                        ? '跨文件全局 · shared.xxx'
                         : '单文件全局 · 仅本脚本'}
                   </span>
                 </div>
@@ -413,7 +491,9 @@ export function BlocklyDialogModal({
                   }}
                   placeholder={
                     isCreateFn
-                      ? '输入跨文件函数名（如 clamp、format_msg、calc_crc）'
+                      ? effectiveScope === 'shared'
+                        ? '输入跨文件函数名（如 clamp、double_val、calc_crc）'
+                        : '输入私有函数名（如 helper、step_once）'
                       : isVariablePrompt
                         ? effectiveScope === 'shared'
                           ? '输入跨文件变量名（如 led_on、ticks、状态）'
@@ -435,6 +515,97 @@ export function BlocklyDialogModal({
                 />
               </label>
 
+              {isCreateVar && (
+                <div className="var-init-picker">
+                  <span className="var-init-picker-label">
+                    声明时初始值（避免未赋值直接运算报错）：
+                  </span>
+                  <div
+                    className="var-init-kind-grid"
+                    role="radiogroup"
+                    aria-label="选择变量初始值类型"
+                  >
+                    {INIT_KIND_BUTTONS.map((btn) => (
+                      <button
+                        key={btn.kind}
+                        type="button"
+                        role="radio"
+                        aria-checked={initKind === btn.kind}
+                        className={`var-init-kind-btn ${
+                          initKind === btn.kind ? 'active' : ''
+                        }`}
+                        onClick={() => setInitKind(btn.kind)}
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {initKind === 'number' && (
+                    <input
+                      type="number"
+                      step="any"
+                      aria-label="初始数值"
+                      className="dropdown-rename-input"
+                      style={{ width: '100%', height: 32, padding: '0 10px' }}
+                      value={initNumberStr}
+                      onChange={(e) => setInitNumberStr(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          confirm();
+                        }
+                      }}
+                    />
+                  )}
+
+                  {initKind === 'boolean' && (
+                    <div
+                      className="var-init-bool-row"
+                      role="radiogroup"
+                      aria-label="初始布尔值"
+                    >
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={!initBool}
+                        className={`var-init-kind-btn ${!initBool ? 'active' : ''}`}
+                        onClick={() => setInitBool(false)}
+                      >
+                        false / False
+                      </button>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={initBool}
+                        className={`var-init-kind-btn ${initBool ? 'active' : ''}`}
+                        onClick={() => setInitBool(true)}
+                      >
+                        true / True
+                      </button>
+                    </div>
+                  )}
+
+                  {initKind === 'string' && (
+                    <input
+                      type="text"
+                      aria-label="初始文本"
+                      className="dropdown-rename-input"
+                      style={{ width: '100%', height: 32, padding: '0 10px' }}
+                      placeholder="输入初始文本（留空表示空字符串）"
+                      value={initString}
+                      onChange={(e) => setInitString(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          confirm();
+                        }
+                      }}
+                    />
+                  )}
+                </div>
+              )}
+
               {touched && !validation.valid ? (
                 <div
                   role="alert"
@@ -448,17 +619,34 @@ export function BlocklyDialogModal({
                 </div>
               ) : isCreateFn ? (
                 <p className="settings-hint" style={{ margin: 0 }}>
-                  将在当前脚本「{activeScriptLabel}」中创建并向句柄「{handleName}」内所有脚本共享：Lua 导出全局 <code>function</code>，Python 导出模块函数并自动以 <code>模块名.函数名()</code> 跨文件调用。右键函数定义块可随时在私有/公共间切换。
+                  {effectiveScope === 'shared' ? (
+                    <>
+                      函数积木保存在当前脚本「{activeScriptLabel}」便于编辑，导出时自动归入同句柄只读{' '}
+                      <code>shared</code> 模块（<code>shared.lua</code> /{' '}
+                      <code>shared.py</code>），所有脚本统一通过{' '}
+                      <code>shared.函数名()</code> 调用；跨文件函数不可引用单文件私有变量。
+                    </>
+                  ) : (
+                    <>
+                      仅在当前脚本「{activeScriptLabel}」内部定义和调用：Lua 导出{' '}
+                      <code>local function</code>，Python 导出本文件 <code>def</code>
+                      ，不污染其他脚本。右键函数定义块可随时在私有/公共间切换。
+                    </>
+                  )}
                 </p>
               ) : isVariablePrompt ? (
                 <p className="settings-hint" style={{ margin: 0 }}>
                   {effectiveScope === 'shared' ? (
                     <>
-                      将在句柄「{handleName}」内所有脚本间共享：Lua 写入 <code>_G</code>，Python 自动归入只读 <code>shared.py</code> 并以 <code>shared.变量名</code> 访问。
+                      将在句柄「{handleName}」内所有脚本间共享：Lua 自动归入只读{' '}
+                      <code>shared.lua</code>，Python 自动归入只读{' '}
+                      <code>shared.py</code>，统一以 <code>shared.变量名</code> 访问。
                     </>
                   ) : (
                     <>
-                      仅在当前脚本「{activeScriptLabel}」内所有回调共享、与其他脚本严格隔离：Lua 生成文件顶层 <code>local</code>，Python 生成模块级 <code>global</code>。
+                      仅在当前脚本「{activeScriptLabel}」内所有回调共享、与其他脚本严格隔离：Lua 生成文件顶层{' '}
+                      <code>local</code>，Python 生成模块级变量（写入时自动加{' '}
+                      <code>global</code>）。
                     </>
                   )}
                 </p>

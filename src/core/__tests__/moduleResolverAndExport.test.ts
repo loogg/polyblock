@@ -745,23 +745,23 @@ def reset():
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
 
-  it('auto-bundles shared.py ONLY for Python handles with cross-file shared variables (never for single-file or Lua bundles)', () => {
+  it('auto-bundles Style A1 shared.lua & shared.py whenever a handle has cross-file variables or functions (even single-script handles)', () => {
     const pyProj = instantiateProjectFromTemplate('event_timer_demo');
     pyProj.language = 'python';
     const boardVm = pyProj.handles.find((h) => h.name === 'board_vm')!;
     const oneshotVm = pyProj.handles.find((h) => h.name === 'oneshot_vm')!;
 
-    // 1. Single-handle Python export for multi-file `board_vm` includes `shared.py`
+    // 1. Single-handle Python export for `board_vm` includes `shared.py` with explicit initial values
     const pyBoardBundle = buildSingleHandleTargetBundle(pyProj, boardVm);
     const pyBoardPaths = pyBoardBundle.entries.map((e) => e.path);
     expect(pyBoardPaths).toContain('shared.py');
     expect(pyBoardPaths).toContain('main.py');
     expect(pyBoardPaths).toContain('timers.py');
-    const sharedEntry = pyBoardBundle.entries.find((e) => e.path === 'shared.py')!;
-    expect(sharedEntry.content).toContain('led_on = None');
-    expect(sharedEntry.content).toContain('ticks = None');
+    const sharedPyEntry = pyBoardBundle.entries.find((e) => e.path === 'shared.py')!;
+    expect(sharedPyEntry.content).toContain('led_on = False');
+    expect(sharedPyEntry.content).toContain('ticks = 0');
 
-    // 2. Single-handle Python export for single-file `oneshot_vm` has NO `shared.py`
+    // 2. Single-handle export for `oneshot_vm` (no shared vars/fns) has NO `shared.py`
     const pyOneshotBundle = buildSingleHandleTargetBundle(pyProj, oneshotVm);
     expect(pyOneshotBundle.entries.map((e) => e.path)).not.toContain('shared.py');
 
@@ -771,12 +771,29 @@ def reset():
     expect(pyFullPaths).toContain('board_vm/shared.py');
     expect(pyFullPaths).not.toContain('oneshot_vm/shared.py');
 
-    // 4. Lua bundle NEVER emits `shared.lua` or `shared.py` (Lua uses native `_G`)
+    // 4. Lua bundle ALSO emits Style A1 `shared.lua` for `board_vm` (and omits it for `oneshot_vm`)!
     const luaProj = instantiateProjectFromTemplate('event_timer_demo');
     luaProj.language = 'lua';
     const luaBoardBundle = buildSingleHandleTargetBundle(luaProj, luaProj.handles[0]);
     const luaPaths = luaBoardBundle.entries.map((e) => e.path);
-    expect(luaPaths).not.toContain('shared.lua');
+    expect(luaPaths).toContain('shared.lua');
     expect(luaPaths).not.toContain('shared.py');
+    const sharedLuaEntry = luaBoardBundle.entries.find((e) => e.path === 'shared.lua')!;
+    expect(sharedLuaEntry.content).toContain('local shared = {}');
+    expect(sharedLuaEntry.content).toContain('shared.led_on = false');
+    expect(sharedLuaEntry.content).toContain('shared.ticks = 0');
+    expect(sharedLuaEntry.content).toContain('return shared');
+
+    const luaOneshotBundle = buildSingleHandleTargetBundle(luaProj, luaProj.handles[1]);
+    expect(luaOneshotBundle.entries.map((e) => e.path)).not.toContain('shared.lua');
+
+    // 5. Even a single-script handle WITH a shared variable generates `shared.lua`!
+    const singleWithShared = {
+      ...luaProj.handles[1],
+      sharedVariables: ['count'],
+      variableInitialValues: { count: { kind: 'number' as const, value: 0 } },
+    };
+    const singleSharedBundle = buildSingleHandleTargetBundle(luaProj, singleWithShared);
+    expect(singleSharedBundle.entries.map((e) => e.path)).toContain('shared.lua');
   });
 });

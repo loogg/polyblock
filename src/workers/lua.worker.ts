@@ -86,23 +86,34 @@ print = function(...)
   __poly_print(table.concat(out, "\\t"))
 end
 
-__poly_event_mode = false
 __poly_start_co = nil
 
-function sleep_ms(ms)
-  if __poly_event_mode then
-    local cur, is_main = coroutine.running()
-    if cur == nil or is_main or cur ~= __poly_start_co then
-      error("禁止在事件回调（on_run / on_timer / on_button / on_stop）中调用 sleep_ms()；实板同步回调不可阻塞，请移至「当程序启动」协程或改用定时器。", 2)
-    end
-    coroutine.yield("__POLY_SLEEP__", tonumber(ms) or 0)
-    return
+-- Pure-Lua yieldable require wrapper: prevents Lua 5.4 "attempt to yield across a C-call boundary"
+-- when on_start() coroutine loads companion modules like require("timers") with stepping or breakpoints.
+local __poly_orig_require = require
+function require(modname)
+  local cached = package.loaded[modname]
+  if cached ~= nil then return cached end
+  local loader = package.preload[modname]
+  if type(loader) == "function" then
+    local res = loader(modname)
+    if res == nil then res = true end
+    package.loaded[modname] = res
+    return res
   end
-  __poly_sleep(tonumber(ms) or 0):await()
+  return __poly_orig_require(modname)
+end
+
+function sleep_ms(ms)
+  local cur, is_main = coroutine.running()
+  if cur == nil or is_main or cur ~= __poly_start_co then
+    error("禁止在事件回调（on_run / on_timer / on_button / on_stop）或顶层脚本中调用 sleep_ms()；请移至「当程序启动 (on_start)」协程内。", 2)
+  end
+  coroutine.yield("__POLY_SLEEP__", tonumber(ms) or 0)
 end
 
 function __poly_tick(blockId, varsJson)
-  if __poly_event_mode and __poly_start_co ~= nil and coroutine.running() == __poly_start_co then
+  if __poly_start_co ~= nil and coroutine.running() == __poly_start_co then
     coroutine.yield("__POLY_STEP__", blockId, varsJson)
     return
   end
@@ -110,7 +121,7 @@ function __poly_tick(blockId, varsJson)
 end
 
 function __poly_yield_check()
-  if __poly_event_mode and __poly_start_co ~= nil and coroutine.running() == __poly_start_co then
+  if __poly_start_co ~= nil and coroutine.running() == __poly_start_co then
     coroutine.yield("__POLY_SLICE_CHECK__")
   end
 end
@@ -351,15 +362,6 @@ self.onmessage = async (event: MessageEvent<WorkerControlMessage>) => {
         '__poly_rt_is_expired',
         (startTick: unknown, timeoutTicks: unknown) =>
           scheduler.isTickExpired(startTick, timeoutTicks),
-      );
-      engine.global.set(
-        '__poly_should_loop',
-        (hasRun: unknown, hasTimer: unknown, hasBtn: unknown) =>
-          scheduler.shouldEnterEventLoop(
-            Boolean(hasRun),
-            Boolean(hasTimer),
-            Boolean(hasBtn),
-          ),
       );
       engine.global.set(
         '__poly_init_scheduler',

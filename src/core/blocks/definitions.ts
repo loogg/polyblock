@@ -100,14 +100,6 @@ export function registerPolyBlocks(): void {
       style: 'print_blocks',
       tooltip: '以 "标签 = 值" 格式快速打印调试信息。',
     },
-    {
-      type: 'poly_clear_log',
-      message0: '清空日志控制台',
-      previousStatement: null,
-      nextStatement: null,
-      style: 'print_blocks',
-      tooltip: '发送清空标记，清理当前日志控制台显示。',
-    },
 
     // --- 控制 (Control) ---
     {
@@ -193,19 +185,58 @@ export function registerPolyBlocks(): void {
       tooltip: '将数字、布尔或变量安全转换为字符串，方便拼接。',
     },
 
-    // --- 列表辅助 ---
+    // --- 列表核心原语（纯值槽、零隐藏辅助函数注入，支持跨文件/单文件/局部变量与表达式） ---
     {
       type: 'poly_list_append',
-      message0: '向列表 %1 追加 %2',
+      message0: '列表 %1 末尾追加 %2',
       args0: [
-        { type: 'field_variable', name: 'LIST', variable: 'items' },
+        { type: 'input_value', name: 'LIST' },
         { type: 'input_value', name: 'ITEM' },
       ],
       inputsInline: true,
       previousStatement: null,
       nextStatement: null,
       style: 'list_blocks',
-      tooltip: '向指定列表变量末尾追加一个元素。',
+      tooltip: '向指定列表（可拖入任意作用域变量或列表表达式）末尾追加一个元素。',
+    },
+    {
+      type: 'poly_list_get',
+      message0: '列表 %1 取第 %2 项',
+      args0: [
+        { type: 'input_value', name: 'LIST' },
+        { type: 'input_value', name: 'INDEX', check: 'Number' },
+      ],
+      inputsInline: true,
+      output: null,
+      style: 'list_blocks',
+      tooltip: '读取列表第 N 项（从 1 开始计数：Lua 导出 lst[N]，Python 导出 lst[N - 1]）。',
+    },
+    {
+      type: 'poly_list_set',
+      message0: '列表 %1 设置第 %2 项 = %3',
+      args0: [
+        { type: 'input_value', name: 'LIST' },
+        { type: 'input_value', name: 'INDEX', check: 'Number' },
+        { type: 'input_value', name: 'VALUE' },
+      ],
+      inputsInline: true,
+      previousStatement: null,
+      nextStatement: null,
+      style: 'list_blocks',
+      tooltip: '修改列表第 N 项的值（从 1 开始计数）。',
+    },
+    {
+      type: 'poly_list_remove',
+      message0: '列表 %1 移除第 %2 项',
+      args0: [
+        { type: 'input_value', name: 'LIST' },
+        { type: 'input_value', name: 'INDEX', check: 'Number' },
+      ],
+      inputsInline: true,
+      previousStatement: null,
+      nextStatement: null,
+      style: 'list_blocks',
+      tooltip: '移除列表第 N 项（从 1 开始计数：Lua 导出 table.remove，Python 导出 pop）。',
     },
   ];
 
@@ -263,10 +294,9 @@ export function registerPolyBlocks(): void {
               this.removeInput(name, true);
             }
           }
-          // Keep/update header at top
+          // Keep/update header at top (Style A1: all cross-file functions live uniformly in `shared`)
           const header = this.appendDummyInput('HEADER');
-          header.appendField('跨文件调用');
-          header.appendField(`${meta.scriptName}.${meta.fnName}`);
+          header.appendField(`shared.${meta.fnName}`);
 
           // Remove stale ARG inputs beyond params.length
           for (const inp of [...this.inputList]) {
@@ -295,7 +325,7 @@ export function registerPolyBlocks(): void {
           }
 
           this.setTooltip(
-            `调用同句柄跨文件公共函数 ${meta.scriptName}.${meta.fnName}(${meta.params.join(', ')})；Lua 直接调用全局函数并按需 require("${meta.scriptName}")，Python 调用 ${meta.scriptName}.${meta.fnName}(...) 并按需 import ${meta.scriptName}。`,
+            `调用同句柄跨文件公共函数 shared.${meta.fnName}(${meta.params.join(', ')})（定义于 ${meta.scriptName}，自动归集至只读 shared 模块并在顶部自动引入）。`,
           );
         };
         this.rebuildSharedCallShape_();

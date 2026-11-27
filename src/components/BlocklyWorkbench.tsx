@@ -184,7 +184,7 @@ interface BlocklyWorkbenchProps {
   onWorkspaceChange: (workspace: Blockly.WorkspaceSvg) => void;
   onHandleVariableEvent?: (mutation: HandleVariableMutation) => void;
   onRequestCreateVariable?: (initialScope: VariableScopeKind) => void;
-  onRequestCreateSharedFunction?: () => void;
+  onRequestCreateFunction?: (initialScope: VariableScopeKind) => void;
   onToggleSharedFunction?: (fnName: string) => void;
   onHandleFunctionEvent?: (mutation: HandleFunctionMutation) => void;
   onSelectBlock: (blockId: string | null) => void;
@@ -301,7 +301,7 @@ function registerBreakpointContextMenu(): void {
       const isShared = (getActiveHandleSharedFunctions() ?? []).includes(fnName);
       return isShared
         ? '转为本文件私有函数（仅本脚本可用）'
-        : '设为跨文件公共函数（同句柄共享）';
+        : '设为跨文件公共函数（归入 shared 模块）';
     },
     preconditionFn: (scope) => {
       const blk = scope.block;
@@ -362,7 +362,7 @@ export const BlocklyWorkbench = forwardRef<
     onWorkspaceChange,
     onHandleVariableEvent,
     onRequestCreateVariable,
-    onRequestCreateSharedFunction,
+    onRequestCreateFunction,
     onToggleSharedFunction,
     onHandleFunctionEvent,
     onSelectBlock,
@@ -378,7 +378,7 @@ export const BlocklyWorkbench = forwardRef<
   const onChangeRef = useRef(onWorkspaceChange);
   const onHandleVarRef = useRef(onHandleVariableEvent);
   const onRequestCreateVarRef = useRef(onRequestCreateVariable);
-  const onRequestCreateSharedFnRef = useRef(onRequestCreateSharedFunction);
+  const onRequestCreateFnRef = useRef(onRequestCreateFunction);
   const onHandleFnRef = useRef(onHandleFunctionEvent);
   const suppressedCreateNamesRef = useRef<Set<string>>(new Set());
   const onSelectRef = useRef(onSelectBlock);
@@ -414,7 +414,7 @@ export const BlocklyWorkbench = forwardRef<
   onChangeRef.current = onWorkspaceChange;
   onHandleVarRef.current = onHandleVariableEvent;
   onRequestCreateVarRef.current = onRequestCreateVariable;
-  onRequestCreateSharedFnRef.current = onRequestCreateSharedFunction;
+  onRequestCreateFnRef.current = onRequestCreateFunction;
   onHandleFnRef.current = onHandleFunctionEvent;
   onSelectRef.current = onSelectBlock;
   onOpenTimerCfgRef.current = onOpenHandleTimerSettings;
@@ -519,7 +519,11 @@ export const BlocklyWorkbench = forwardRef<
     });
 
     ws.registerButtonCallback('CREATE_SHARED_FUNCTION', () => {
-      onRequestCreateSharedFnRef.current?.();
+      onRequestCreateFnRef.current?.('shared');
+    });
+
+    ws.registerButtonCallback('CREATE_PRIVATE_FUNCTION', () => {
+      onRequestCreateFnRef.current?.('file');
     });
 
     ws.registerButtonCallback(OPEN_HANDLE_CHANNEL_CONFIG_CALLBACK, () => {

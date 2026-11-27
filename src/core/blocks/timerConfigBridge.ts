@@ -1,4 +1,7 @@
-import type { ProjectTimerConfig } from '../../types/project';
+import type {
+  ProjectTimerConfig,
+  VariableInitialValue,
+} from '../../types/project';
 import type { ModuleConflictItem } from '../extensions/moduleResolver';
 
 export const DEFAULT_TIMER_COUNT = 8;
@@ -37,6 +40,8 @@ export interface DeclaredFunctionMeta {
   name: string;
   params: string[];
   hasReturn: boolean;
+  /** True when the function body directly or transitively calls `poly_wait_ms` (`sleep_ms`). */
+  usesSleep?: boolean;
   scriptId: string;
   scriptName: string;
 }
@@ -101,6 +106,8 @@ let activeCapabilities: string[] | null = null;
 let activeHandleScripts: ActiveHandleScriptMeta[] = [];
 let activeHandleScriptId: string | null = null;
 let activeHandleSharedVariables: string[] | null = null;
+let activeHandleSharedVarInitials: Record<string, VariableInitialValue> = {};
+let activeScriptVarInitials: Record<string, VariableInitialValue> = {};
 let activeHandleSharedFunctions: string[] | null = null;
 let activeModuleConflicts: ModuleConflictItem[] = [];
 
@@ -110,6 +117,32 @@ export function setActiveHandleSharedVariables(names: string[] | null): void {
 
 export function getActiveHandleSharedVariables(): string[] | null {
   return activeHandleSharedVariables;
+}
+
+export function setActiveHandleSharedVarInitials(
+  initials?: Record<string, VariableInitialValue> | null,
+): void {
+  activeHandleSharedVarInitials = initials ? { ...initials } : {};
+}
+
+export function getActiveHandleSharedVarInitials(): Record<
+  string,
+  VariableInitialValue
+> {
+  return activeHandleSharedVarInitials;
+}
+
+export function setActiveScriptVarInitials(
+  initials?: Record<string, VariableInitialValue> | null,
+): void {
+  activeScriptVarInitials = initials ? { ...initials } : {};
+}
+
+export function getActiveScriptVarInitials(): Record<
+  string,
+  VariableInitialValue
+> {
+  return activeScriptVarInitials;
 }
 
 export function setActiveHandleSharedFunctions(names: string[] | null): void {
@@ -200,23 +233,6 @@ export function triggerChannelAliasPrompt(req: ChannelAliasPromptRequest): void 
   channelAliasPromptHandler?.(req);
 }
 
-/** Legacy wrapper for timer-only callers. */
-export function registerTimerAliasPromptHandler(
-  handler: ((timerId: number) => void) | null,
-): void {
-  channelAliasPromptHandler = handler ? (req) => handler(req.channelId) : null;
-}
-
-/** Legacy wrapper for timer-only callers. */
-export function triggerTimerAliasPrompt(timerId: number): void {
-  triggerChannelAliasPrompt({
-    configKey: DEFAULT_TIMER_POOL_KEY,
-    channelId: timerId,
-    prefix: 'T',
-    label: '定时器通道',
-  });
-}
-
 export function setActiveChannelPoolConfigs(
   configs: Record<string, Partial<ProjectTimerConfig> | undefined>,
 ): void {
@@ -254,14 +270,6 @@ export function getActiveChannelPoolConfig(
   return { count: fallbackCount, aliases: {} };
 }
 
-export function getActiveTimerConfig(): ProjectTimerConfig {
-  return getActiveChannelPoolConfig(DEFAULT_TIMER_POOL_KEY, DEFAULT_TIMER_COUNT);
-}
-
-export function setActiveTimerConfig(cfg?: Partial<ProjectTimerConfig> | null): void {
-  setActiveChannelPoolConfig(DEFAULT_TIMER_POOL_KEY, cfg);
-}
-
 export function formatChannelLabel(
   id: number,
   cfg: ProjectTimerConfig,
@@ -272,13 +280,6 @@ export function formatChannelLabel(
     return alias ? `${prefix}${id} · ${alias} (越界)` : `${prefix}${id} (越界)`;
   }
   return alias ? `${prefix}${id} · ${alias}` : `${prefix}${id}`;
-}
-
-export function formatTimerLabel(
-  id: number,
-  cfg: ProjectTimerConfig = getActiveTimerConfig(),
-): string {
-  return formatChannelLabel(id, cfg, 'T');
 }
 
 /**
@@ -322,18 +323,4 @@ export function buildChannelDropdownOptions(
   }
 
   return options;
-}
-
-export function buildTimerDropdownOptions(
-  currentValue?: string | null,
-  includeEditShortcut = true,
-): Array<[string, string]> {
-  return buildChannelDropdownOptions(
-    DEFAULT_TIMER_POOL_KEY,
-    'T',
-    currentValue,
-    DEFAULT_TIMER_COUNT,
-    MAX_TIMER_COUNT,
-    includeEditShortcut,
-  );
 }

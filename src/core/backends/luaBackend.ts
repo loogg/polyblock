@@ -3,19 +3,21 @@ import { luaGenerator, Order } from 'blockly/lua';
 import {
   buildLuaHoistedLocalsLine,
   codegenContext,
+  formatLuaVarRef,
   resetCodegenPassContext,
 } from './codegenContext';
 import {
   buildEntryDispatchRouters,
   hasExternalKeepAliveHat,
   isEventDrivenWorkspace,
-  resolveHandleSharedPythonVars,
+  resolveHandleSharedInfo,
 } from './eventMode';
 import {
-  getActiveHandleScriptId,
   getActiveHandleScripts,
   getActiveHandleSharedFunctions,
+  getActiveScriptVarInitials,
 } from '../blocks/timerConfigBridge';
+import { formatInitialValueLua } from '../projects/handleVariables';
 import {
   analyzeWorkspaceScopes,
   sanitizeLocalIdent,
@@ -30,32 +32,52 @@ import type { GeneratedCodeResult, ScriptBackendAdapter } from './types';
 
 let luaGeneratorsRegistered = false;
 let luaDeclaredLocalsByRoot = new Map<string, Set<string>>();
-let luaSharedFnRequiredScripts = new Set<string>();
 
 function getLuaScopeRootId(block: Blockly.Block): string {
   return block.getRootBlock().id;
 }
 
-function getCurrentLuaScriptName(): string {
-  const curId = getActiveHandleScriptId();
-  if (!curId) return '';
-  return getActiveHandleScripts().find((s) => s.id === curId)?.name ?? '';
-}
-
-function collectManualRequireScripts(workspace: Blockly.Workspace): Set<string> {
-  const out = new Set<string>();
-  for (const blk of workspace.getAllBlocks(false)) {
-    if (blk.isShadow() || !blk.isEnabled()) continue;
-    if (blk.type === 'poly_require_script') {
-      const name = String(blk.getFieldValue('SCRIPT') || '').trim();
-      if (name) out.add(name);
-    }
-  }
-  return out;
-}
-
-function registerLuaBlockGenerators(): void {
+export function registerLuaBlockGenerators(): void {
   if (luaGeneratorsRegistered) return;
+
+  luaGenerator.forBlock['variables_get'] = (block, generator) => {
+    const ref = formatLuaVarRef(
+      String(block.getFieldValue('VAR') || ''),
+      generator,
+      block,
+    );
+    return [ref, Order.ATOMIC];
+  };
+
+  luaGenerator.forBlock['variables_set'] = (block, generator) => {
+    const ref = formatLuaVarRef(
+      String(block.getFieldValue('VAR') || ''),
+      generator,
+      block,
+    );
+    const val = generator.valueToCode(block, 'VALUE', Order.NONE) || '0';
+    return `${ref} = ${val}\n`;
+  };
+
+  luaGenerator.forBlock['math_change'] = (block, generator) => {
+    const ref = formatLuaVarRef(
+      String(block.getFieldValue('VAR') || ''),
+      generator,
+      block,
+    );
+    const delta = generator.valueToCode(block, 'DELTA', Order.ADDITIVE) || '0';
+    return `${ref} = ${ref} + ${delta}\n`;
+  };
+
+  luaGenerator.forBlock['text_append'] = (block, generator) => {
+    const ref = formatLuaVarRef(
+      String(block.getFieldValue('VAR') || ''),
+      generator,
+      block,
+    );
+    const val = generator.valueToCode(block, 'TEXT', Order.NONE) || '""';
+    return `${ref} = tostring(${ref}) .. tostring(${val})\n`;
+  };
 
   luaGenerator.forBlock['poly_on_start'] = (block, generator) => {
     const hoistedLocals = buildLuaHoistedLocalsLine([block], 'BODY', '  ');
@@ -88,13 +110,6 @@ function registerLuaBlockGenerators(): void {
     const label = JSON.stringify(rawLabel);
     const value = generator.valueToCode(block, 'VALUE', Order.NONE) || 'nil';
     return `print(${label} .. " = " .. tostring(${value}))\n`;
-  };
-
-  luaGenerator.forBlock['poly_clear_log'] = () => {
-    if (codegenContext.debugPass) {
-      return `print("__POLYBLOCK_CLEAR__")\n`;
-    }
-    return `-- 清空控制台（仅 PolyBlock 沙箱调试生效）\n`;
   };
 
   luaGenerator.forBlock['poly_repeat_times'] = (block, generator) => {
@@ -180,24 +195,53 @@ function registerLuaBlockGenerators(): void {
     return [`tostring(${value})`, Order.HIGH];
   };
 
+  // Pure value-slot list primitives (zero hidden helper functions!)
   luaGenerator.forBlock['poly_list_append'] = (block, generator) => {
-    const listVar = generator.getVariableName(block.getFieldValue('LIST'));
+    const listCode = generator.valueToCode(block, 'LIST', Order.NONE) || '{}';
     const item = generator.valueToCode(block, 'ITEM', Order.NONE) || 'nil';
-    return `table.insert(${listVar}, ${item})\n`;
+    return `table.insert(${listCode}, ${item})\n`;
   };
 
-  // 2-tier custom functions in Lua + function-top hoisting of nested `poly_local_set`:
-  // - Cross-file shared (`handle.sharedFunctions`): global `function foo(...)`
+  luaGenerator.forBlock['poly_list_get'] = (block, generator) => {
+    const listCode = generator.valueToCode(block, 'LIST', Order.HIGH) || '({})';
+    const idx = generator.valueToCode(block, 'INDEX', Order.NONE) || '1';
+    return [`${listCode}[${idx}]`, Order.HIGH];
+  };
+
+  luaGenerator.forBlock['poly_list_set'] = (block, generator) => {
+    const listCode = generator.valueToCode(block, 'LIST', Order.HIGH) || '({})';
+    const idx = generator.valueToCode(block, 'INDEX', Order.NONE) || '1';
+    const val = generator.valueToCode(block, 'VALUE', Order.NONE) || 'nil';
+    return `${listCode}[${idx}] = ${val}\n`;
+  };
+
+  luaGenerator.forBlock['poly_list_remove'] = (block, generator) => {
+    const listCode = generator.valueToCode(block, 'LIST', Order.NONE) || '{}';
+    const idx = generator.valueToCode(block, 'INDEX', Order.NONE) || '1';
+    return `table.remove(${listCode}, ${idx})\n`;
+  };
+
+  // Style A1 2-tier custom functions in Lua + function-top hoisting of nested `poly_local_set`:
+  // - Cross-file shared (`handle.sharedFunctions`): emitted ONLY inside read-only `shared.lua` as `function shared.foo(...)`
   // - File-private (default): `local function foo(...)` (never pollutes `_G`)
   const origLuaDefReturn = luaGenerator.forBlock['procedures_defreturn'];
   const origLuaDefNoReturn = luaGenerator.forBlock['procedures_defnoreturn'];
+  const origLuaCallReturn = luaGenerator.forBlock['procedures_callreturn'];
+  const origLuaCallNoReturn = luaGenerator.forBlock['procedures_callnoreturn'];
+
   if (origLuaDefReturn) {
     const wrapLuaDef =
       (orig: typeof origLuaDefReturn) =>
       (block: Blockly.Block, generator: typeof luaGenerator) => {
+        const rawName = String(block.getFieldValue('NAME') || '').trim();
+        const sharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
+        const isSharedFn = sharedFnSet.has(rawName);
+        if (isSharedFn && !codegenContext.compilingSharedModule) {
+          // Cross-file shared function is emitted centrally inside `shared.lua`
+          return null;
+        }
         const hoistedLocals = buildLuaHoistedLocalsLine([block], 'STACK', '  ');
         const out = orig(block, generator);
-        const rawName = String(block.getFieldValue('NAME') || '').trim();
         const procIdent = generator.getProcedureName(rawName);
         const defKey = `%${procIdent}`;
         const defs = (
@@ -212,8 +256,13 @@ function registerLuaBlockGenerators(): void {
               `$1$2${hoistedLocals}`,
             );
           }
-          const sharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
-          if (!sharedFnSet.has(rawName)) {
+          if (isSharedFn && codegenContext.compilingSharedModule) {
+            const modName = codegenContext.luaSharedModuleName || 'shared';
+            nextCode = nextCode.replace(
+              /(^|\n)function\s+([A-Za-z0-9_]+)\s*\(/,
+              `$1function ${modName}.$2(`,
+            );
+          } else {
             nextCode = nextCode.replace(/(^|\n)function /, '$1local function ');
           }
           defs[defKey] = nextCode;
@@ -226,6 +275,44 @@ function registerLuaBlockGenerators(): void {
     }
   }
 
+  if (origLuaCallNoReturn) {
+    luaGenerator.forBlock['procedures_callnoreturn'] = (block, generator) => {
+      const out = origLuaCallNoReturn(block, generator);
+      const call = block as Blockly.Block & { getProcedureCall?: () => string };
+      const rawName = call.getProcedureCall?.()?.trim() ?? '';
+      const sharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
+      if (rawName && sharedFnSet.has(rawName) && typeof out === 'string') {
+        const modName = codegenContext.luaSharedModuleName || 'shared';
+        if (!codegenContext.compilingSharedModule) {
+          codegenContext.usedSharedModule = true;
+        }
+        const trimmed = out.trimStart();
+        if (trimmed.startsWith(`${modName}.`)) {
+          return out;
+        }
+        return `${modName}.${trimmed}`;
+      }
+      return out;
+    };
+  }
+
+  if (origLuaCallReturn) {
+    luaGenerator.forBlock['procedures_callreturn'] = (block, generator) => {
+      const out = origLuaCallReturn(block, generator);
+      const call = block as Blockly.Block & { getProcedureCall?: () => string };
+      const rawName = call.getProcedureCall?.()?.trim() ?? '';
+      const sharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
+      if (rawName && sharedFnSet.has(rawName) && Array.isArray(out)) {
+        const modName = codegenContext.luaSharedModuleName || 'shared';
+        if (!codegenContext.compilingSharedModule) {
+          codegenContext.usedSharedModule = true;
+        }
+        return [`${modName}.${out[0]}`, out[1]];
+      }
+      return out;
+    };
+  }
+
   const emitLuaSharedFnCall = (
     block: Blockly.Block,
     generator: typeof luaGenerator,
@@ -234,16 +321,16 @@ function registerLuaBlockGenerators(): void {
       block as Blockly.Block & {
         sharedFnMeta_?: { scriptName: string; fnName: string; params: string[] };
       }
-    ).sharedFnMeta_ ?? { scriptName: 'utils', fnName: 'my_func', params: [] };
-    const curScriptName = getCurrentLuaScriptName();
-    if (meta.scriptName && meta.scriptName !== curScriptName) {
-      luaSharedFnRequiredScripts.add(meta.scriptName);
+    ).sharedFnMeta_ ?? { scriptName: 'shared', fnName: 'my_func', params: [] };
+    const modName = codegenContext.luaSharedModuleName || 'shared';
+    if (!codegenContext.compilingSharedModule) {
+      codegenContext.usedSharedModule = true;
     }
     const fnIdent = generator.getProcedureName(meta.fnName);
     const args = meta.params.map(
       (_p, idx) => generator.valueToCode(block, `ARG${idx}`, Order.NONE) || 'nil',
     );
-    return `${fnIdent}(${args.join(', ')})`;
+    return `${modName}.${fnIdent}(${args.join(', ')})`;
   };
 
   luaGenerator.forBlock['poly_call_shared_noreturn'] = (block, generator) => {
@@ -254,14 +341,32 @@ function registerLuaBlockGenerators(): void {
     return [emitLuaSharedFnCall(block, generator), Order.HIGH];
   };
 
+  // Ensure any Blockly `provideFunction_` helper in Lua is emitted as `local function` (never leaks `_G`)
+  const origLuaFinish = luaGenerator.finish.bind(luaGenerator);
+  luaGenerator.finish = (code: string) => {
+    const defs = (
+      luaGenerator as unknown as { definitions_: Record<string, string> }
+    ).definitions_;
+    if (defs) {
+      for (const [k, v] of Object.entries(defs)) {
+        if (k.startsWith('%') || k === 'variables' || typeof v !== 'string') continue;
+        if (/^function\s+[A-Za-z0-9_]+\s*\(/.test(v.trimStart())) {
+          defs[k] = v.replace(/(^|\n)function\s+/, '$1local function ');
+        }
+      }
+    }
+    return origLuaFinish(code);
+  };
+
   luaGeneratorsRegistered = true;
 }
 
-function collectLuaFileLocalVarIdents(
+function collectLuaFileLocalVars(
   workspace: Blockly.Workspace,
   varIdToIdent: Map<string, string>,
   sharedVarNames: Set<string>,
-): string[] {
+  sharedFnNames: Set<string>,
+): Array<{ name: string; ident: string }> {
   const varMap = workspace.getVariableMap();
   const FOR_LOOP_TYPES = new Set([
     'poly_for_range',
@@ -269,7 +374,23 @@ function collectLuaFileLocalVarIdents(
     'controls_forEach',
   ]);
 
-  const isShadowedByAncestor = (blk: Blockly.Block, varId: string, varName: string): boolean => {
+  const isInsideSharedFunction = (blk: Blockly.Block): boolean => {
+    const root = blk.getRootBlock();
+    if (
+      root.type === 'procedures_defnoreturn' ||
+      root.type === 'procedures_defreturn'
+    ) {
+      const fnName = String(root.getFieldValue('NAME') || '').trim();
+      return sharedFnNames.has(fnName);
+    }
+    return false;
+  };
+
+  const isShadowedByAncestor = (
+    blk: Blockly.Block,
+    varId: string,
+    varName: string,
+  ): boolean => {
     let cur: Blockly.Block | null = blk.getSurroundParent();
     while (cur) {
       if (
@@ -284,7 +405,10 @@ function collectLuaFileLocalVarIdents(
           return true;
         }
       }
-      if (FOR_LOOP_TYPES.has(cur.type) && String(cur.getFieldValue('VAR') || '') === varId) {
+      if (
+        FOR_LOOP_TYPES.has(cur.type) &&
+        String(cur.getFieldValue('VAR') || '') === varId
+      ) {
         return true;
       }
       cur = cur.getSurroundParent();
@@ -293,47 +417,35 @@ function collectLuaFileLocalVarIdents(
   };
 
   const neededIds = new Set<string>();
-  const recordFieldVar = (blk: Blockly.Block, fName: string, rawVal: unknown) => {
-    if (fName === 'VAR' && FOR_LOOP_TYPES.has(blk.type)) return;
-    const vId = String(rawVal || '');
-    if (!vId) return;
-    const model = varMap.getVariableById(vId);
-    if (!model) return;
-    const vName = model.getName();
-    if (sharedVarNames.has(vName)) return;
-    if (isShadowedByAncestor(blk, vId, vName)) return;
-    neededIds.add(vId);
-  };
-
   for (const blk of workspace.getAllBlocks(false)) {
     if (blk.isShadow() || !blk.isEnabled()) continue;
-    for (const fName of ['VAR', 'LIST']) {
-      if (!blk.getField(fName)) continue;
-      recordFieldVar(blk, fName, blk.getFieldValue(fName));
-    }
-    for (const inp of blk.inputList) {
-      for (const field of inp.fieldRow) {
-        if (field instanceof Blockly.FieldVariable && field.name) {
-          recordFieldVar(blk, field.name, field.getValue());
-        }
-      }
-    }
+    if (isInsideSharedFunction(blk)) continue;
+    if (!blk.getField('VAR')) continue;
+    if (FOR_LOOP_TYPES.has(blk.type)) continue;
+    const vId = String(blk.getFieldValue('VAR') || '');
+    if (!vId) continue;
+    const model = varMap.getVariableById(vId);
+    if (!model) continue;
+    const vName = model.getName();
+    if (sharedVarNames.has(vName)) continue;
+    if (isShadowedByAncestor(blk, vId, vName)) continue;
+    neededIds.add(vId);
   }
 
-  const out: string[] = [];
+  const out: Array<{ name: string; ident: string }> = [];
   const seen = new Set<string>();
   for (const v of varMap.getAllVariables()) {
     if (!neededIds.has(v.getId())) continue;
     const ident = varIdToIdent.get(v.getId());
     if (ident && !seen.has(ident)) {
       seen.add(ident);
-      out.push(ident);
+      out.push({ name: v.getName(), ident });
     }
   }
   return out;
 }
 
-/** Inserts file-local `local x = nil` declarations cleanly right after top `require(...)` imports. */
+/** Inserts file-local `local x = <init>` declarations cleanly right after top `require(...)` imports. */
 function injectLuaFileLocalDecls(body: string, decls: string[]): string {
   if (decls.length === 0) return body;
   const declBlock = decls.join('\n');
@@ -368,9 +480,9 @@ function buildLuaSnapshotExpr(
   return `{ ${pairs.join(', ')} }`;
 }
 
+/** Unified single-track Lua coroutine & event-loop scheduler driver (matches C host 1-handle-1-thread model). */
 function buildLuaEventLoopDriver(keepAliveExternal: boolean): string {
   return `
-__poly_event_mode = true
 local _has_start = (type(on_start) == "function")
 local _has_run = (type(on_run) == "function")
 local _has_timer = (type(on_timer) == "function")
@@ -502,7 +614,7 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
   readonly fileName = 'main.lua';
   readonly accentColor = '#3b82f6';
   readonly description =
-    '标准 Lua 5.4 脚本生成器，支持干净导出（含顶层零闭包事件回调 ABI）与沙箱异步事件调试。';
+    '标准 Lua 5.4 脚本生成器，支持 Style A1 只读 shared 模块、单线程协程事件 ABI 与伴生脚本断点调试。';
 
   generate(workspace: Blockly.Workspace): GeneratedCodeResult {
     registerLuaBlockGenerators();
@@ -512,26 +624,55 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
     const eventDriven = isEventDrivenWorkspace(workspace);
     const keepAliveExternal = hasExternalKeepAliveHat(workspace);
 
+    const sharedInfo = resolveHandleSharedInfo(getActiveHandleScripts());
+    const sharedAttrByName = new Map(
+      sharedInfo.entries.map((e) => [e.name, e.attr]),
+    );
+    const sharedLuaNames = new Set(sharedInfo.entries.map((e) => e.name));
+    const sharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
+    const scriptInitials = getActiveScriptVarInitials();
+
     // --- Pass 1: Clean display/export/board-download code + SourceMap ---
-    resetCodegenPassContext({ debugPass: false, eventDrivenMode: eventDriven });
     luaDeclaredLocalsByRoot = new Map();
-    luaSharedFnRequiredScripts = new Set();
-    const manualRequires = collectManualRequireScripts(workspace);
     luaGenerator.STATEMENT_PREFIX = `${SENTINEL_START_PREFIX}%1__\n`;
     luaGenerator.STATEMENT_SUFFIX = `${SENTINEL_END_PREFIX}%1__\n`;
 
     let rawClean = '';
+    let usedSharedClean = false;
     const varEntries: Array<{ label: string; ident: string }> = [];
     const varIdToIdent = new Map<string, string>();
+    const sharedVarIdToAttr = new Map<string, string>();
+    const sharedVarIdents = new Set<string>();
+    const sharedSnapEntries: Array<{ label: string; ident: string }> = [];
+
     try {
+      resetCodegenPassContext({ debugPass: false });
       luaGenerator.init(workspace);
       for (const v of workspace.getVariableMap().getAllVariables()) {
         const ident = luaGenerator.getVariableName(v.getId());
-        varEntries.push({ label: v.getName(), ident });
         varIdToIdent.set(v.getId(), ident);
+        const attr = sharedAttrByName.get(v.getName());
+        if (attr && sharedInfo.moduleName) {
+          sharedVarIdToAttr.set(v.getId(), attr);
+          sharedVarIdents.add(ident);
+          sharedSnapEntries.push({
+            label: v.getName(),
+            ident: `${sharedInfo.moduleName}.${attr}`,
+          });
+        } else {
+          varEntries.push({ label: v.getName(), ident });
+        }
       }
+      resetCodegenPassContext({
+        debugPass: false,
+        luaSharedModuleName: sharedInfo.moduleName,
+        luaSharedVarIdToAttr: sharedVarIdToAttr,
+        luaSharedVarIdents: sharedVarIdents,
+      });
       rawClean = luaGenerator.workspaceToCode(workspace);
+      usedSharedClean = codegenContext.usedSharedModule;
     } finally {
+      resetCodegenPassContext({ debugPass: false });
       luaGenerator.STATEMENT_PREFIX = prevPrefix;
       luaGenerator.STATEMENT_SUFFIX = prevSuffix;
     }
@@ -541,33 +682,31 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
       varIdToIdent,
     );
 
-    // 3-tier scope alignment with Python:
-    // - Cross-file shared variables (`handle.sharedVariables`): bare `_G` globals (no `local`)
-    // - Single-file globals: file-top `local <ident> = nil` upvalues (never leak into `_G`!)
-    const sharedLuaInfo = resolveHandleSharedPythonVars(
-      getActiveHandleScripts(),
-      workspace,
-    );
-    const sharedLuaNames = new Set(sharedLuaInfo.entries.map((e) => e.name));
-    const fileLocalDecls = collectLuaFileLocalVarIdents(
+    const fileLocalDecls = collectLuaFileLocalVars(
       workspace,
       varIdToIdent,
       sharedLuaNames,
-    ).map((ident) => `local ${ident} = nil`);
+      sharedFnSet,
+    ).map(
+      ({ name, ident }) =>
+        `local ${ident} = ${formatInitialValueLua(scriptInitials[name])}`,
+    );
 
     const cleanRouter = buildEntryDispatchRouters(workspace, 'lua', false);
-    const cleanAutoImports = [...cleanRouter.autoImports];
-    for (const sName of luaSharedFnRequiredScripts) {
-      if (manualRequires.has(sName)) continue;
-      const imp = `require(${JSON.stringify(sName)})`;
-      if (!cleanAutoImports.includes(imp)) cleanAutoImports.push(imp);
+    const cleanPrependLines: string[] = [];
+    if (usedSharedClean && sharedInfo.moduleName) {
+      cleanPrependLines.push(
+        `local ${sharedInfo.moduleName} = require(${JSON.stringify(sharedInfo.moduleName)})`,
+      );
     }
-    const cleanPrepend = cleanAutoImports
-      .filter((imp) => !rawClean.includes(imp))
-      .join('\n');
+    for (const imp of cleanRouter.autoImports) {
+      if (!rawClean.includes(imp) && !cleanPrependLines.includes(imp)) {
+        cleanPrependLines.push(imp);
+      }
+    }
     const mergedCleanBody = injectLuaFileLocalDecls(
       [
-        cleanPrepend,
+        cleanPrependLines.join('\n'),
         rawClean.trim(),
         cleanRouter.routerCode.trim(),
       ]
@@ -584,9 +723,12 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
       : `${header}-- 请从左侧拖入积木开始编排`;
     const { code, sourceMap, lineToBlock } = extractSourceMap(combinedClean);
 
-    // --- Pass 2: Instrumented async sandbox debug code ---
-    const snapEntries = [...varEntries];
-    const seenSnapLabels = new Set(varEntries.map((e) => e.label));
+    // --- Pass 2: Instrumented single-track coroutine sandbox debug code ---
+    const snapEntries: Array<{ label: string; ident: string }> = [
+      ...varEntries,
+      ...(usedSharedClean ? sharedSnapEntries : []),
+    ];
+    const seenSnapLabels = new Set(snapEntries.map((e) => e.label));
     for (const loc of allLocalEntries) {
       if (!seenSnapLabels.has(loc.label)) {
         seenSnapLabels.add(loc.label);
@@ -595,32 +737,40 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
     }
     const snapExpr = buildLuaSnapshotExpr(snapEntries);
     let debugBody = '';
+    let usedSharedDebug = false;
     try {
-      resetCodegenPassContext({ debugPass: true, eventDrivenMode: eventDriven });
+      resetCodegenPassContext({
+        debugPass: true,
+        luaSharedModuleName: sharedInfo.moduleName,
+        luaSharedVarIdToAttr: sharedVarIdToAttr,
+        luaSharedVarIdents: sharedVarIdents,
+      });
       luaDeclaredLocalsByRoot = new Map();
-      luaSharedFnRequiredScripts = new Set();
       luaGenerator.STATEMENT_PREFIX = `__poly_tick(%1, __poly_snap(${snapExpr}))\n`;
       luaGenerator.STATEMENT_SUFFIX = null;
       debugBody = luaGenerator.workspaceToCode(workspace);
+      usedSharedDebug = codegenContext.usedSharedModule;
     } finally {
-      resetCodegenPassContext({ debugPass: false, eventDrivenMode: false });
+      resetCodegenPassContext({ debugPass: false });
       luaGenerator.STATEMENT_PREFIX = prevPrefix;
       luaGenerator.STATEMENT_SUFFIX = prevSuffix;
     }
 
     const debugRouter = buildEntryDispatchRouters(workspace, 'lua', true);
-    const debugAutoImports = [...debugRouter.autoImports];
-    for (const sName of luaSharedFnRequiredScripts) {
-      if (manualRequires.has(sName)) continue;
-      const imp = `require(${JSON.stringify(sName)})`;
-      if (!debugAutoImports.includes(imp)) debugAutoImports.push(imp);
+    const debugPrependLines: string[] = [];
+    if (usedSharedDebug && sharedInfo.moduleName) {
+      debugPrependLines.push(
+        `local ${sharedInfo.moduleName} = require(${JSON.stringify(sharedInfo.moduleName)})`,
+      );
     }
-    const debugPrepend = debugAutoImports
-      .filter((imp) => !debugBody.includes(imp))
-      .join('\n');
+    for (const imp of debugRouter.autoImports) {
+      if (!debugBody.includes(imp) && !debugPrependLines.includes(imp)) {
+        debugPrependLines.push(imp);
+      }
+    }
     const fullDebugBody = injectLuaFileLocalDecls(
       [
-        debugPrepend,
+        debugPrependLines.join('\n'),
         debugBody.trim(),
         debugRouter.routerCode.trim(),
       ]
@@ -629,13 +779,18 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
       fileLocalDecls,
     );
 
-    const driver = eventDriven
-      ? buildLuaEventLoopDriver(keepAliveExternal)
-      : `if type(on_start) == "function" then\n  on_start()\nend\n`;
+    const companionDebugBody = fullDebugBody
+      .split('\n')
+      .filter((line) => !/^__poly_tick\(/.test(line))
+      .join('\n');
+
+    const driver = buildLuaEventLoopDriver(keepAliveExternal);
     const debugCode = fullDebugBody
       ? `${fullDebugBody}\n${driver}\n__poly_final_snap(__poly_snap(${snapExpr}))\n`
       : '';
-    const moduleDebugCode = fullDebugBody ? `${fullDebugBody}\n` : '';
+    const moduleDebugCode = companionDebugBody.trim()
+      ? `${companionDebugBody}\n`
+      : '';
 
     return {
       language: this.id,
@@ -648,7 +803,10 @@ export class LuaBackendAdapter implements ScriptBackendAdapter {
       blockCount: workspace
         .getAllBlocks(false)
         .filter((b) => !b.isShadow()).length,
-      variableNames: varEntries.map((v) => v.label),
+      variableNames: [
+        ...sharedSnapEntries.map((v) => v.label),
+        ...varEntries.map((v) => v.label),
+      ],
       variableScopes,
       isEventDriven: eventDriven,
     };

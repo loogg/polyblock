@@ -287,6 +287,11 @@ export class WorkerRuntimeScheduler {
 
   onStartCoDone(): void {
     this.coState = 'dead';
+    if (this.pyTurnWaiter) {
+      const fn = this.pyTurnWaiter;
+      this.pyTurnWaiter = null;
+      fn();
+    }
     this.resolvePySliceDone();
     this.wake();
     this.emitTelemetry(true);
@@ -499,15 +504,6 @@ export class WorkerRuntimeScheduler {
       this.resolvePySliceDone();
     }
     this.wake();
-  }
-
-  /** Legacy compatibility helper (equivalent to initCoroutineMode without an active `on_start` coroutine). */
-  shouldEnterEventLoop(
-    hasOnRun: boolean,
-    hasOnTimer: boolean,
-    hasOnButton: boolean,
-  ): boolean {
-    return this.initCoroutineMode(false, hasOnRun, hasOnTimer, hasOnButton);
   }
 
   getTelemetrySnapshot(): RuntimeTelemetry {

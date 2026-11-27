@@ -9,7 +9,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
-import { buildHandlePythonSharedModule } from '../core/backends/eventMode';
+import { buildHandleSharedModule } from '../core/backends/sharedModule';
 import { getHandleTimerConfig } from '../core/projects/store';
 import type { ProjectModel, ScriptLanguageId } from '../types/project';
 
@@ -169,10 +169,12 @@ export function ProjectExplorer({
                       </button>
                     );
                   })}
-                  {language === 'python' && (() => {
-                    const sharedMod = buildHandlePythonSharedModule(handle);
+                  {(() => {
+                    const sharedMod = buildHandleSharedModule(handle, language);
                     if (!sharedMod || !onSelectHandleSharedModule) return null;
                     const isActiveShared = isActiveHandle && viewingSharedModule;
+                    const totalItems =
+                      sharedMod.variables.length + sharedMod.functions.length;
                     return (
                       <button
                         type="button"
@@ -181,14 +183,14 @@ export function ProjectExplorer({
                         }`}
                         disabled={disabled && !isActiveHandle}
                         onClick={() => onSelectHandleSharedModule(handle.id)}
-                        title={`只读自动生成模块 ${sharedMod.fileName}（${sharedMod.entries.length} 个跨文件共享变量）`}
+                        title={`只读自动生成模块 ${sharedMod.fileName}（${sharedMod.variables.length} 跨文件变量 · ${sharedMod.functions.length} 公共函数）`}
                       >
                         <Lock size={11} style={{ flexShrink: 0, opacity: 0.75 }} />
                         <span className="explorer-script-name">
                           {sharedMod.fileName}
                         </span>
                         <span className="count-badge" style={{ marginLeft: 'auto' }}>
-                          {sharedMod.entries.length}
+                          {totalItems}
                         </span>
                       </button>
                     );

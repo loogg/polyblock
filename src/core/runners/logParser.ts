@@ -1,7 +1,6 @@
 import type { LogLevel, ScriptLanguageId } from '../../types/project';
 
 export interface ParsedOutputLine {
-  isClear: boolean;
   level: LogLevel;
   message: string;
 }
@@ -9,17 +8,13 @@ export interface ParsedOutputLine {
 const LEVEL_PREFIX_RE = /^\[(INFO|WARN|ERROR|OK)\]\s?(.*)$/;
 
 export function parseStdoutLine(rawLine: string): ParsedOutputLine {
-  if (rawLine.trim() === '__POLYBLOCK_CLEAR__') {
-    return { isClear: true, level: 'system', message: '' };
-  }
-
   const match = LEVEL_PREFIX_RE.exec(rawLine);
   if (match) {
     const tag = match[1].toLowerCase() as 'info' | 'warn' | 'error' | 'ok';
-    return { isClear: false, level: tag, message: match[2] };
+    return { level: tag, message: match[2] };
   }
 
-  return { isClear: false, level: 'print', message: rawLine };
+  return { level: 'print', message: rawLine };
 }
 
 export function extractErrorLine(

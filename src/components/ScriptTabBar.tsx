@@ -27,7 +27,12 @@ interface ScriptTabBarProps {
   defaultTimerCount: number;
   showExplorer: boolean;
   disabled?: boolean;
-  sharedModuleTab?: { fileName: string; varCount: number } | null;
+  sharedModuleTab?: {
+    fileName: string;
+    itemCount: number;
+    varCount: number;
+    fnCount: number;
+  } | null;
   viewingSharedModule?: boolean;
   onSelectSharedModule?: () => void;
   onToggleExplorer: () => void;
@@ -362,7 +367,7 @@ export function ScriptTabBar({
         </button>
       </div>
 
-      {/* Pinned Far-Right Read-Only Python `shared.py` Tab (ONLY shown when handle has cross-file shared vars) */}
+      {/* Pinned Far-Right Read-Only `shared.lua` / `shared.py` Tab (Style A1) */}
       {sharedModuleTab && onSelectSharedModule && (
         <button
           type="button"
@@ -370,14 +375,14 @@ export function ScriptTabBar({
           aria-selected={viewingSharedModule}
           className={`script-tab-pinned ${viewingSharedModule ? 'active' : ''}`}
           onClick={onSelectSharedModule}
-          title={`自动生成的同句柄跨文件共享变量模块 ${sharedModuleTab.fileName}（只读，随 Python 目标运行包一起导出）`}
+          title={`自动生成的同句柄跨文件共享模块 ${sharedModuleTab.fileName}（${sharedModuleTab.varCount} 变量 · ${sharedModuleTab.fnCount} 公共函数 · 只读，随目标运行包一起导出）`}
         >
           <Lock size={11} className="script-tab-lock" />
           <span className="script-tab-name">
-            {sharedModuleTab.fileName.replace(/\.py$/, '')}
-            <span className="script-tab-ext">.py</span>
+            {sharedModuleTab.fileName.replace(/\.(lua|py)$/, '')}
+            <span className="script-tab-ext">.{extension}</span>
           </span>
-          <span className="count-badge">{sharedModuleTab.varCount}</span>
+          <span className="count-badge">{sharedModuleTab.itemCount}</span>
         </button>
       )}
 

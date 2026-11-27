@@ -4,7 +4,6 @@ import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { backendRegistry } from '../backends/registry';
 import {
   CORE_TOOLBOX_ORDERS,
-  getCoreCategoriesForCapabilities,
   getOrderedToolboxCategories,
 } from '../blocks/catalog';
 import { registerPolyBlocks } from '../blocks/definitions';
@@ -13,6 +12,8 @@ import {
   setActiveChannelPoolConfig,
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
+  setActiveHandleSharedFunctions,
+  setActiveHandleSharedVariables,
   setActiveProjectCapabilities,
 } from '../blocks/timerConfigBridge';
 import {
@@ -65,7 +66,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
   });
 
   it('strictly gates core toolbox categories & hardware button hats by enabledCapabilities', () => {
-    const pureCats = getCoreCategoriesForCapabilities([]);
+    const pureCats = getOrderedToolboxCategories([]);
     expect(pureCats.some((c) => c.id === 'ext_rt_timers')).toBe(false);
     expect(pureCats.some((c) => c.id === 'ext_rt_tick')).toBe(false);
     const pureEventBlocks =
@@ -76,7 +77,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       'poly_comment',
     ]);
 
-    const rtCats = getCoreCategoriesForCapabilities([CAP_RT]);
+    const rtCats = getOrderedToolboxCategories([CAP_RT]);
     const timersCat = rtCats.find((c) => c.id === 'ext_rt_timers');
     expect(timersCat).toBeDefined();
     // Auto-derived flyout button directly from `handleConfigs[kind='channel-pool']`
@@ -1232,6 +1233,8 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
           proj.defaultTimerCount,
         );
         setActiveChannelPoolConfigs(poolCfgs);
+        setActiveHandleSharedVariables(hdl.sharedVariables ?? []);
+        setActiveHandleSharedFunctions(hdl.sharedFunctions ?? []);
         const hdlScriptMetas = buildHandleScriptsMeta(hdl);
 
         for (const scr of hdl.scripts) {
@@ -1269,6 +1272,8 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     }
 
     setActiveHandleScripts([], null);
+    setActiveHandleSharedVariables(null);
+    setActiveHandleSharedFunctions(null);
     setActiveProjectCapabilities(null);
     setActiveChannelPoolConfigs({ [CAP_RT_TIMERS]: { count: 8, aliases: {} } });
     extensionRegistry.setActiveProjectLocalPacks([]);

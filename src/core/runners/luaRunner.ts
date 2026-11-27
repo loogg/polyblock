@@ -130,11 +130,7 @@ export class WasmoonLuaRunner implements ScriptRunner {
 
         if (msg.type === 'STDOUT' && msg.line !== undefined) {
           const parsed = parseStdoutLine(msg.line);
-          if (parsed.isClear) {
-            callbacks.onClear?.();
-          } else {
-            callbacks.onLog(parsed.level, parsed.message);
-          }
+          callbacks.onLog(parsed.level, parsed.message);
           return;
         }
 

@@ -3,12 +3,11 @@ import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { LuaFactory } from 'wasmoon';
 import { loadMicroPython } from '@micropython/micropython-webassembly-pyscript';
-import {
-  buildHandlePythonSharedModule,
-  buildHandleScriptsMeta,
-} from '../backends/eventMode';
+import { buildHandleScriptsMeta } from '../backends/eventMode';
+import { buildHandleSharedModule } from '../backends/sharedModule';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
+import { CAP_RT_TIMERS } from '../capabilities/registry';
 import {
   SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
   VIRTUAL_BOARD_PACK,
@@ -19,9 +18,10 @@ import {
   instantiateProjectFromTemplate,
 } from '../projects/store';
 import {
+  setActiveChannelPoolConfig,
   setActiveHandleScripts,
   setActiveHandleSharedFunctions,
-  setActiveTimerConfig,
+  setActiveHandleSharedVariables,
 } from '../blocks/timerConfigBridge';
 import { WorkerDebugSession } from '../../workers/debugSession';
 import { WorkerRuntimeScheduler } from '../../workers/runtimeScheduler';
@@ -114,9 +114,6 @@ async function runLuaDebugInWasmoon(
     lua.global.set('__poly_rt_is_expired', (s: unknown, t: unknown) =>
       scheduler.isTickExpired(s, t),
     );
-    lua.global.set('__poly_should_loop', (r: unknown, t: unknown, b: unknown) =>
-      scheduler.shouldEnterEventLoop(Boolean(r), Boolean(t), Boolean(b)),
-    );
     lua.global.set(
       '__poly_init_scheduler',
       (s: unknown, r: unknown, t: unknown, b: unknown) =>
@@ -169,28 +166,36 @@ async function runLuaDebugInWasmoon(
           is_expired = __poly_rt_is_expired,
         }
       end
-      __poly_event_mode = false
       __poly_start_co = nil
-      function sleep_ms(ms)
-        if __poly_event_mode then
-          local cur, is_main = coroutine.running()
-          if cur == nil or is_main or cur ~= __poly_start_co then
-            error("禁止在事件回调（on_run / on_timer / on_button / on_stop）中调用 sleep_ms()；实板同步回调不可阻塞，请移至「当程序启动」协程或改用定时器。", 2)
-          end
-          coroutine.yield("__POLY_SLEEP__", tonumber(ms) or 0)
-          return
+      local __poly_orig_require = require
+      function require(modname)
+        local cached = package.loaded[modname]
+        if cached ~= nil then return cached end
+        local loader = package.preload[modname]
+        if type(loader) == "function" then
+          local res = loader(modname)
+          if res == nil then res = true end
+          package.loaded[modname] = res
+          return res
         end
-        __poly_sleep(tonumber(ms) or 0):await()
+        return __poly_orig_require(modname)
+      end
+      function sleep_ms(ms)
+        local cur, is_main = coroutine.running()
+        if cur == nil or is_main or cur ~= __poly_start_co then
+          error("禁止在事件回调（on_run / on_timer / on_button / on_stop）或顶层脚本中调用 sleep_ms()；请移至「当程序启动 (on_start)」协程内。", 2)
+        end
+        coroutine.yield("__POLY_SLEEP__", tonumber(ms) or 0)
       end
       function __poly_tick(blockId, varsJson)
-        if __poly_event_mode and __poly_start_co ~= nil and coroutine.running() == __poly_start_co then
+        if __poly_start_co ~= nil and coroutine.running() == __poly_start_co then
           coroutine.yield("__POLY_STEP__", blockId, varsJson)
           return
         end
         __poly_step(blockId, varsJson):await()
       end
       function __poly_yield_check()
-        if __poly_event_mode and __poly_start_co ~= nil and coroutine.running() == __poly_start_co then
+        if __poly_start_co ~= nil and coroutine.running() == __poly_start_co then
           coroutine.yield("__POLY_SLICE_CHECK__")
         end
       end
@@ -274,8 +279,6 @@ async function runPyDebugInMicroPython(
     rt_tick: () => scheduler.getTick(),
     rt_ms_to_tick: (ms: unknown) => scheduler.msToTick(ms),
     rt_is_expired: (s: unknown, t: unknown) => scheduler.isTickExpired(s, t),
-    should_loop: (r: unknown, t: unknown, b: unknown) =>
-      scheduler.shouldEnterEventLoop(Boolean(r), Boolean(t), Boolean(b)),
     init_scheduler: (s: unknown, r: unknown, t: unknown, b: unknown) =>
       scheduler.initCoroutineMode(Boolean(s), Boolean(r), Boolean(t), Boolean(b)),
     sync_handlers: (r: unknown, t: unknown, b: unknown) =>
@@ -419,8 +422,8 @@ for _k, _v in _ns.items():
 sys.modules["board"] = _m
 `);
 
-    expect(pyCode).toContain('def on_start():');
-    await mp.runPythonAsync(`${pyCode}\nif 'on_start' in globals(): on_start()\n`);
+    expect(pyCode).toContain('async def on_start():');
+    await mp.runPythonAsync(`${pyCode}\nif 'on_start' in globals(): await on_start()\n`);
     expect(pyEvents).toContainEqual({ kind: 'led', value: false });
     expect(pyEvents).toContainEqual({ kind: 'rgb', value: '#10b981' });
     expect(pyEvents).toContainEqual({
@@ -430,7 +433,7 @@ sys.modules["board"] = _m
 
     pyEvents.length = 0;
     mockTemp = 48;
-    await mp.runPythonAsync(`${pyCode}\nif 'on_start' in globals(): on_start()\n`);
+    await mp.runPythonAsync(`${pyCode}\nif 'on_start' in globals(): await on_start()\n`);
     expect(pyEvents).toContainEqual({ kind: 'led', value: true });
     expect(pyEvents).toContainEqual({ kind: 'rgb', value: '#ef4444' });
     expect(pyEvents).toContainEqual({
@@ -442,7 +445,7 @@ sys.modules["board"] = _m
   it('executes event-driven 3-shot timer (on_start -> on_timer(0) x3 -> on_stop) in BOTH Wasmoon Lua 5.4 and MicroPython WASM', async () => {
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles.find((h) => h.name === 'oneshot_vm')!;
-    setActiveTimerConfig(getHandleTimerConfig(hdl));
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, getHandleTimerConfig(hdl));
     const oneshotScript = hdl.scripts[0];
     const ws = new Blockly.Workspace();
     Blockly.serialization.workspaces.load(oneshotScript.workspace, ws);
@@ -450,7 +453,7 @@ sys.modules["board"] = _m
     const luaDebug = backendRegistry.get('lua').generate(ws).debugCode;
     const pyDebug = backendRegistry.get('python').generate(ws).debugCode;
     ws.dispose();
-    setActiveTimerConfig({ count: 8, aliases: {} });
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
 
     const { logs: luaLogs } = await runLuaDebugInWasmoon(luaDebug);
     expect(luaLogs.some((l) => l.includes('T0 运行中 = true'))).toBe(true);
@@ -926,20 +929,30 @@ sys.modules["board"] = _m
     expect(pyLogs).toContain('CUSTOM_HAT:ESTOP_OFF');
   });
 
-  it('loads split timers.lua dynamically via require("timers") inside on_start and dispatches on_timer_0 / on_timer_1 in real Wasmoon Lua 5.4', async () => {
+  it('loads split timers.lua/py + Style A1 shared.lua/py and dispatches on_timer_0 / on_timer_1 in BOTH Wasmoon Lua 5.4 & MicroPython WASM', async () => {
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles[0];
-    setActiveTimerConfig(getHandleTimerConfig(hdl));
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, getHandleTimerConfig(hdl));
+    setActiveHandleSharedVariables(hdl.sharedVariables ?? []);
     const metas = buildHandleScriptsMeta(hdl);
 
     const mainScript = hdl.scripts.find((s) => s.name === 'main')!;
     const timersScript = hdl.scripts.find((s) => s.name === 'timers')!;
 
+    const sharedLuaMod = buildHandleSharedModule(hdl, 'lua')!;
+    const sharedPyMod = buildHandleSharedModule(hdl, 'python')!;
+    expect(sharedLuaMod.moduleName).toBe('shared');
+    expect(sharedLuaMod.source).toContain('shared.led_on = false');
+    expect(sharedLuaMod.source).toContain('shared.ticks = 0');
+    expect(sharedPyMod.moduleName).toBe('shared');
+    expect(sharedPyMod.source).toContain('led_on = False');
+    expect(sharedPyMod.source).toContain('ticks = 0');
+
     setActiveHandleScripts(metas, timersScript.id);
     const timersWs = new Blockly.Workspace();
     Blockly.serialization.workspaces.load(timersScript.workspace, timersWs);
-    const timersCleanLua = backendRegistry.get('lua').generate(timersWs).code;
-    const timersCleanPy = backendRegistry.get('python').generate(timersWs).code;
+    const timersModDebugLua = backendRegistry.get('lua').generate(timersWs).moduleDebugCode!;
+    const timersModDebugPy = backendRegistry.get('python').generate(timersWs).moduleDebugCode!;
     timersWs.dispose();
 
     setActiveHandleScripts(metas, mainScript.id);
@@ -949,13 +962,15 @@ sys.modules["board"] = _m
     const mainDebugPy = backendRegistry.get('python').generate(mainWs).debugCode;
     mainWs.dispose();
     setActiveHandleScripts([], null);
-    setActiveTimerConfig({ count: 8, aliases: {} });
+    setActiveHandleSharedVariables(null);
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
 
-    // 1. Real Wasmoon Lua 5.4: main.lua central router dispatches on_timer_0/1 from timers.lua!
+    // 1. Real Wasmoon Lua 5.4: main.lua & timers.lua (moduleDebugCode!) share `shared.lua` AND central router dispatches on_timer_0/1!
     const { logs } = await runLuaDebugInWasmoon(mainDebugLua, {
       preloadModules: [
         { name: 'board', luaSource: VIRTUAL_BOARD_PACK.sandboxMock!.luaSource },
-        { name: 'timers', luaSource: timersCleanLua },
+        { name: sharedLuaMod.moduleName, luaSource: sharedLuaMod.debugSource },
+        { name: 'timers', luaSource: timersModDebugLua },
       ],
       onReady: (sched) => {
         // Press Button A -> triggers T1 (400ms x 3) handled in timers.lua's on_timer_1()
@@ -969,18 +984,12 @@ sys.modules["board"] = _m
     expect(logs.some((l) => l.includes('T1 告警触发次数 = 1'))).toBe(true);
     expect(logs.some((l) => l.includes('on_stop 已安全关闭 LED 与三色灯'))).toBe(true);
 
-    // 2. Real MicroPython WASM: main.py & timers.py share `shared.py` state AND main.py central router dispatches timers.py!
-    const sharedMod = buildHandlePythonSharedModule(hdl);
-    expect(sharedMod).not.toBeNull();
-    expect(sharedMod!.moduleName).toBe('shared');
-    expect(sharedMod!.pythonSource).toContain('led_on = None');
-    expect(sharedMod!.pythonSource).toContain('ticks = None');
-
+    // 2. Real MicroPython WASM: main.py & timers.py (moduleDebugCode!) share `shared.py` state AND main.py central router dispatches timers.py!
     const { logs: pyLogs } = await runPyDebugInMicroPython(mainDebugPy, {
       preloadModules: [
         { name: 'board', pythonSource: VIRTUAL_BOARD_PACK.sandboxMock!.pythonSource },
-        { name: sharedMod!.moduleName, pythonSource: sharedMod!.pythonSource, lazyVfs: true },
-        { name: 'timers', pythonSource: timersCleanPy, lazyVfs: true },
+        { name: sharedPyMod.moduleName, pythonSource: sharedPyMod.debugSource, lazyVfs: true },
+        { name: 'timers', pythonSource: timersModDebugPy, lazyVfs: true },
       ],
       onReady: (sched) => {
         setTimeout(() => sched.onMockInputsDelta({ btnA: false }, { btnA: true }), 80);
@@ -991,8 +1000,8 @@ sys.modules["board"] = _m
     expect(pyLogs.some((l) => l.includes('T1 告警触发次数 = 1'))).toBe(true);
     expect(pyLogs.some((l) => l.includes('on_stop 已安全关闭 LED 与三色灯'))).toBe(true);
 
-    // 3. Prove TRUE cross-file state synchronization in MicroPython WASM via `shared.py` (matching Lua `_G`!):
-    //    main.py sets `ticks = 100` in on_start() -> timers.py increments `shared.ticks` to 101 -> main.py reads 101 in on_stop()!
+    // 3. Prove TRUE cross-file state synchronization in BOTH Lua 5.4 & MicroPython via `shared.lua` / `shared.py`:
+    //    main sets `shared.ticks = 100` in on_start() -> timers increments `shared.ticks` to 101 -> main reads 101 in on_stop()!
     const syncMainWs = {
       blocks: {
         languageVersion: 0,
@@ -1088,6 +1097,8 @@ sys.modules["board"] = _m
       color: '#10b981',
       autoStart: true,
       capabilityConfigs: {},
+      sharedVariables: ['ticks'],
+      variableInitialValues: { ticks: { kind: 'number' as const, value: 0 } },
       entryScriptId: 'ss_main',
       activeScriptId: 'ss_main',
       updatedAt: '',
@@ -1096,28 +1107,43 @@ sys.modules["board"] = _m
         { id: 'ss_timers', name: 'timers', workspace: syncTimersWs, breakpoints: [], updatedAt: '' },
       ],
     };
-    setActiveTimerConfig({ count: 4, aliases: {} });
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 4, aliases: {} });
+    setActiveHandleSharedVariables(['ticks']);
     const syncMetas = buildHandleScriptsMeta(syncHdl);
-    const syncShared = buildHandlePythonSharedModule(syncHdl)!;
-    expect(syncShared.moduleName).toBe('shared');
+    const syncSharedLua = buildHandleSharedModule(syncHdl, 'lua')!;
+    const syncSharedPy = buildHandleSharedModule(syncHdl, 'python')!;
+    expect(syncSharedLua.moduleName).toBe('shared');
+    expect(syncSharedPy.moduleName).toBe('shared');
 
     setActiveHandleScripts(syncMetas, 'ss_timers');
     const stWs = new Blockly.Workspace();
     Blockly.serialization.workspaces.load(syncTimersWs, stWs);
+    const syncTimersLua = backendRegistry.get('lua').generate(stWs).code;
     const syncTimersPy = backendRegistry.get('python').generate(stWs).code;
     stWs.dispose();
 
     setActiveHandleScripts(syncMetas, 'ss_main');
     const smWs = new Blockly.Workspace();
     Blockly.serialization.workspaces.load(syncMainWs, smWs);
+    const syncMainLuaDebug = backendRegistry.get('lua').generate(smWs).debugCode;
     const syncMainPyDebug = backendRegistry.get('python').generate(smWs).debugCode;
     smWs.dispose();
     setActiveHandleScripts([], null);
-    setActiveTimerConfig({ count: 8, aliases: {} });
+    setActiveHandleSharedVariables(null);
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
+
+    const { logs: syncLuaLogs } = await runLuaDebugInWasmoon(syncMainLuaDebug, {
+      preloadModules: [
+        { name: syncSharedLua.moduleName, luaSource: syncSharedLua.debugSource },
+        { name: 'timers', luaSource: syncTimersLua },
+      ],
+    });
+    expect(syncLuaLogs).toContain('TIMER_TICKS = 101');
+    expect(syncLuaLogs).toContain('STOP_TICKS = 101');
 
     const { logs: syncLogs } = await runPyDebugInMicroPython(syncMainPyDebug, {
       preloadModules: [
-        { name: syncShared.moduleName, pythonSource: syncShared.pythonSource, lazyVfs: true },
+        { name: syncSharedPy.moduleName, pythonSource: syncSharedPy.debugSource, lazyVfs: true },
         { name: 'timers', pythonSource: syncTimersPy, lazyVfs: true },
       ],
     });
@@ -1268,7 +1294,7 @@ sys.modules["board"] = _m
         { id: 's_timers', name: 'timers', workspace: timersWsJson, breakpoints: [], updatedAt: '' },
       ],
     };
-    setActiveTimerConfig({ count: 4, aliases: {} });
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 4, aliases: {} });
     const metas = buildHandleScriptsMeta(fakeHdl);
     setActiveHandleScripts(metas, 's_timers');
     const tWs = new Blockly.Workspace();
@@ -1284,7 +1310,7 @@ sys.modules["board"] = _m
     const mPyDebug = backendRegistry.get('python').generate(mWs).debugCode;
     mWs.dispose();
     setActiveHandleScripts([], null);
-    setActiveTimerConfig({ count: 8, aliases: {} });
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
 
     const { logs: cLuaLogs } = await runLuaDebugInWasmoon(mLuaDebug, {
       preloadModules: [{ name: 'timers', luaSource: tLua }],
@@ -1519,12 +1545,8 @@ sys.modules["board"] = _m
     const metas = buildHandleScriptsMeta(hdl);
     setActiveHandleSharedFunctions(['double_val']);
 
-    setActiveHandleScripts(metas, 'sf_utils');
-    const uWs = new Blockly.Workspace();
-    Blockly.serialization.workspaces.load(utilsWsJson, uWs);
-    const uLuaModDebug = backendRegistry.get('lua').generate(uWs).moduleDebugCode!;
-    const uPyModDebug = backendRegistry.get('python').generate(uWs).moduleDebugCode!;
-    uWs.dispose();
+    const sharedLua = buildHandleSharedModule(hdl, 'lua')!;
+    const sharedPy = buildHandleSharedModule(hdl, 'python')!;
 
     setActiveHandleScripts(metas, 'sf_main');
     const mWs = new Blockly.Workspace();
@@ -1542,7 +1564,7 @@ sys.modules["board"] = _m
         luaPausedBlocks.push(bid);
         session.resume();
       },
-      preloadModules: [{ name: 'utils', luaSource: uLuaModDebug }],
+      preloadModules: [{ name: 'shared', luaSource: sharedLua.debugSource }],
     });
     expect(luaPausedBlocks).toContain('u_bp_block');
     expect(luaLogs).toContain('TAG = HOT');
@@ -1556,7 +1578,7 @@ sys.modules["board"] = _m
         pyPausedBlocks.push(bid);
         session.resume();
       },
-      preloadModules: [{ name: 'utils', pythonSource: uPyModDebug, lazyVfs: true }],
+      preloadModules: [{ name: 'shared', pythonSource: sharedPy.debugSource, lazyVfs: true }],
     });
     expect(pyPausedBlocks).toContain('u_bp_block');
     expect(pyLogs).toContain('TAG = HOT');
@@ -1598,12 +1620,19 @@ sys.modules["board"] = _m
             inputs: {
               BODY: {
                 block: {
-                  type: 'poly_start_timer',
-                  id: 'inf_st0',
-                  fields: { TIMER_ID: '0' },
-                  inputs: {
-                    PERIOD_MS: { shadow: { type: 'math_number', id: 'inf_20', fields: { NUM: 20 } } },
-                    REPEAT: { shadow: { type: 'math_number', id: 'inf_1', fields: { NUM: 1 } } },
+                  type: 'poly_require_script',
+                  id: 'inf_req',
+                  fields: { SCRIPT: 'timers' },
+                  next: {
+                    block: {
+                      type: 'poly_start_timer',
+                      id: 'inf_st0',
+                      fields: { TIMER_ID: '0' },
+                      inputs: {
+                        PERIOD_MS: { shadow: { type: 'math_number', id: 'inf_20', fields: { NUM: 20 } } },
+                        REPEAT: { shadow: { type: 'math_number', id: 'inf_1', fields: { NUM: 1 } } },
+                      },
+                    },
                   },
                 },
               },
@@ -1626,7 +1655,7 @@ sys.modules["board"] = _m
         { id: 'ic_timers', name: 'timers', workspace: infTimersWsJson, breakpoints: [], updatedAt: '' },
       ],
     };
-    setActiveTimerConfig({ count: 4, aliases: {} });
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 4, aliases: {} });
     const infMetas = buildHandleScriptsMeta(infHdl);
     setActiveHandleScripts(infMetas, 'ic_timers');
     const itWs = new Blockly.Workspace();
@@ -1640,7 +1669,7 @@ sys.modules["board"] = _m
     const infMainPyDebug = backendRegistry.get('python').generate(imWs).debugCode;
     imWs.dispose();
     setActiveHandleScripts([], null);
-    setActiveTimerConfig({ count: 8, aliases: {} });
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
 
     await expect(
       runPyDebugInMicroPython(infMainPyDebug, {
@@ -1650,5 +1679,182 @@ sys.modules["board"] = _m
         ],
       }),
     ).rejects.toThrow(/事件回调执行超时/);
+  }, 15_000);
+
+  it('executes value-slot dict & list blocks AND transitive async sleep_ms inside shared module in BOTH Wasmoon Lua 5.4 & MicroPython WASM', async () => {
+    const wsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'procedures_defnoreturn',
+            id: 'as_def',
+            fields: { NAME: 'pulse_wait' },
+            inputs: {
+              STACK: {
+                block: {
+                  type: 'poly_wait_ms',
+                  id: 'as_w',
+                  inputs: { MS: { shadow: { type: 'math_number', id: 'as_25', fields: { NUM: 25 } } } },
+                  next: {
+                    block: {
+                      type: 'poly_print',
+                      id: 'as_p',
+                      inputs: { VALUE: { block: { type: 'text', id: 'as_t', fields: { TEXT: 'SHARED_SLEPT' } } } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: 'poly_on_start',
+            id: 'dl_s',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'ext_dict_set',
+                  id: 'dl_dset',
+                  inputs: {
+                    DICT: { block: { type: 'variables_get', id: 'dl_dg1', fields: { VAR: { id: 'v_cfg' } } } },
+                    KEY: { block: { type: 'text', id: 'dl_dk', fields: { TEXT: 'mode' } } },
+                    VAL: { block: { type: 'text', id: 'dl_dv', fields: { TEXT: 'TURBO' } } },
+                  },
+                  next: {
+                    block: {
+                      type: 'poly_list_append',
+                      id: 'dl_lapp',
+                      inputs: {
+                        LIST: { block: { type: 'variables_get', id: 'dl_lg1', fields: { VAR: { id: 'v_arr' } } } },
+                        ITEM: { block: { type: 'math_number', id: 'dl_n7', fields: { NUM: 7 } } },
+                      },
+                      next: {
+                        block: {
+                          type: 'poly_list_set',
+                          id: 'dl_lset',
+                          inputs: {
+                            LIST: { block: { type: 'variables_get', id: 'dl_lg2', fields: { VAR: { id: 'v_arr' } } } },
+                            INDEX: { shadow: { type: 'math_number', id: 'dl_i1', fields: { NUM: 1 } } },
+                            VALUE: { block: { type: 'math_number', id: 'dl_n42', fields: { NUM: 42 } } },
+                          },
+                          next: {
+                            block: {
+                              type: 'poly_print_kv',
+                              id: 'dl_pd',
+                              fields: { LABEL: 'CFG' },
+                              inputs: {
+                                VALUE: {
+                                  block: {
+                                    type: 'ext_dict_get',
+                                    id: 'dl_dget',
+                                    inputs: {
+                                      DICT: { block: { type: 'variables_get', id: 'dl_dg2', fields: { VAR: { id: 'v_cfg' } } } },
+                                      KEY: { block: { type: 'text', id: 'dl_dk2', fields: { TEXT: 'mode' } } },
+                                    },
+                                  },
+                                },
+                              },
+                              next: {
+                                block: {
+                                  type: 'poly_print_kv',
+                                  id: 'dl_pl',
+                                  fields: { LABEL: 'ARR1' },
+                                  inputs: {
+                                    VALUE: {
+                                      block: {
+                                        type: 'poly_list_get',
+                                        id: 'dl_lget',
+                                        inputs: {
+                                          LIST: { block: { type: 'variables_get', id: 'dl_lg3', fields: { VAR: { id: 'v_arr' } } } },
+                                          INDEX: { shadow: { type: 'math_number', id: 'dl_i2', fields: { NUM: 1 } } },
+                                        },
+                                      },
+                                    },
+                                  },
+                                  next: {
+                                    block: {
+                                      type: 'procedures_callnoreturn',
+                                      id: 'dl_call_sleep',
+                                      extraState: { name: 'pulse_wait' },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [
+        { name: 'cfg', id: 'v_cfg' },
+        { name: 'arr', id: 'v_arr' },
+      ],
+    };
+
+    const hdl = {
+      id: 'h_dl',
+      name: 'dl_vm',
+      color: '#8b5cf6',
+      autoStart: true,
+      capabilityConfigs: {},
+      sharedVariables: ['cfg', 'arr'],
+      sharedFunctions: ['pulse_wait'],
+      variableInitialValues: {
+        cfg: { kind: 'dict' as const },
+        arr: { kind: 'list' as const },
+      },
+      entryScriptId: 'dl_main',
+      activeScriptId: 'dl_main',
+      updatedAt: '',
+      scripts: [
+        { id: 'dl_main', name: 'main', workspace: wsJson, breakpoints: [], updatedAt: '' },
+      ],
+    };
+
+    setActiveHandleSharedVariables(['cfg', 'arr']);
+    setActiveHandleSharedFunctions(['pulse_wait']);
+    const metas = buildHandleScriptsMeta(hdl);
+    setActiveHandleScripts(metas, 'dl_main');
+
+    const sharedLua = buildHandleSharedModule(hdl, 'lua')!;
+    const sharedPy = buildHandleSharedModule(hdl, 'python')!;
+    expect(sharedPy.source).toContain('cfg = {}');
+    expect(sharedPy.source).toContain('arr = []');
+    expect(sharedPy.source).toContain('async def pulse_wait():');
+    expect(sharedPy.source).toContain('await sleep_ms(25)');
+
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(wsJson, ws);
+    const luaRes = backendRegistry.get('lua').generate(ws);
+    const pyRes = backendRegistry.get('python').generate(ws);
+    ws.dispose();
+    setActiveHandleScripts([], null);
+    setActiveHandleSharedVariables(null);
+    setActiveHandleSharedFunctions(null);
+
+    expect(luaRes.diagnostics).toHaveLength(0);
+    expect(pyRes.diagnostics).toHaveLength(0);
+    expect(pyRes.code).toContain('await shared.pulse_wait()');
+
+    const { logs: luaLogs } = await runLuaDebugInWasmoon(luaRes.debugCode, {
+      preloadModules: [{ name: 'shared', luaSource: sharedLua.debugSource }],
+    });
+    expect(luaLogs).toContain('CFG = TURBO');
+    expect(luaLogs).toContain('ARR1 = 42');
+    expect(luaLogs).toContain('SHARED_SLEPT');
+
+    const { logs: pyLogs } = await runPyDebugInMicroPython(pyRes.debugCode, {
+      preloadModules: [{ name: 'shared', pythonSource: sharedPy.debugSource, lazyVfs: true }],
+    });
+    expect(pyLogs).toContain('CFG = TURBO');
+    expect(pyLogs).toContain('ARR1 = 42');
+    expect(pyLogs).toContain('SHARED_SLEPT');
   });
 });

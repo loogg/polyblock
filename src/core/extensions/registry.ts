@@ -4,7 +4,9 @@ import { Order as PyOrder, pythonGenerator } from 'blockly/python';
 import {
   buildLuaHoistedLocalsLine,
   buildPythonGlobalLineForBlocks,
+  buildPythonHoistedLocalsLine,
   codegenContext,
+  formatLuaVarRef,
   formatPythonVarRef,
 } from '../backends/codegenContext';
 import type { BlockCategorySpec, ToolboxBlockSpec } from '../blocks/catalog';
@@ -458,7 +460,7 @@ function renderTemplate(
       if (argType === 'field_variable') {
         const varId = String(block.getFieldValue(argName) || '');
         return lang === 'lua'
-          ? luaGenerator.getVariableName(varId)
+          ? formatLuaVarRef(varId, luaGenerator, block)
           : formatPythonVarRef(varId, pythonGenerator, block);
       }
 
@@ -902,14 +904,15 @@ function registerHatGenerators(
         generator,
         formalParams,
       );
+      const hoistedLocals = buildPythonHoistedLocalsLine([block], 'BODY', '  ');
       const safeBody = body.trim() ? body : '  pass\n';
       if (codegenContext.debugPass) {
-        return `${defKw} ${hatSpec.eventName}(${paramsStr}):\n${globalLine}${safeBody}\n`;
+        return `${defKw} ${hatSpec.eventName}(${paramsStr}):\n${globalLine}${hoistedLocals}${safeBody}\n`;
       }
       return (
         `${SENTINEL_START}'${block.id}'__\n` +
         `${defKw} ${hatSpec.eventName}(${paramsStr}):\n` +
-        `${globalLine}${safeBody}` +
+        `${globalLine}${hoistedLocals}${safeBody}` +
         `${SENTINEL_END}'${block.id}'__\n`
       );
     }
@@ -964,16 +967,23 @@ function registerHatGenerators(
           generator,
           branchFormalParams,
         );
+        const branchHoistedLocals = buildPythonHoistedLocalsLine(
+          [hatBlk],
+          'BODY',
+          '  ',
+        );
         const safeBody = rawBody.trim() ? rawBody : '  pass\n';
         const headerComment = comment.trim() ? `${comment.trim()}\n` : '';
         if (codegenContext.debugPass) {
-          fnDefs.push(`${defKw} ${fnName}(${branchParamsStr}):\n${branchGlobalLine}${safeBody}\n`);
+          fnDefs.push(
+            `${defKw} ${fnName}(${branchParamsStr}):\n${branchGlobalLine}${branchHoistedLocals}${safeBody}\n`,
+          );
         } else {
           fnDefs.push(
             `${SENTINEL_START}'${hatBlk.id}'__\n` +
               `${headerComment}` +
               `${defKw} ${fnName}(${branchParamsStr}):\n` +
-              `${branchGlobalLine}${safeBody}` +
+              `${branchGlobalLine}${branchHoistedLocals}${safeBody}` +
               `${SENTINEL_END}'${hatBlk.id}'__\n`,
           );
         }
@@ -986,6 +996,11 @@ function registerHatGenerators(
       matchingHats,
       generator,
       formalParams,
+    );
+    const dispatchHoistedLocals = buildPythonHoistedLocalsLine(
+      matchingHats,
+      'BODY',
+      '  ',
     );
     const branches: string[] = [];
     matchingHats.forEach((hatBlk, idx) => {
@@ -1019,7 +1034,7 @@ function registerHatGenerators(
       }
     });
 
-    return `${defKw} ${hatSpec.eventName}(${paramsStr}):\n${dispatchGlobalLine}${branches.join('')}\n`;
+    return `${defKw} ${hatSpec.eventName}(${paramsStr}):\n${dispatchGlobalLine}${dispatchHoistedLocals}${branches.join('')}\n`;
   };
 }
 

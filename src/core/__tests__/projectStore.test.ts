@@ -207,53 +207,30 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     expect(store.activeProjectId).toBe(base.id);
   });
 
-  it('losslessly imports v3, legacy v2, and legacy v1 project JSON files', () => {
-    const v1Raw = {
-      format: 'polyblock-project',
-      version: 1,
-      name: 'demo_logger.polyblock.json',
-      language: 'python',
-      workspace: { blocks: { languageVersion: 0, blocks: [] } },
-    };
-    const migratedV1 = parseImportedProject(v1Raw, 'fallback');
-    expect(migratedV1.version).toBe(3);
-    expect(migratedV1.name).toBe('demo_logger');
-    expect(migratedV1.language).toBe('python');
-    expect(migratedV1.handles).toHaveLength(1);
-    expect(migratedV1.handles[0].scripts[0].name).toBe('main');
+  it('imports v3 project JSON losslessly (including variableInitialValues) and rejects legacy v1/v2 formats', () => {
+    expect(() =>
+      parseImportedProject(
+        { format: 'polyblock-project', version: 1, workspace: {} },
+        'fallback',
+      ),
+    ).toThrow(/仅支持 PolyBlock v3/);
+    expect(() =>
+      parseImportedProject(
+        { format: 'polyblock-project', version: 2, scripts: [] },
+        'fallback',
+      ),
+    ).toThrow(/仅支持 PolyBlock v3/);
 
-    const v2Raw = {
-      format: 'polyblock-project',
-      version: 2,
-      name: 'legacy_v2_proj',
-      language: 'lua',
-      enabledExtensions: ['virtual-board'],
-      timerConfig: { count: 16, aliases: { '0': '心跳' } },
-      entryScriptId: 's1',
-      activeScriptId: 's1',
-      scripts: [
-        {
-          id: 's1',
-          name: 'main',
-          workspace: { blocks: { languageVersion: 0, blocks: [] } },
-          breakpoints: ['b1'],
-          updatedAt: '2026-01-01T00:00:00Z',
-        },
-      ],
-    };
-    const migratedV2 = parseImportedProject(v2Raw, 'fallback');
-    expect(migratedV2.version).toBe(3);
-    expect(migratedV2.handles).toHaveLength(1);
-    expect(migratedV2.enabledCapabilities).toContain(CAP_VIRTUAL_BOARD);
-    expect(getHandleTimerConfig(migratedV2.handles[0]).count).toBe(16);
-    expect(getHandleTimerConfig(migratedV2.handles[0]).aliases['0']).toBe('心跳');
-    expect(migratedV2.handles[0].scripts[0].breakpoints).toEqual(['b1']);
-
-    const v3Orig = instantiateProjectFromTemplate('multi_handle_robot');
+    const v3Orig = instantiateProjectFromTemplate('event_timer_demo');
     const reimported = parseImportedProject(v3Orig, 'fallback', [v3Orig.name]);
     expect(reimported.version).toBe(3);
-    expect(reimported.name).toBe('智能双轮机器人全栈仿真 (2)');
-    expect(reimported.handles).toHaveLength(3);
+    expect(reimported.name).toBe('事件回调与多路定时器示例 (2)');
+    expect(reimported.handles).toHaveLength(2);
+    expect(reimported.handles[0].sharedVariables).toEqual(['led_on', 'ticks']);
+    expect(reimported.handles[0].variableInitialValues).toEqual({
+      led_on: { kind: 'boolean', value: false },
+      ticks: { kind: 'number', value: 0 },
+    });
   });
 
   it('enforces explicit 3-tier variable scopes (cross-file shared vs single-file global) symmetrically across Lua & Python', () => {
@@ -308,26 +285,40 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     ).map((v) => v.name);
     expect(mainVarsAfterFile).not.toContain('local_only');
 
-    // 4. Creating an explicit cross-file (`shared`) variable in `script_2` adds to `handle.sharedVariables`
-    //    AND propagates immediately to `main`!
+    // 4. Creating an explicit cross-file (`shared`) variable with initial value in `script_2`
+    //    adds to `handle.sharedVariables` + `variableInitialValues` AND propagates to `main`!
     const afterCreateShared = applyHandleVariableMutation(
       afterFileVar.handle,
       hdl.scripts[1].id,
-      { kind: 'create', name: 'speed', scope: 'shared' },
+      {
+        kind: 'create',
+        name: 'speed',
+        scope: 'shared',
+        initialValue: { kind: 'number', value: 12 },
+      },
     );
     expect(collectHandleSharedVariableNames(afterCreateShared.handle)).toEqual(['speed']);
+    expect(afterCreateShared.handle.variableInitialValues?.speed).toEqual({
+      kind: 'number',
+      value: 12,
+    });
     const mainVarsAfterShared = (
       (afterCreateShared.handle.scripts[0].workspace.variables as Array<{ name: string }>) ?? []
     ).map((v) => v.name);
     expect(mainVarsAfterShared).toContain('speed');
 
-    // 5. Renaming a cross-file shared variable (`speed` -> `vel`) propagates across all scripts
+    // 5. Renaming a cross-file shared variable (`speed` -> `vel`) propagates across all scripts + initialValues
     const afterRenameShared = applyHandleVariableMutation(
       afterCreateShared.handle,
       hdl.scripts[1].id,
       { kind: 'rename', oldName: 'speed', newName: 'vel' },
     );
     expect(collectHandleSharedVariableNames(afterRenameShared.handle)).toEqual(['vel']);
+    expect(afterRenameShared.handle.variableInitialValues?.vel).toEqual({
+      kind: 'number',
+      value: 12,
+    });
+    expect(afterRenameShared.handle.variableInitialValues?.speed).toBeUndefined();
     const mainVarsAfterRename = (
       (afterRenameShared.handle.scripts[0].workspace.variables as Array<{ name: string }>) ?? []
     ).map((v) => v.name);
@@ -343,8 +334,8 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     expect(afterDeleteUnused.keptInSiblings).toEqual([]);
     expect(collectHandleSharedVariableNames(afterDeleteUnused.handle)).toEqual([]);
 
-    // 7. L2 `event_timer_demo` explicitly configures `board_vm.sharedVariables = ['led_on', 'ticks']`:
-    //    Lua emits bare `_G` (NO `local led_on`), Python emits `import shared` / `shared.led_on`!
+    // 7. L3 `event_timer_demo` explicitly configures `board_vm.sharedVariables = ['led_on', 'ticks']`:
+    //    BOTH Lua (`local shared = require("shared")`) & Python (`import shared`) use unified Style A1!
     const l2 = instantiateProjectFromTemplate('event_timer_demo');
     const boardVm = l2.handles.find((h) => h.name === 'board_vm')!;
     expect(collectHandleSharedVariableNames(boardVm)).toEqual(['led_on', 'ticks']);
@@ -354,6 +345,8 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     const l2Lua = backendRegistry.get('lua').generate(l2MainWs).code;
     const l2Py = backendRegistry.get('python').generate(l2MainWs).code;
     l2MainWs.dispose();
+    expect(l2Lua).toContain('local shared = require("shared")');
+    expect(l2Lua).toContain('shared.led_on = false');
     expect(l2Lua).not.toContain('local led_on');
     expect(l2Lua).not.toContain('local ticks');
     expect(l2Py).toContain('import shared');

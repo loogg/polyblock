@@ -1,14 +1,14 @@
 import type { ProjectModel, RuntimeHandle } from '../../types/project';
-import {
-  buildHandlePythonSharedModule,
-  buildHandleScriptsMeta,
-} from '../backends/eventMode';
+import { buildHandleScriptsMeta } from '../backends/eventMode';
+import { buildHandleSharedModule } from '../backends/sharedModule';
 import { backendRegistry } from '../backends/registry';
 import {
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
   setActiveHandleSharedFunctions,
+  setActiveHandleSharedVarInitials,
   setActiveHandleSharedVariables,
+  setActiveScriptVarInitials,
 } from '../blocks/timerConfigBridge';
 import { collectHandleSharedVariableNames } from '../projects/handleVariables';
 import {
@@ -65,21 +65,21 @@ function compileHandleAllScripts(
   );
   setActiveChannelPoolConfigs(poolCfgs);
   setActiveHandleSharedVariables(collectHandleSharedVariableNames(handle));
+  setActiveHandleSharedVarInitials(handle.variableInitialValues);
   setActiveHandleSharedFunctions(handle.sharedFunctions ?? []);
   const scriptMetas = buildHandleScriptsMeta(handle);
 
   const compiled: Array<{ scriptId: string; scriptName: string; code: string }> = [];
-  if (project.language === 'python') {
-    const sharedMod = buildHandlePythonSharedModule(handle);
-    if (sharedMod) {
-      compiled.push({
-        scriptId: '__poly_shared__',
-        scriptName: sharedMod.moduleName,
-        code: sharedMod.pythonSource,
-      });
-    }
+  const sharedMod = buildHandleSharedModule(handle, project.language, poolCfgs);
+  if (sharedMod) {
+    compiled.push({
+      scriptId: '__poly_shared__',
+      scriptName: sharedMod.moduleName,
+      code: sharedMod.source,
+    });
   }
   for (const scr of handle.scripts) {
+    setActiveScriptVarInitials(scr.variableInitialValues);
     setActiveHandleScripts(scriptMetas, scr.id);
     const res = compileScriptHeadless(scr.workspace, project.language, poolCfgs);
     compiled.push({

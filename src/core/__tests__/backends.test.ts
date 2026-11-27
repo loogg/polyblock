@@ -27,7 +27,8 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     expect(res.code).not.toContain('__PB_E:');
     expect(res.code).toContain('Target: Lua 5.4');
     expect(res.code).toContain('function on_start()');
-    expect(res.debugCode).toContain('if type(on_start) == "function" then');
+    expect(res.debugCode).toContain('coroutine.create(on_start)');
+    expect(res.debugCode).toContain('__poly_init_scheduler');
     expect(res.code).toContain('print("[INFO] " .. tostring(');
     expect(res.code).toContain('for i = 1, 3 do');
     expect(res.code).toContain('print("最终 total" .. " = " .. tostring(total))');
@@ -52,10 +53,11 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     expect(res.code).not.toContain('__PB_S:');
     expect(res.code).not.toContain('__PB_E:');
     expect(res.code).not.toContain('from numbers import Number');
-    expect(res.code).toContain('isinstance(total, (int, float))');
+    expect(res.code).not.toContain('isinstance(');
+    expect(res.code).toContain('total += 10');
     expect(res.code).toContain('Target: Python 3');
-    expect(res.code).toContain('def on_start():');
-    expect(res.debugCode).toContain('await on_start()');
+    expect(res.code).toContain('async def on_start():');
+    expect(res.debugCode).toContain('_poly.init_scheduler');
     expect(res.code).toContain('print("[INFO] " + str(');
     expect(res.code).toContain('for i in range(int(1), 4):');
     expect(res.code).toContain('print("最终 total =", total)');
@@ -69,7 +71,7 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     ws.dispose();
   });
 
-  it('generates valid Lua & Python for list append and random alarm templates', () => {
+  it('generates valid Lua & Python for list primitives (zero hidden helper functions) and random alarm templates', () => {
     for (const tpl of PROJECT_TEMPLATES.slice(1)) {
       const ws = createLoadedWorkspace(tpl.workspace);
       const luaRes = backendRegistry.get('lua').generate(ws);
@@ -83,16 +85,79 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     }
 
     const listWs = createLoadedWorkspace(PROJECT_TEMPLATES[3].workspace);
-    expect(backendRegistry.get('lua').generate(listWs).code).toContain(
-      'table.insert(items, 40)',
-    );
-    expect(backendRegistry.get('python').generate(listWs).code).toContain(
-      'items.append(40)',
-    );
+    const listLua = backendRegistry.get('lua').generate(listWs).code;
+    const listPy = backendRegistry.get('python').generate(listWs).code;
+    expect(listLua).toContain('table.insert(items, 40)');
+    expect(listPy).toContain('items.append(40)');
     listWs.dispose();
+
+    // Pure value-slot list primitives (`poly_list_get`/`set`/`remove`) emit direct indexing with ZERO helper functions!
+    const opsWs = createLoadedWorkspace({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'lop_s',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_list_set',
+                  id: 'lop_set',
+                  inputs: {
+                    LIST: { block: { type: 'variables_get', id: 'lop_g1', fields: { VAR: { id: 'v_arr' } } } },
+                    INDEX: { shadow: { type: 'math_number', id: 'lop_i1', fields: { NUM: 1 } } },
+                    VALUE: { block: { type: 'math_number', id: 'lop_v99', fields: { NUM: 99 } } },
+                  },
+                  next: {
+                    block: {
+                      type: 'poly_print',
+                      id: 'lop_pr',
+                      inputs: {
+                        VALUE: {
+                          block: {
+                            type: 'poly_list_get',
+                            id: 'lop_get',
+                            inputs: {
+                              LIST: { block: { type: 'variables_get', id: 'lop_g2', fields: { VAR: { id: 'v_arr' } } } },
+                              INDEX: { shadow: { type: 'math_number', id: 'lop_i2', fields: { NUM: 1 } } },
+                            },
+                          },
+                        },
+                      },
+                      next: {
+                        block: {
+                          type: 'poly_list_remove',
+                          id: 'lop_rem',
+                          inputs: {
+                            LIST: { block: { type: 'variables_get', id: 'lop_g3', fields: { VAR: { id: 'v_arr' } } } },
+                            INDEX: { shadow: { type: 'math_number', id: 'lop_i3', fields: { NUM: 2 } } },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [{ name: 'arr', id: 'v_arr' }],
+    });
+    const opsLua = backendRegistry.get('lua').generate(opsWs).code;
+    const opsPy = backendRegistry.get('python').generate(opsWs).code;
+    expect(opsLua).toContain('arr[1] = 99');
+    expect(opsLua).toContain('print(arr[1])');
+    expect(opsLua).toContain('table.remove(arr, 2)');
+    expect(opsLua).not.toContain('first_index');
+    expect(opsPy).toContain('arr[0] = 99');
+    expect(opsPy).toContain('print(arr[0])');
+    expect(opsPy).toContain('arr.pop(1)');
+    opsWs.dispose();
   });
 
-  it('generates clean delay code and separate async debugCode for step_debug_demo', () => {
+  it('generates unified async coroutine delay code and separate debugCode for step_debug_demo', () => {
     const stepTpl = PROJECT_TEMPLATES.find((t) => t.id === 'step_debug_demo')!;
     const ws = createLoadedWorkspace(stepTpl.workspace);
 
@@ -113,42 +178,18 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     expect(luaRes.variableNames).toContain('sum');
 
     const pyRes = backendRegistry.get('python').generate(ws);
-    expect(pyRes.code).toContain('sleep_ms(350)');
+    expect(pyRes.code).toContain('async def on_start():');
+    expect(pyRes.code).toContain('await sleep_ms(350)');
     expect(pyRes.code).not.toContain('import time');
     expect(pyRes.code).not.toContain('time.sleep');
     expect(pyRes.code).not.toContain('_poly.step');
     expect(pyRes.code).not.toContain('_poly.sleep');
     expect(pyRes.debugCode).toContain('await _poly_tick(');
-    expect(pyRes.debugCode).toContain('await _poly_sleep_ms(350)');
+    expect(pyRes.debugCode).toContain('await sleep_ms(350)');
     expect(pyRes.debugCode).toContain('["sum","sum2"]');
     expect(pyRes.variableNames).toContain('sum');
 
     ws.dispose();
-
-    // poly_clear_log emits a clean comment for hardware export, keeping sentinel ONLY in sandbox debugCode
-    const clearWs = createLoadedWorkspace({
-      blocks: {
-        languageVersion: 0,
-        blocks: [
-          {
-            type: 'poly_on_start',
-            id: 'clr_s',
-            inputs: {
-              BODY: { block: { type: 'poly_clear_log', id: 'clr_b' } },
-            },
-          },
-        ],
-      },
-    });
-    const clearLua = backendRegistry.get('lua').generate(clearWs);
-    expect(clearLua.code).not.toContain('__POLYBLOCK_CLEAR__');
-    expect(clearLua.code).toContain('-- 清空控制台');
-    expect(clearLua.debugCode).toContain('print("__POLYBLOCK_CLEAR__")');
-    const clearPy = backendRegistry.get('python').generate(clearWs);
-    expect(clearPy.code).not.toContain('__POLYBLOCK_CLEAR__');
-    expect(clearPy.code).toContain('# 清空控制台');
-    expect(clearPy.debugCode).toContain('print("__POLYBLOCK_CLEAR__")');
-    clearWs.dispose();
   });
 
   it('pauses on breakpoints and advances with stepNext / resume in WorkerDebugSession', async () => {
@@ -221,20 +262,16 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
 });
 
 describe('Log parser & syntax highlighter', () => {
-  it('parses leveled log tags and clear sentinel accurately', () => {
-    expect(parseStdoutLine('__POLYBLOCK_CLEAR__').isClear).toBe(true);
+  it('parses leveled log tags accurately', () => {
     expect(parseStdoutLine('[INFO] hello')).toEqual({
-      isClear: false,
       level: 'info',
       message: 'hello',
     });
     expect(parseStdoutLine('[WARN] over 70')).toEqual({
-      isClear: false,
       level: 'warn',
       message: 'over 70',
     });
     expect(parseStdoutLine('plain output')).toEqual({
-      isClear: false,
       level: 'print',
       message: 'plain output',
     });

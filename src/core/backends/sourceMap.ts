@@ -9,13 +9,15 @@ import {
   getActiveHandleScriptId,
   getActiveHandleScripts,
   getActiveHandleSharedFunctions,
+  getActiveHandleSharedVariables,
   getActiveModuleConflicts,
   getActiveProjectCapabilities,
   isCurrentHandleScriptEntry,
 } from '../blocks/timerConfigBridge';
 import { hasCapability } from '../capabilities/registry';
 import { extensionRegistry } from '../extensions/registry';
-import { isValidTopHatType } from './eventMode';
+import { computeAsyncFunctionNames } from './codegenContext';
+import { getUnifiedHatSpec, isValidTopHatType } from './eventMode';
 
 export const SENTINEL_START_PREFIX = '__PB_S:';
 export const SENTINEL_END_PREFIX = '__PB_E:';
@@ -116,57 +118,37 @@ export function analyzeWorkspaceDiagnostics(
 
   const enabledTopBlocks = topBlocks.filter((b) => !b.isShadow() && b.isEnabled());
 
-  // 1. Check duplicate `poly_on_start` + any declarative singleton hat (Error: 2nd would overwrite 1st!)
-  //    AND enforce entry-only placement for ALL singleton lifecycle/event hats (`on_start`, `on_run`, `on_stop`, etc.)
+  // 1. Unified `hat.mode === 'singleton'` check across ALL hats (including core `poly_on_start`):
+  //    - Singleton hats are ONLY allowed in the handle's entry script (`main`)
+  //    - Duplicate singleton hats in the same script are `error`
   const isEntryScript = isCurrentHandleScriptEntry();
+  const handleScriptsAll = getActiveHandleScripts();
   const entryScriptName =
-    getActiveHandleScripts().find((s) => s.isEntry)?.name ?? 'main';
+    handleScriptsAll.find((s) => s.isEntry)?.name ?? 'main';
   const seenSingletons = new Map<string, number>();
   const startBlocks: Blockly.Block[] = [];
   for (const blk of enabledTopBlocks) {
-    if (blk.type === 'poly_on_start') {
-      startBlocks.push(blk);
-      if (!isEntryScript) {
-        diagnostics.push({
-          id: `non-entry-singleton-on_start-${blk.id}`,
-          severity: 'error',
-          message: `入口回调「on_start」只能在句柄入口脚本（${entryScriptName}）中定义，请移至入口脚本。`,
-          blockId: blk.id,
-        });
-      }
-      const count = (seenSingletons.get(blk.type) ?? 0) + 1;
-      seenSingletons.set(blk.type, count);
-      if (count > 1) {
-        diagnostics.push({
-          id: `multi-poly_on_start-${blk.id}`,
-          severity: 'error',
-          message: '同一个脚本内检测到多个“当程序启动 (on_start)”入口块（后者会覆盖前者），请合并为一个。',
-          blockId: blk.id,
-        });
-      }
-      continue;
-    }
+    if (blk.type === 'poly_on_start') startBlocks.push(blk);
+    const hatSpec = getUnifiedHatSpec(blk.type);
+    if (!hatSpec || hatSpec.mode !== 'singleton') continue;
 
-    const hatDef = extensionRegistry.getHatBlockDef(blk.type);
-    if (hatDef && hatDef.hat.mode === 'singleton') {
-      if (!isEntryScript) {
-        diagnostics.push({
-          id: `non-entry-singleton-${hatDef.hat.eventName}-${blk.id}`,
-          severity: 'error',
-          message: `生命周期/单例回调「${hatDef.hat.eventName}」只能在句柄入口脚本（${entryScriptName}）中定义，请移至入口脚本。`,
-          blockId: blk.id,
-        });
-      }
-      const count = (seenSingletons.get(blk.type) ?? 0) + 1;
-      seenSingletons.set(blk.type, count);
-      if (count > 1) {
-        diagnostics.push({
-          id: `multi-${blk.type}-${blk.id}`,
-          severity: 'error',
-          message: `同一个脚本内检测到多个“${hatDef.hat.eventName}”回调块（后者会覆盖前者），请合并为一个。`,
-          blockId: blk.id,
-        });
-      }
+    if (!isEntryScript) {
+      diagnostics.push({
+        id: `non-entry-singleton-${hatSpec.eventName}-${blk.id}`,
+        severity: 'error',
+        message: `单例/生命周期回调「${hatSpec.eventName}」只能在句柄入口脚本（${entryScriptName}）中定义，请移至入口脚本。`,
+        blockId: blk.id,
+      });
+    }
+    const count = (seenSingletons.get(hatSpec.eventName) ?? 0) + 1;
+    seenSingletons.set(hatSpec.eventName, count);
+    if (count > 1) {
+      diagnostics.push({
+        id: `multi-${blk.type}-${blk.id}`,
+        severity: 'error',
+        message: `同一个脚本内检测到多个「${hatSpec.eventName}」回调块（后者会覆盖前者），请合并为一个。`,
+        blockId: blk.id,
+      });
     }
   }
 
@@ -224,23 +206,59 @@ export function analyzeWorkspaceDiagnostics(
     }
   }
 
-  // 4. Unified pack/capability gating + channel pool OOB diagnostics across ALL blocks
+  // 4. Unified pack/capability gating, non-blocking callback checks & channel pool OOB diagnostics
   const activeCaps = getActiveProjectCapabilities();
+  const externalAsyncSharedFns = new Set<string>();
+  for (const s of handleScriptsAll) {
+    for (const fn of s.declaredFunctions ?? []) {
+      if (fn.usesSleep) externalAsyncSharedFns.add(fn.name);
+    }
+  }
+  const asyncFnNames = computeAsyncFunctionNames(workspace, externalAsyncSharedFns);
 
   for (const blk of workspace.getAllBlocks(false)) {
     if (blk.isShadow() || !blk.isEnabled()) continue;
 
-    // Option A strict board alignment: `sleep_ms` / wait block cannot block inside synchronous event callbacks
-    if (blk.type === 'poly_wait_ms') {
-      const rootBlk = blk.getRootBlock();
-      const rootHat = rootBlk ? extensionRegistry.getHatBlockDef(rootBlk.type) : undefined;
-      if (rootHat) {
+    // Strict board alignment: `sleep_ms` (direct or via async helper) cannot block inside non-coroutine callbacks
+    const rootBlk = blk.getRootBlock();
+    const rootHatSpec = rootBlk ? getUnifiedHatSpec(rootBlk.type) : undefined;
+    if (rootHatSpec && !rootHatSpec.isCoroutine) {
+      if (blk.type === 'poly_wait_ms') {
         diagnostics.push({
-          id: `wait-in-callback-${rootHat.hat.eventName}-${blk.id}`,
+          id: `wait-in-callback-${rootHatSpec.eventName}-${blk.id}`,
           severity: 'error',
-          message: `禁止在事件回调「${rootHat.hat.eventName}」内使用「等待 ms」（sleep_ms）；实板同步回调不可阻塞，请移至「当程序启动」协程或改用定时器。`,
+          message: `禁止在事件回调「${rootHatSpec.eventName}」内使用「等待 ms」（sleep_ms）；实板同步回调不可阻塞，请移至「当程序启动」协程或改用定时器。`,
           blockId: blk.id,
         });
+      } else if (
+        blk.type === 'procedures_callnoreturn' ||
+        blk.type === 'procedures_callreturn'
+      ) {
+        const call = blk as Blockly.Block & { getProcedureCall?: () => string };
+        const fnName = call.getProcedureCall?.()?.trim();
+        if (fnName && asyncFnNames.has(fnName)) {
+          diagnostics.push({
+            id: `async-call-in-callback-${rootHatSpec.eventName}-${fnName}-${blk.id}`,
+            severity: 'error',
+            message: `事件回调「${rootHatSpec.eventName}」不可阻塞，禁止调用包含等待 (sleep_ms) 的函数「${fnName}」。`,
+            blockId: blk.id,
+          });
+        }
+      } else if (
+        blk.type === 'poly_call_shared_noreturn' ||
+        blk.type === 'poly_call_shared_return'
+      ) {
+        const meta = (
+          blk as Blockly.Block & { sharedFnMeta_?: { fnName: string } }
+        ).sharedFnMeta_;
+        if (meta?.fnName && asyncFnNames.has(meta.fnName)) {
+          diagnostics.push({
+            id: `async-shared-call-in-callback-${rootHatSpec.eventName}-${meta.fnName}-${blk.id}`,
+            severity: 'error',
+            message: `事件回调「${rootHatSpec.eventName}」不可阻塞，禁止调用包含等待 (sleep_ms) 的跨文件函数「shared.${meta.fnName}」。`,
+            blockId: blk.id,
+          });
+        }
       }
     }
 
@@ -340,45 +358,36 @@ export function analyzeWorkspaceDiagnostics(
       blockType: string;
     }> = [];
     for (const blk of enabledTopBlocks) {
-      if (blk.type === 'poly_on_start') {
-        if (!currentEvents.has('on_start')) {
-          currentEvents.set('on_start', {
+      const hatSpec = getUnifiedHatSpec(blk.type);
+      if (!hatSpec) continue;
+      const isDispatch = hatSpec.mode === 'dispatch';
+      if (!currentEvents.has(hatSpec.eventName)) {
+        currentEvents.set(hatSpec.eventName, {
+          blockId: blk.id,
+          isSingleton: hatSpec.mode === 'singleton',
+          isExtractedDispatch: isDispatch,
+        });
+      }
+      if (isDispatch) {
+        const dupKey = extensionRegistry.renderHatDuplicateKey(blk);
+        if (dupKey !== null) {
+          currentExtractedBranches.push({
             blockId: blk.id,
-            isSingleton: true,
-            isExtractedDispatch: false,
+            eventName: hatSpec.eventName,
+            dupKey,
+            blockType: blk.type,
           });
-        }
-      } else {
-        const hatDef = extensionRegistry.getHatBlockDef(blk.type);
-        if (hatDef) {
-          const isDispatch = hatDef.hat.mode === 'dispatch';
-          if (!currentEvents.has(hatDef.hat.eventName)) {
-            currentEvents.set(hatDef.hat.eventName, {
-              blockId: blk.id,
-              isSingleton: hatDef.hat.mode === 'singleton',
-              isExtractedDispatch: isDispatch,
-            });
-          }
-          if (isDispatch) {
-            const dupKey = extensionRegistry.renderHatDuplicateKey(blk);
-            if (dupKey !== null) {
-              currentExtractedBranches.push({
-                blockId: blk.id,
-                eventName: hatDef.hat.eventName,
-                dupKey,
-                blockType: blk.type,
-              });
-            }
-          }
         }
       }
     }
 
+    const explicitRequiredNames = new Set<string>();
     for (const blk of workspace.getAllBlocks(false)) {
       if (blk.isShadow() || !blk.isEnabled() || blk.type !== 'poly_require_script')
         continue;
       const targetName = String(blk.getFieldValue('SCRIPT') || '').trim();
       if (!targetName) continue;
+      explicitRequiredNames.add(targetName);
       if (!siblingByName.has(targetName)) {
         diagnostics.push({
           id: `require-missing-${targetName}-${blk.id}`,
@@ -386,6 +395,24 @@ export function analyzeWorkspaceDiagnostics(
           message: `当前句柄内未找到脚本「${targetName}」，请先在脚本标签栏新建该脚本。`,
           blockId: blk.id,
         });
+      }
+    }
+
+    // Explicit companion loading check: companion scripts defining dispatch callbacks
+    // MUST be explicitly loaded by the entry script via `poly_require_script` (no silent auto-import!).
+    if (isEntryScript) {
+      for (const sib of siblings) {
+        const branches = sib.dispatchBranches ?? [];
+        if (branches.length === 0) continue;
+        if (!explicitRequiredNames.has(sib.name)) {
+          const evNames = Array.from(new Set(branches.map((b) => b.eventName))).join(' / ');
+          diagnostics.push({
+            id: `companion-not-loaded-${sib.name}`,
+            severity: 'error',
+            message: `伴生脚本「${sib.name}」定义了事件回调（${evNames}），但入口脚本尚未加载它；请在「当程序启动」中拖入「加载脚本 ${sib.name}」积木。`,
+            blockId: startBlocks[0]?.id,
+          });
+        }
       }
     }
 
@@ -433,8 +460,10 @@ export function analyzeWorkspaceDiagnostics(
       }
     }
 
-    // 6. Cross-file shared custom function collision & dangling call checks
+    // 6. Cross-file shared custom function collision, isolation & dangling call checks
     const sharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
+    const sharedVarSet = new Set(getActiveHandleSharedVariables() ?? []);
+    const varMap = workspace.getVariableMap();
     if (sharedFnSet.size > 0) {
       for (const top of enabledTopBlocks) {
         if (
@@ -445,6 +474,8 @@ export function analyzeWorkspaceDiagnostics(
         }
         const fnName = String(top.getFieldValue('NAME') || '').trim();
         if (!fnName || !sharedFnSet.has(fnName)) continue;
+
+        // 6a. Duplicate shared function name across sibling scripts
         for (const sib of siblings) {
           if ((sib.declaredFunctions ?? []).some((f) => f.name === fnName)) {
             diagnostics.push({
@@ -452,6 +483,41 @@ export function analyzeWorkspaceDiagnostics(
               severity: 'error',
               message: `跨文件公共函数「${fnName}」与同句柄脚本「${sib.name}」重名，请重命名其中一个或将其转为本文件私有函数。`,
               blockId: top.id,
+            });
+          }
+        }
+
+        // 6b. Shared function isolation: exported inside `shared`, so it CANNOT reference single-file private variables!
+        const proc = top as Blockly.Block & {
+          getProcedureDef?: () => [string, string[], boolean];
+        };
+        const paramSet = new Set(proc.getProcedureDef?.()?.[1] ?? []);
+        const flaggedPrivVars = new Set<string>();
+        for (const desc of top.getDescendants(false)) {
+          if (desc.isShadow() || !desc.isEnabled() || desc === top) continue;
+          if (!desc.getField('VAR')) continue;
+          if (
+            desc.type === 'poly_for_range' ||
+            desc.type === 'controls_for' ||
+            desc.type === 'controls_forEach'
+          ) {
+            continue;
+          }
+          const vId = String(desc.getFieldValue('VAR') || '');
+          const vModel = vId ? varMap.getVariableById(vId) : null;
+          const vName = vModel?.getName();
+          if (
+            vName &&
+            !paramSet.has(vName) &&
+            !sharedVarSet.has(vName) &&
+            !flaggedPrivVars.has(vName)
+          ) {
+            flaggedPrivVars.add(vName);
+            diagnostics.push({
+              id: `shared-fn-private-var-${fnName}-${vName}-${desc.id}`,
+              severity: 'error',
+              message: `跨文件公共函数「shared.${fnName}」导出在 shared 模块中，不能引用单文件私有变量「${vName}」；请改用跨文件变量、函数参数或局部临时变量。`,
+              blockId: desc.id,
             });
           }
         }
@@ -473,24 +539,21 @@ export function analyzeWorkspaceDiagnostics(
         }
       ).sharedFnMeta_;
       if (!meta) continue;
-      const targetScript = handleScripts.find((s) => s.name === meta.scriptName);
-      const existsInTarget = targetScript
-        ? targetScript.id === currentScriptId
-          ? enabledTopBlocks.some(
-              (t) =>
-                (t.type === 'procedures_defnoreturn' ||
-                  t.type === 'procedures_defreturn') &&
-                String(t.getFieldValue('NAME') || '').trim() === meta.fnName,
-            )
-          : (targetScript.declaredFunctions ?? []).some(
-              (f) => f.name === meta.fnName,
-            )
-        : false;
-      if (!targetScript || !existsInTarget || !sharedFnSet.has(meta.fnName)) {
+      const existsInHandle =
+        enabledTopBlocks.some(
+          (t) =>
+            (t.type === 'procedures_defnoreturn' ||
+              t.type === 'procedures_defreturn') &&
+            String(t.getFieldValue('NAME') || '').trim() === meta.fnName,
+        ) ||
+        siblings.some((sib) =>
+          (sib.declaredFunctions ?? []).some((f) => f.name === meta.fnName),
+        );
+      if (!existsInHandle || !sharedFnSet.has(meta.fnName)) {
         diagnostics.push({
-          id: `dangling-shared-fn-${meta.scriptName}-${meta.fnName}-${blk.id}`,
+          id: `dangling-shared-fn-${meta.fnName}-${blk.id}`,
           severity: 'error',
-          message: `跨文件函数「${meta.scriptName}.${meta.fnName}」不存在或已被转为本文件私有，请检查对应脚本定义。`,
+          message: `跨文件函数「shared.${meta.fnName}」不存在或已被转为本文件私有，请检查对应函数定义。`,
           blockId: blk.id,
         });
       }

@@ -27,10 +27,8 @@ import { SharedVarsView } from './components/SharedVarsView';
 import { StatusBar } from './components/StatusBar';
 import { TimerAliasModal } from './components/TimerAliasModal';
 import { TopBar } from './components/TopBar';
-import {
-  buildHandlePythonSharedModule,
-  buildHandleScriptsMeta,
-} from './core/backends/eventMode';
+import { buildHandleScriptsMeta } from './core/backends/eventMode';
+import { buildHandleSharedModule } from './core/backends/sharedModule';
 import { backendRegistry } from './core/backends/registry';
 import type { GeneratedCodeResult } from './core/backends/types';
 import {
@@ -40,8 +38,10 @@ import {
   setActiveHandleScripts,
   setActiveHandleSharedFunctions,
   setActiveHandleSharedVariables,
+  setActiveHandleSharedVarInitials,
   setActiveModuleConflicts,
   setActiveProjectCapabilities,
+  setActiveScriptVarInitials,
   type ChannelAliasPromptRequest,
 } from './core/blocks/timerConfigBridge';
 import {
@@ -78,7 +78,6 @@ import {
   collectAllVariableNamesInHandle,
   collectHandleSharedVariableNames,
   collectScriptVariableNames,
-  collectUsedVariableNamesInJson,
   syncHandleVariablesIntoWorkspaceJson,
   type HandleVariableMutation,
   type VariableScopeKind,
@@ -110,8 +109,7 @@ import {
   saveWorkspaceStore,
   setHandleChannelPoolConfig,
   setHandleTimerConfig,
-  STORAGE_STORE_V2_KEY,
-  STORAGE_STORE_V5_KEY,
+  STORAGE_STORE_V6_KEY,
   updateHandleById,
   updateProjectById,
 } from './core/projects/store';
@@ -374,6 +372,8 @@ export function App() {
   setActiveChannelPoolConfigs(activeChannelPoolConfigs);
   setActiveProjectCapabilities(activeProject.enabledCapabilities);
   setActiveHandleSharedVariables(collectHandleSharedVariableNames(activeHandle));
+  setActiveHandleSharedVarInitials(activeHandle.variableInitialValues ?? {});
+  setActiveScriptVarInitials(activeScript.variableInitialValues ?? {});
   setActiveHandleSharedFunctions(activeHandle.sharedFunctions ?? []);
   setActiveHandleScripts(buildHandleScriptsMeta(activeHandle), activeScript.id);
   setActiveModuleConflicts(activeModuleResolution.conflicts);
@@ -383,30 +383,21 @@ export function App() {
   const breakpoints = activeScript.breakpoints;
   const activeBackend = backendRegistry.get(language);
 
-  const activeSharedPyModule = useMemo(() => {
-    if (language !== 'python') return null;
-    return buildHandlePythonSharedModule(activeHandle);
-  }, [language, activeHandle]);
+  const activeSharedModule = useMemo(
+    () =>
+      buildHandleSharedModule(
+        activeHandle,
+        language,
+        activeChannelPoolConfigs,
+      ),
+    [activeHandle, language, activeChannelPoolConfigs],
+  );
 
   useEffect(() => {
-    if (!activeSharedPyModule && viewingSharedModule) {
+    if (!activeSharedModule && viewingSharedModule) {
       setViewingSharedModule(false);
     }
-  }, [activeSharedPyModule, viewingSharedModule]);
-
-  const sharedModuleEntriesWithUsage = useMemo(() => {
-    if (!activeSharedPyModule) return [];
-    const usedByScript = activeHandle.scripts.map((s) => ({
-      name: s.name,
-      used: new Set(collectUsedVariableNamesInJson(s.workspace)),
-    }));
-    return activeSharedPyModule.entries.map((entry) => ({
-      ...entry,
-      usedInScripts: usedByScript
-        .filter((s) => s.used.has(entry.name))
-        .map((s) => s.name),
-    }));
-  }, [activeSharedPyModule, activeHandle.scripts]);
+  }, [activeSharedModule, viewingSharedModule]);
 
   const allExtensionPacks = useMemo(
     () => extensionRegistry.listAll(),
@@ -634,6 +625,8 @@ export function App() {
       setActiveProjectCapabilities(nextProj.enabledCapabilities);
       const sharedVarNames = collectHandleSharedVariableNames(nextHandle);
       setActiveHandleSharedVariables(sharedVarNames);
+      setActiveHandleSharedVarInitials(nextHandle.variableInitialValues ?? {});
+      setActiveScriptVarInitials(nextScript.variableInitialValues ?? {});
       setActiveHandleSharedFunctions(nextHandle.sharedFunctions ?? []);
       setActiveHandleScripts(buildHandleScriptsMeta(nextHandle), nextScript.id);
       const nextModRes = resolveProjectModules({
@@ -701,8 +694,15 @@ export function App() {
         : null;
       const keptNotice = previewRes?.keptInSiblings ?? [];
 
-      if (nextSharedNames !== null) {
+      if (nextSharedNames !== null && previewRes) {
         setActiveHandleSharedVariables(nextSharedNames);
+        setActiveHandleSharedVarInitials(
+          previewRes.handle.variableInitialValues ?? {},
+        );
+        const nextActiveScr = previewRes.handle.scripts.find((s) => s.id === scrId);
+        if (nextActiveScr) {
+          setActiveScriptVarInitials(nextActiveScr.variableInitialValues ?? {});
+        }
       }
 
       setStore((prev) =>
@@ -736,8 +736,13 @@ export function App() {
       setBlocklyDialogReq({
         kind: 'create-variable',
         initialScope,
-        onConfirm: (name, scope) => {
-          handleHandleVariableEvent({ kind: 'create', name, scope });
+        onConfirm: (name, scope, initialValue) => {
+          handleHandleVariableEvent({
+            kind: 'create',
+            name,
+            scope,
+            initialValue,
+          });
           workbenchRef.current?.createVariable(name, scope);
           const ws = workbenchRef.current?.getWorkspace();
           if (ws) regenerateFromWorkspace(ws, languageRef.current);
@@ -777,46 +782,57 @@ export function App() {
       workbenchRef.current?.refreshToolbox();
       notify(
         wasShared
-          ? `已将函数「${trimmed}」转为本文件私有函数（Lua 导出 local function）`
-          : `已将函数「${trimmed}」设为跨文件公共函数（同句柄全部脚本可直接调用）`,
+          ? `已将函数「${trimmed}」转为本文件私有函数（仅本脚本可用）`
+          : `已将函数「${trimmed}」设为跨文件公共函数（自动归入只读 shared 模块）`,
       );
     },
     [notify, regenerateFromWorkspace],
   );
 
-  const handleRequestCreateSharedFunction = useCallback(() => {
-    setBlocklyDialogReq({
-      kind: 'create-function',
-      onConfirm: (name, hasReturn) => {
-        const trimmed = name.trim();
-        if (!trimmed) return;
-        const projId = activeProjectIdRef.current;
-        const hdlId = activeHandleIdRef.current;
-        const now = new Date().toISOString();
-        const curProj = storeRef.current.projects.find((p) => p.id === projId);
-        const curHdl = curProj?.handles.find((h) => h.id === hdlId);
-        const prevFns = curHdl?.sharedFunctions ?? [];
-        const nextFns = prevFns.includes(trimmed)
-          ? prevFns
-          : [...prevFns, trimmed];
+  const handleRequestCreateFunction = useCallback(
+    (initialScope: VariableScopeKind) => {
+      setBlocklyDialogReq({
+        kind: 'create-function',
+        initialScope,
+        onConfirm: (name, scope, hasReturn) => {
+          const trimmed = name.trim();
+          if (!trimmed) return;
+          if (scope === 'shared') {
+            const projId = activeProjectIdRef.current;
+            const hdlId = activeHandleIdRef.current;
+            const now = new Date().toISOString();
+            const curProj = storeRef.current.projects.find((p) => p.id === projId);
+            const curHdl = curProj?.handles.find((h) => h.id === hdlId);
+            const prevFns = curHdl?.sharedFunctions ?? [];
+            const nextFns = prevFns.includes(trimmed)
+              ? prevFns
+              : [...prevFns, trimmed];
 
-        setActiveHandleSharedFunctions(nextFns);
-        setStore((prev) =>
-          updateProjectById(prev, projId, (proj) =>
-            updateHandleById(proj, hdlId, (hdl) => ({
-              ...hdl,
-              sharedFunctions: nextFns,
-              updatedAt: now,
-            })),
-          ),
-        );
-        workbenchRef.current?.createProcedure(trimmed, hasReturn);
-        const ws = workbenchRef.current?.getWorkspace();
-        if (ws) regenerateFromWorkspace(ws, languageRef.current);
-        notify(`已创建跨文件公共函数「${trimmed}」，同句柄其他脚本可在「函数」分类直接调用`);
-      },
-    });
-  }, [notify, regenerateFromWorkspace]);
+            setActiveHandleSharedFunctions(nextFns);
+            setStore((prev) =>
+              updateProjectById(prev, projId, (proj) =>
+                updateHandleById(proj, hdlId, (hdl) => ({
+                  ...hdl,
+                  sharedFunctions: nextFns,
+                  updatedAt: now,
+                })),
+              ),
+            );
+          }
+          setViewingSharedModule(false);
+          workbenchRef.current?.createProcedure(trimmed, hasReturn);
+          const ws = workbenchRef.current?.getWorkspace();
+          if (ws) regenerateFromWorkspace(ws, languageRef.current);
+          notify(
+            scope === 'shared'
+              ? `已创建跨文件公共函数「${trimmed}」，将自动归入 shared 模块供同句柄所有脚本调用`
+              : `已创建本文件私有函数「${trimmed}」（仅当前脚本内可见）`,
+          );
+        },
+      });
+    },
+    [notify, regenerateFromWorkspace],
+  );
 
   const handleHandleFunctionEvent = useCallback(
     (mutation: HandleFunctionMutation) => {
@@ -1827,10 +1843,7 @@ export function App() {
 
   const handleResetWorkspace = useCallback(() => {
     stopIfRunning();
-    localStorage.removeItem(STORAGE_STORE_V5_KEY);
-    localStorage.removeItem('polyblock.store.v4');
-    localStorage.removeItem('polyblock.store.v3');
-    localStorage.removeItem(STORAGE_STORE_V2_KEY);
+    localStorage.removeItem(STORAGE_STORE_V6_KEY);
     const freshStore = createDefaultWorkspaceStore();
     setStore(freshStore);
     mountScriptIntoCanvas(freshStore);
@@ -1934,6 +1947,7 @@ export function App() {
         : activeHandle;
 
       // Pre-Run Static Error Gate: collect blocking `severity === 'error'` diagnostics across ALL scripts in the handle!
+      setActiveHandleSharedVarInitials(handleForRun.variableInitialValues ?? {});
       setActiveHandleSharedFunctions(handleForRun.sharedFunctions ?? []);
       const handleMetasForRun = buildHandleScriptsMeta(handleForRun);
       const blockingErrors: Array<{
@@ -1955,6 +1969,7 @@ export function App() {
             }
           }
         } else {
+          setActiveScriptVarInitials(scr.variableInitialValues ?? {});
           setActiveHandleScripts(handleMetasForRun, scr.id);
           const sibCompiled = compileScriptHeadless(
             scr.workspace,
@@ -1973,6 +1988,7 @@ export function App() {
           }
         }
       }
+      setActiveScriptVarInitials(activeScript.variableInitialValues ?? {});
       setActiveHandleScripts(handleMetasForRun, activeScript.id);
 
       if (blockingErrors.length > 0) {
@@ -2002,6 +2018,7 @@ export function App() {
       let runDebugCode = latest.debugCode || latest.code;
       let runIsEventDriven = Boolean(latest.isEventDriven);
       if (!runningEntryDirectly) {
+        setActiveScriptVarInitials(entryScript.variableInitialValues ?? {});
         setActiveHandleScripts(handleMetasForRun, entryScript.id);
         const compiledEntry = compileScriptHeadless(
           entryScript.workspace,
@@ -2012,6 +2029,7 @@ export function App() {
         runDebugCode = compiledEntry.debugCode;
         runIsEventDriven = compiledEntry.isEventDriven;
         // Restore active-tab script metadata for editor diagnostics
+        setActiveScriptVarInitials(activeScript.variableInitialValues ?? {});
         setActiveHandleScripts(handleMetasForRun, activeScript.id);
       }
 
@@ -2058,6 +2076,8 @@ export function App() {
         activeProject.defaultTimerCount,
         activeChannelPoolConfigs,
       );
+      setActiveHandleSharedVarInitials(activeHandle.variableInitialValues ?? {});
+      setActiveScriptVarInitials(activeScript.variableInitialValues ?? {});
       setActiveHandleScripts(handleMetasForRun, activeScript.id);
 
       const modResolution = resolveProjectModules({
@@ -2142,7 +2162,6 @@ export function App() {
           mockInputs: simStateRef.current,
         },
         {
-          onClear: () => setLogs([]),
           onLog: (level, message, line) => {
             const mappedBlock =
               runningEntryDirectly && line ? latest.lineToBlock[line] : undefined;
@@ -2278,9 +2297,11 @@ export function App() {
       );
       setActiveChannelPoolConfigs(hdlPools);
       setActiveHandleSharedVariables(collectHandleSharedVariableNames(hdl));
+      setActiveHandleSharedVarInitials(hdl.variableInitialValues ?? {});
       setActiveHandleSharedFunctions(hdl.sharedFunctions ?? []);
       const hdlMetas = buildHandleScriptsMeta(hdl);
       for (const scr of hdl.scripts) {
+        setActiveScriptVarInitials(scr.variableInitialValues ?? {});
         setActiveHandleScripts(hdlMetas, scr.id);
         const res = compileScriptHeadless(scr.workspace, proj.language, hdlPools);
         for (const d of res.diagnostics) {
@@ -2298,6 +2319,8 @@ export function App() {
     // Restore active handle bridge context
     setActiveChannelPoolConfigs(activeChannelPoolConfigs);
     setActiveHandleSharedVariables(collectHandleSharedVariableNames(activeHandle));
+    setActiveHandleSharedVarInitials(activeHandle.variableInitialValues ?? {});
+    setActiveScriptVarInitials(activeScript.variableInitialValues ?? {});
     setActiveHandleSharedFunctions(activeHandle.sharedFunctions ?? []);
     setActiveHandleScripts(buildHandleScriptsMeta(activeHandle), activeScript.id);
 
@@ -2450,6 +2473,8 @@ export function App() {
     } finally {
       // Restore active handle scripts metadata in bridge
       setActiveHandleSharedVariables(collectHandleSharedVariableNames(hdl));
+      setActiveHandleSharedVarInitials(hdl.variableInitialValues ?? {});
+      setActiveScriptVarInitials(getActiveScript(hdl).variableInitialValues ?? {});
       setActiveHandleSharedFunctions(hdl.sharedFunctions ?? []);
       setActiveHandleScripts(buildHandleScriptsMeta(hdl), getActiveScript(hdl).id);
     }
@@ -2484,6 +2509,8 @@ export function App() {
       }
     } finally {
       setActiveHandleSharedVariables(collectHandleSharedVariableNames(hdl));
+      setActiveHandleSharedVarInitials(hdl.variableInitialValues ?? {});
+      setActiveScriptVarInitials(getActiveScript(hdl).variableInitialValues ?? {});
       setActiveHandleSharedFunctions(hdl.sharedFunctions ?? []);
       setActiveHandleScripts(buildHandleScriptsMeta(hdl), getActiveScript(hdl).id);
     }
@@ -2501,6 +2528,23 @@ export function App() {
   const handleFocusBlock = useCallback((blockId: string) => {
     workbenchRef.current?.focusBlock(blockId);
   }, []);
+
+  const handleJumpToSharedFunction = useCallback(
+    (scriptId: string, blockId?: string) => {
+      setViewingSharedModule(false);
+      if (scriptId !== activeScriptIdRef.current) {
+        handleSelectHandleAndScript(activeHandleIdRef.current, scriptId);
+      }
+      if (blockId) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            workbenchRef.current?.focusBlock(blockId);
+          });
+        });
+      }
+    },
+    [handleSelectHandleAndScript],
+  );
 
   const initialHandle = getActiveHandle(getActiveProject(initialStoreRef.current));
   const initialScriptWorkspace = syncHandleVariablesIntoWorkspaceJson(
@@ -2531,12 +2575,13 @@ export function App() {
       ),
     [activeHandle, currentScriptVarNames],
   );
-  const allHandleFunctionNames = useMemo(() => {
-    const names = new Set<string>(activeHandle.sharedFunctions ?? []);
-    for (const meta of buildHandleScriptsMeta(activeHandle)) {
-      for (const fn of meta.declaredFunctions ?? []) {
-        names.add(fn.name);
-      }
+  const currentScriptFunctionNames = useMemo(() => {
+    const names = new Set<string>();
+    const activeMeta = buildHandleScriptsMeta(activeHandle).find(
+      (m) => m.id === activeScript.id,
+    );
+    for (const fn of activeMeta?.declaredFunctions ?? []) {
+      names.add(fn.name);
     }
     const liveWs = workbenchRef.current?.getWorkspace();
     if (liveWs) {
@@ -2544,7 +2589,17 @@ export function App() {
       for (const [name] of [...noRet, ...withRet]) names.add(name);
     }
     return Array.from(names);
-  }, [activeHandle, blocklyDialogReq]);
+  }, [activeHandle, activeScript.id, blocklyDialogReq]);
+  const allHandleFunctionNames = useMemo(() => {
+    const names = new Set<string>(activeHandle.sharedFunctions ?? []);
+    for (const meta of buildHandleScriptsMeta(activeHandle)) {
+      for (const fn of meta.declaredFunctions ?? []) {
+        names.add(fn.name);
+      }
+    }
+    for (const n of currentScriptFunctionNames) names.add(n);
+    return Array.from(names);
+  }, [activeHandle, currentScriptFunctionNames]);
 
   const settingsModalProject = settingsModal
     ? store.projects.find((p) => p.id === settingsModal.projectId) ?? null
@@ -2658,10 +2713,14 @@ export function App() {
                   showExplorer={showExplorer}
                   disabled={runnerStatus === 'running' || runnerStatus === 'paused'}
                   sharedModuleTab={
-                    activeSharedPyModule
+                    activeSharedModule
                       ? {
-                          fileName: activeSharedPyModule.fileName,
-                          varCount: activeSharedPyModule.entries.length,
+                          fileName: activeSharedModule.fileName,
+                          itemCount:
+                            activeSharedModule.variables.length +
+                            activeSharedModule.functions.length,
+                          varCount: activeSharedModule.variables.length,
+                          fnCount: activeSharedModule.functions.length,
                         }
                       : null
                   }
@@ -2691,24 +2750,38 @@ export function App() {
                   onDeleteScript={handleDeleteScript}
                 />
 
-                {viewingSharedModule && activeSharedPyModule && (
+                {viewingSharedModule && activeSharedModule && (
                   <SharedVarsView
                     handleName={activeHandle.name}
                     handleColor={activeHandle.color}
-                    fileName={activeSharedPyModule.fileName}
-                    moduleName={activeSharedPyModule.moduleName}
-                    pythonSource={activeSharedPyModule.pythonSource}
-                    entries={sharedModuleEntriesWithUsage}
+                    language={language}
+                    fileName={activeSharedModule.fileName}
+                    moduleName={activeSharedModule.moduleName}
+                    source={activeSharedModule.source}
+                    variables={activeSharedModule.variables}
+                    functions={activeSharedModule.functions}
                     disabled={runnerStatus === 'running' || runnerStatus === 'paused'}
                     onCreateSharedVariable={() =>
                       handleRequestCreateVariable('shared')
                     }
+                    onCreateSharedFunction={() =>
+                      handleRequestCreateFunction('shared')
+                    }
+                    onUpdateVarInitialValue={(varName, nextInit) =>
+                      handleHandleVariableEvent({
+                        kind: 'set-initial',
+                        name: varName,
+                        scope: 'shared',
+                        initialValue: nextInit,
+                      })
+                    }
+                    onJumpToFunction={handleJumpToSharedFunction}
                     onCopySource={async () => {
                       try {
                         await navigator.clipboard.writeText(
-                          activeSharedPyModule.pythonSource,
+                          activeSharedModule.source,
                         );
-                        notify(`已复制 ${activeSharedPyModule.fileName} 到剪贴板`);
+                        notify(`已复制 ${activeSharedModule.fileName} 到剪贴板`);
                       } catch {
                         notify('复制失败，请手动选中代码复制');
                       }
@@ -2719,7 +2792,7 @@ export function App() {
 
                 <div
                   className={
-                    viewingSharedModule && activeSharedPyModule
+                    viewingSharedModule && activeSharedModule
                       ? 'hidden-pane'
                       : 'blocks-canvas-host'
                   }
@@ -2730,7 +2803,7 @@ export function App() {
                     initialWorkspace={initialScriptWorkspace}
                     visible={
                       activePage === 'blocks' &&
-                      !(viewingSharedModule && activeSharedPyModule)
+                      !(viewingSharedModule && activeSharedModule)
                     }
                     executingBlockId={executingBlockId}
                     isPaused={runnerStatus === 'paused'}
@@ -2741,7 +2814,7 @@ export function App() {
                     onWorkspaceChange={handleWorkspaceChange}
                     onHandleVariableEvent={handleHandleVariableEvent}
                     onRequestCreateVariable={handleRequestCreateVariable}
-                    onRequestCreateSharedFunction={handleRequestCreateSharedFunction}
+                    onRequestCreateFunction={handleRequestCreateFunction}
                     onToggleSharedFunction={handleToggleSharedFunction}
                     onHandleFunctionEvent={handleHandleFunctionEvent}
                     onSelectBlock={setSelectedBlockId}
@@ -2982,6 +3055,8 @@ export function App() {
           handleSharedVars={activeHandleSharedVarNames}
           currentScriptVars={currentScriptVarNames}
           allHandleVars={allHandleVarNames}
+          handleSharedFunctions={activeHandle.sharedFunctions ?? []}
+          currentScriptFunctions={currentScriptFunctionNames}
           allHandleFunctions={allHandleFunctionNames}
           onClose={() => setBlocklyDialogReq(null)}
         />

@@ -31,7 +31,6 @@ export interface RunRequest {
 
 export interface RunCallbacks {
   onLog: (level: LogLevel, message: string, line?: number) => void;
-  onClear?: () => void;
   onStatusChange?: (status: RunnerStatus) => void;
   onStep?: (blockId: string, vars: Record<string, string>) => void;
   onPaused?: (

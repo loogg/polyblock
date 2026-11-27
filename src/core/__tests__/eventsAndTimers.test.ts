@@ -1,14 +1,17 @@
 import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildHandleScriptsMeta } from '../backends/eventMode';
+import { buildHandleSharedModule } from '../backends/sharedModule';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
 import {
+  setActiveChannelPoolConfig,
   setActiveHandleScripts,
   setActiveHandleSharedFunctions,
+  setActiveHandleSharedVariables,
   setActiveProjectCapabilities,
-  setActiveTimerConfig,
 } from '../blocks/timerConfigBridge';
+import { CAP_RT_TIMERS } from '../capabilities/registry';
 import { extensionRegistry } from '../extensions/registry';
 import {
   getHandleTimerConfig,
@@ -28,10 +31,11 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     extensionRegistry.ensureInitialized();
   });
 
-  it('generates centralized entry-script on_timer(id) router, clean companion branch functions, import timers (no import *), and precise Python global declarations', () => {
+  it('generates centralized entry-script on_timer(id) router, Style A1 shared module, clean companion branch functions, and precise Python global declarations', () => {
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles[0];
-    setActiveTimerConfig(getHandleTimerConfig(hdl));
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, getHandleTimerConfig(hdl));
+    setActiveHandleSharedVariables(hdl.sharedVariables ?? []);
     const scriptMetas = buildHandleScriptsMeta(hdl);
 
     // 1. Entry script `main` (on_start with require("timers") + central on_timer(id) router, on_run, on_button, on_stop)
@@ -45,6 +49,9 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     const luaMain = backendRegistry.get('lua').generate(mainWs);
     expect(luaMain.isEventDriven).toBe(true);
     expect(luaMain.diagnostics).toHaveLength(0);
+    expect(luaMain.code).toContain('local shared = require("shared")');
+    expect(luaMain.code).toContain('shared.led_on = false');
+    expect(luaMain.code).toContain('shared.ticks = 0');
     expect(luaMain.code).toContain('local rt = require("rt")');
     expect(luaMain.code).toContain('local board = require("board")');
     expect(luaMain.code).toContain('function on_start()');
@@ -82,7 +89,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(pyMain.code).toContain('import rt');
     expect(pyMain.code).toContain('import board');
     expect(pyMain.code).toContain('import sys');
-    // Scheme A cross-file shared state module (`shared.py`): zero duplicate `= None` or `global`!
+    // Style A1 cross-file shared state module (`shared.py`): zero duplicate `= None` or `global`!
     expect(pyMain.code).toContain('import shared');
     expect(pyMain.code).not.toContain('led_on = None');
     expect(pyMain.code).not.toContain('ticks = None');
@@ -90,10 +97,10 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(pyMain.code).not.toContain('global ticks');
     expect(pyMain.code).toContain('shared.led_on = False');
     expect(pyMain.code).toContain('shared.ticks = 0');
-    // Must use legal `import timers` inside def on_start() — NEVER `from timers import *`!
+    // Must use legal `import timers` inside async def on_start() — NEVER `from timers import *`!
     expect(pyMain.code).toContain('import timers');
     expect(pyMain.code).not.toContain('from timers import *');
-    expect(pyMain.code).toContain('def on_start():');
+    expect(pyMain.code).toContain('async def on_start():');
     expect(pyMain.code).not.toContain('global cur_temp');
     // Callbacks that don't mutate non-shared globals emit ZERO `global` line!
     expect(pyMain.code).toMatch(/def on_run\(\):\n  cur_temp = board\.read_temp\(\)/);
@@ -112,6 +119,8 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     const timersWs = loadWs(timersScript.workspace);
     const luaTimers = backendRegistry.get('lua').generate(timersWs);
     expect(luaTimers.diagnostics).toHaveLength(0);
+    expect(luaTimers.code).toContain('local shared = require("shared")');
+    expect(luaTimers.code).toContain('shared.ticks = shared.ticks + 1');
     expect(luaTimers.code).toContain('function on_timer_0()');
     expect(luaTimers.code).toContain('function on_timer_1()');
     expect(luaTimers.code).not.toContain('local function on_timer_0');
@@ -126,13 +135,14 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(pyTimers.code).not.toContain('global led_on');
     expect(pyTimers.code).not.toContain('global ticks');
     expect(pyTimers.code).toContain('shared.led_on = not shared.led_on');
-    expect(pyTimers.code).toContain('shared.ticks = ');
+    expect(pyTimers.code).toContain('shared.ticks += 1');
     expect(pyTimers.code).toContain('def on_timer_0():');
     expect(pyTimers.code).toContain('def on_timer_1():');
     expect(pyTimers.code).not.toContain('def on_timer(id):');
 
     // 3. Single-file handle (`oneshot_vm`) stays clean: ZERO `import shared`, keeps standard module globals!
     const oneshotHdl = proj.handles.find((h) => h.name === 'oneshot_vm')!;
+    setActiveHandleSharedVariables(oneshotHdl.sharedVariables ?? []);
     const oneshotMetas = buildHandleScriptsMeta(oneshotHdl);
     setActiveHandleScripts(oneshotMetas, oneshotHdl.scripts[0].id);
     const oneshotWs = loadWs(oneshotHdl.scripts[0].workspace);
@@ -144,11 +154,12 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
 
     timersWs.dispose();
     setActiveHandleScripts([], null);
-    setActiveTimerConfig({ count: 8, aliases: {} });
+    setActiveHandleSharedVariables(null);
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
   });
 
   it('flags duplicate timer hats and out-of-range timer channel IDs in static diagnostics', () => {
-    setActiveTimerConfig({ count: 4, aliases: {} });
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 4, aliases: {} });
     const ws = loadWs({
       blocks: {
         languageVersion: 0,
@@ -179,7 +190,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
 
     ws.dispose();
     setActiveProjectCapabilities(null);
-    setActiveTimerConfig({ count: 8, aliases: {} });
+    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
   });
 
   it('schedules repeat timers, elapsed values, button edges, and isolates multiple schedulers', async () => {
@@ -203,7 +214,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(schedB.isTimerRunning(0)).toBe(false);
     expect(schedB.getTimerValue(0)).toBe(0);
 
-    expect(schedA.shouldEnterEventLoop(false, true, false)).toBe(true);
+    expect(schedA.initCoroutineMode(false, false, true, false)).toBe(true);
     const ev1 = await schedA.nextEvent();
     expect(ev1).toBe('timer:0');
     expect(schedA.isTimerRunning(0)).toBe(true);
@@ -216,7 +227,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     const ev3 = await schedA.nextEvent();
     expect(ev3).toBe('done');
 
-    expect(schedB.shouldEnterEventLoop(false, false, true)).toBe(true);
+    expect(schedB.initCoroutineMode(false, false, false, true)).toBe(true);
     schedB.onMockInputsDelta({ btnA: false }, { btnA: true });
     expect(await schedB.nextEvent()).toBe('button:A:1');
     schedB.requestGracefulStop();
@@ -436,8 +447,57 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     conflictWs.dispose();
 
     // 2. Multi-file split on DISTINCT channels (T0 in timers_a, T1 in timers_b, T2 in main):
-    //    ZERO diagnostics, auto-hoists require("timers_a") & require("timers_b") when not manually required,
-    //    and routes all 3 channels inside ONE sorted `on_timer(id)` in `main`!
+    //    No magic auto-import! Missing `poly_require_script` is flagged as static `error`;
+    //    once explicitly required in `on_start`, 0 diagnostics + ONE sorted `on_timer(id)` in `main`!
+    const splitCompanionMetas = [
+      {
+        id: 's_split_a',
+        name: 'timers_a',
+        isEntry: false,
+        declaredEvents: ['on_timer'],
+        requiredScripts: [],
+        dispatchBranches: [
+          {
+            blockType: 'poly_on_timer',
+            eventName: 'on_timer',
+            fnPrefix: 'on_timer_',
+            fnName: 'on_timer_0',
+            dupKey: '0',
+            params: ['id'],
+            conditionLua: 'id == 0',
+            conditionPython: 'id == 0',
+            commentLua: '',
+            commentPython: '',
+            scriptId: 's_split_a',
+            scriptName: 'timers_a',
+          },
+        ],
+      },
+      {
+        id: 's_split_b',
+        name: 'timers_b',
+        isEntry: false,
+        declaredEvents: ['on_timer'],
+        requiredScripts: [],
+        dispatchBranches: [
+          {
+            blockType: 'poly_on_timer',
+            eventName: 'on_timer',
+            fnPrefix: 'on_timer_',
+            fnName: 'on_timer_1',
+            dupKey: '1',
+            params: ['id'],
+            conditionLua: 'id == 1',
+            conditionPython: 'id == 1',
+            commentLua: '',
+            commentPython: '',
+            scriptId: 's_split_b',
+            scriptName: 'timers_b',
+          },
+        ],
+      },
+    ];
+    // 2a. Unloaded companions -> static error `companion-not-loaded-*` (NO auto-import!)
     setActiveHandleScripts(
       [
         {
@@ -448,52 +508,57 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
           requiredScripts: [],
           dispatchBranches: [],
         },
-        {
-          id: 's_split_a',
-          name: 'timers_a',
-          isEntry: false,
-          declaredEvents: ['on_timer'],
-          requiredScripts: [],
-          dispatchBranches: [
-            {
-              blockType: 'poly_on_timer',
-              eventName: 'on_timer',
-              fnPrefix: 'on_timer_',
-              fnName: 'on_timer_0',
-              dupKey: '0',
-              params: ['id'],
-              conditionLua: 'id == 0',
-              conditionPython: 'id == 0',
-              commentLua: '',
-              commentPython: '',
-              scriptId: 's_split_a',
-              scriptName: 'timers_a',
+        ...splitCompanionMetas,
+      ],
+      's_split_main',
+    );
+    const unloadedMainWs = loadWs({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'sp_unloaded',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_print',
+                  id: 'sp_pr0',
+                  inputs: { VALUE: { block: { type: 'text', id: 'sp_txt0', fields: { TEXT: 'boot' } } } },
+                },
+              },
             },
-          ],
-        },
+          },
+          { type: 'poly_on_timer', id: 'sp_t2_0', fields: { TIMER_ID: '2' } },
+        ],
+      },
+    });
+    const unloadedRes = backendRegistry.get('lua').generate(unloadedMainWs);
+    expect(
+      unloadedRes.diagnostics.some(
+        (d) => d.severity === 'error' && d.id === 'companion-not-loaded-timers_a',
+      ),
+    ).toBe(true);
+    expect(
+      unloadedRes.diagnostics.some(
+        (d) => d.severity === 'error' && d.id === 'companion-not-loaded-timers_b',
+      ),
+    ).toBe(true);
+    expect(unloadedRes.code).not.toContain('require("timers_a")');
+    unloadedMainWs.dispose();
+
+    // 2b. Explicitly required in `on_start` -> 0 diagnostics + sorted central router!
+    setActiveHandleScripts(
+      [
         {
-          id: 's_split_b',
-          name: 'timers_b',
-          isEntry: false,
-          declaredEvents: ['on_timer'],
-          requiredScripts: [],
-          dispatchBranches: [
-            {
-              blockType: 'poly_on_timer',
-              eventName: 'on_timer',
-              fnPrefix: 'on_timer_',
-              fnName: 'on_timer_1',
-              dupKey: '1',
-              params: ['id'],
-              conditionLua: 'id == 1',
-              conditionPython: 'id == 1',
-              commentLua: '',
-              commentPython: '',
-              scriptId: 's_split_b',
-              scriptName: 'timers_b',
-            },
-          ],
+          id: 's_split_main',
+          name: 'main',
+          isEntry: true,
+          declaredEvents: ['on_start', 'on_timer'],
+          requiredScripts: ['timers_a', 'timers_b'],
+          dispatchBranches: [],
         },
+        ...splitCompanionMetas,
       ],
       's_split_main',
     );
@@ -507,9 +572,16 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
             inputs: {
               BODY: {
                 block: {
-                  type: 'poly_print',
-                  id: 'sp_pr',
-                  inputs: { VALUE: { block: { type: 'text', id: 'sp_txt', fields: { TEXT: 'boot' } } } },
+                  type: 'poly_require_script',
+                  id: 'sp_req_a',
+                  fields: { SCRIPT: 'timers_a' },
+                  next: {
+                    block: {
+                      type: 'poly_require_script',
+                      id: 'sp_req_b',
+                      fields: { SCRIPT: 'timers_b' },
+                    },
+                  },
                 },
               },
             },
@@ -831,6 +903,19 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
         languageVersion: 0,
         blocks: [
           {
+            type: 'poly_on_start',
+            id: 'btn_main_s',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_require_script',
+                  id: 'btn_main_req',
+                  fields: { SCRIPT: 'buttons' },
+                },
+              },
+            },
+          },
+          {
             type: 'poly_on_button',
             id: 'btn_a_hat',
             fields: { KEY: 'A', EDGE: 'press' },
@@ -889,7 +974,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(bMainPy.code).toContain('_m.on_button_B_press(key, pressed)');
     bMainWs.dispose();
 
-    // 3. 2-tier custom functions: private (`local function`) vs cross-file shared (`function` / `utils.double_val`)
+    // 3. Style A1 2-tier custom functions: private (`local function` / file `def`) vs cross-file shared (emitted ONLY in `shared.lua` / `shared.py`!)
     const utilsFnWsJson = {
       blocks: {
         languageVersion: 0,
@@ -972,6 +1057,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
       color: '#4f46e5',
       autoStart: true,
       capabilityConfigs: {},
+      sharedVariables: [],
       sharedFunctions: ['double_val'],
       entryScriptId: 'f_main',
       activeScriptId: 'f_main',
@@ -984,25 +1070,39 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     const fnMetas = buildHandleScriptsMeta(fnHdl);
     setActiveHandleSharedFunctions(['double_val']);
 
+    // `utils.lua` / `utils.py` suppress shared `double_val` and emit ONLY private `internal_helper`!
     setActiveHandleScripts(fnMetas, 'f_utils');
     const uWs = loadWs(utilsFnWsJson);
     const uLua = backendRegistry.get('lua').generate(uWs);
-    expect(uLua.code).toContain('function double_val(n)');
-    expect(uLua.code).not.toContain('local function double_val');
+    const uPy = backendRegistry.get('python').generate(uWs);
+    expect(uLua.code).not.toContain('double_val');
     expect(uLua.code).toContain('local function internal_helper()');
+    expect(uPy.code).not.toContain('double_val');
+    expect(uPy.code).toContain('def internal_helper():');
     uWs.dispose();
 
+    // Unified Style A1 `shared.lua` & `shared.py` host `shared.double_val(n)`!
+    const sharedLuaMod = buildHandleSharedModule(fnHdl, 'lua')!;
+    const sharedPyMod = buildHandleSharedModule(fnHdl, 'python')!;
+    expect(sharedLuaMod.fileName).toBe('shared.lua');
+    expect(sharedLuaMod.source).toContain('local shared = {}');
+    expect(sharedLuaMod.source).toContain('function shared.double_val(n)');
+    expect(sharedLuaMod.source).toContain('return shared');
+    expect(sharedPyMod.fileName).toBe('shared.py');
+    expect(sharedPyMod.source).toContain('def double_val(n):');
+
+    // `main.lua` & `main.py` auto-import `shared` and invoke `shared.double_val(21)`!
     setActiveHandleScripts(fnMetas, 'f_main');
     const mcWs = loadWs(mainCallWsJson);
     const mcLua = backendRegistry.get('lua').generate(mcWs);
     const mcPy = backendRegistry.get('python').generate(mcWs);
     expect(mcLua.diagnostics).toHaveLength(0);
-    expect(mcLua.code).toContain('require("utils")');
-    expect(mcLua.code).toContain('print(double_val(21))');
+    expect(mcLua.code).toContain('local shared = require("shared")');
+    expect(mcLua.code).toContain('print(shared.double_val(21))');
     expect(mcPy.diagnostics).toHaveLength(0);
-    expect(mcPy.code).toContain('import utils');
-    expect(mcPy.code).toContain('print(utils.double_val(21))');
-    expect(mcPy.debugCode).toContain('await _poly_call_mod("utils", "double_val", 21)');
+    expect(mcPy.code).toContain('import shared');
+    expect(mcPy.code).toContain('print(shared.double_val(21))');
+    expect(mcPy.debugCode).toContain('await _poly_call_mod("shared", "double_val", 21)');
 
     // Dangling shared function call check when `double_val` is un-shared
     setActiveHandleSharedFunctions([]);
@@ -1013,10 +1113,138 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
       ),
     ).toBe(true);
     mcWs.dispose();
+
+    // Shared function referencing a single-file private variable MUST be flagged as `error`!
+    setActiveHandleSharedVariables([]);
+    setActiveHandleSharedFunctions(['bad_shared']);
+    const badSharedWs = loadWs({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'procedures_defnoreturn',
+            id: 'bs_def',
+            fields: { NAME: 'bad_shared' },
+            inputs: {
+              STACK: {
+                block: {
+                  type: 'variables_set',
+                  id: 'bs_set',
+                  fields: { VAR: { id: 'v_priv_only' } },
+                  inputs: { VALUE: { block: { type: 'math_number', id: 'bs_1', fields: { NUM: 1 } } } },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [{ name: 'priv_only', id: 'v_priv_only' }],
+    });
+    const badSharedRes = backendRegistry.get('lua').generate(badSharedWs);
+    expect(
+      badSharedRes.diagnostics.some(
+        (d) => d.severity === 'error' && d.id.startsWith('shared-fn-private-var-'),
+      ),
+    ).toBe(true);
+    badSharedWs.dispose();
+
+    // Python custom function precision `global` (no shotgun `global`), transitive `async def` + `await`,
+    // and calling an async function from sync `on_run` emits `error`!
+    setActiveHandleSharedVariables(null);
+    setActiveHandleSharedFunctions([]);
+    const pyProcWs = loadWs({
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'procedures_defnoreturn',
+            id: 'pp_sync',
+            fields: { NAME: 'read_only_fn' },
+            inputs: {
+              STACK: {
+                block: {
+                  type: 'poly_print',
+                  id: 'pp_p',
+                  inputs: {
+                    VALUE: { block: { type: 'variables_get', id: 'pp_g', fields: { VAR: { id: 'v_ro' } } } },
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: 'procedures_defnoreturn',
+            id: 'pp_async',
+            fields: { NAME: 'blink_step' },
+            inputs: {
+              STACK: {
+                block: {
+                  type: 'variables_set',
+                  id: 'pp_w',
+                  fields: { VAR: { id: 'v_wr' } },
+                  inputs: { VALUE: { block: { type: 'math_number', id: 'pp_5', fields: { NUM: 5 } } } },
+                  next: {
+                    block: {
+                      type: 'poly_wait_ms',
+                      id: 'pp_wait',
+                      inputs: { MS: { shadow: { type: 'math_number', id: 'pp_ms', fields: { NUM: 20 } } } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: 'poly_on_start',
+            id: 'pp_start',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'procedures_callnoreturn',
+                  id: 'pp_call_ok',
+                  extraState: { name: 'blink_step' },
+                },
+              },
+            },
+          },
+          {
+            type: 'poly_on_run',
+            id: 'pp_run',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'procedures_callnoreturn',
+                  id: 'pp_call_bad',
+                  extraState: { name: 'blink_step' },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [
+        { name: 'ro_var', id: 'v_ro' },
+        { name: 'wr_var', id: 'v_wr' },
+      ],
+    });
+    const pyProcRes = backendRegistry.get('python').generate(pyProcWs);
+    expect(pyProcRes.code).toContain('def read_only_fn():\n  print(ro_var)');
+    expect(pyProcRes.code).not.toContain('global ro_var');
+    expect(pyProcRes.code).toContain('async def blink_step():\n  global wr_var\n  wr_var = 5\n  await sleep_ms(20)');
+    expect(pyProcRes.code).toContain('async def on_start():\n  await blink_step()');
+    expect(
+      pyProcRes.diagnostics.some(
+        (d) =>
+          d.severity === 'error' &&
+          d.id === 'async-call-in-callback-on_run-blink_step-pp_call_bad',
+      ),
+    ).toBe(true);
+    pyProcWs.dispose();
+
     setActiveHandleScripts([], null);
     setActiveHandleSharedFunctions(null);
 
-    // 4. Lua function-top hoisting of nested `poly_local_set` inside `if/else`
+    // 4. Function-top hoisting of nested `poly_local_set` inside `if/else` in BOTH Lua & Python!
     const hoistWs = loadWs({
       blocks: {
         languageVersion: 0,
@@ -1086,6 +1314,8 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(hoistLua.code).not.toContain('local msg = ');
     expect(hoistLua.code).toContain("msg = 'hot'");
     expect(hoistLua.code).toContain("msg = 'cool'");
+    const hoistPy = backendRegistry.get('python').generate(hoistWs);
+    expect(hoistPy.code).toContain('async def on_start():\n  msg = None\n  temp = 42');
     hoistWs.dispose();
   });
 });

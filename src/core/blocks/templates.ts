@@ -564,8 +564,14 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
                     block: {
                       type: 'poly_list_append',
                       id: 'append_40',
-                      fields: { LIST: { id: 'var_items' } },
                       inputs: {
+                        LIST: {
+                          block: {
+                            type: 'variables_get',
+                            id: 'get_items_append',
+                            fields: { VAR: { id: 'var_items' } },
+                          },
+                        },
                         ITEM: {
                           block: {
                             type: 'math_number',

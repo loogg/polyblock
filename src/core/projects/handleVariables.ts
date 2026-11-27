@@ -1,11 +1,101 @@
-import type { ProjectScript, RuntimeHandle } from '../../types/project';
+import type {
+  RuntimeHandle,
+  VariableInitialValue,
+} from '../../types/project';
 
 export type VariableScopeKind = 'shared' | 'file';
 
 export type HandleVariableMutation =
-  | { kind: 'create'; name: string; scope: VariableScopeKind }
+  | {
+      kind: 'create';
+      name: string;
+      scope: VariableScopeKind;
+      initialValue?: VariableInitialValue;
+    }
   | { kind: 'rename'; oldName: string; newName: string }
-  | { kind: 'delete'; name: string };
+  | { kind: 'delete'; name: string }
+  | {
+      kind: 'set-initial';
+      name: string;
+      scope: VariableScopeKind;
+      initialValue: VariableInitialValue;
+    };
+
+export function normalizeVariableInitialValue(
+  raw?: VariableInitialValue | null,
+): VariableInitialValue {
+  if (!raw || typeof raw !== 'object') return { kind: 'null' };
+  switch (raw.kind) {
+    case 'number':
+      return {
+        kind: 'number',
+        value: Number.isFinite(Number(raw.value)) ? Number(raw.value) : 0,
+      };
+    case 'boolean':
+      return { kind: 'boolean', value: Boolean(raw.value) };
+    case 'string':
+      return { kind: 'string', value: String(raw.value ?? '') };
+    case 'list':
+      return { kind: 'list' };
+    case 'dict':
+      return { kind: 'dict' };
+    default:
+      return { kind: 'null' };
+  }
+}
+
+export function formatInitialValueLua(init?: VariableInitialValue | null): string {
+  const v = normalizeVariableInitialValue(init);
+  switch (v.kind) {
+    case 'number':
+      return String(v.value);
+    case 'boolean':
+      return v.value ? 'true' : 'false';
+    case 'string':
+      return JSON.stringify(v.value);
+    case 'list':
+    case 'dict':
+      return '{}';
+    default:
+      return 'nil';
+  }
+}
+
+export function formatInitialValuePython(init?: VariableInitialValue | null): string {
+  const v = normalizeVariableInitialValue(init);
+  switch (v.kind) {
+    case 'number':
+      return String(v.value);
+    case 'boolean':
+      return v.value ? 'True' : 'False';
+    case 'string':
+      return JSON.stringify(v.value);
+    case 'list':
+      return '[]';
+    case 'dict':
+      return '{}';
+    default:
+      return 'None';
+  }
+}
+
+export function describeInitialValue(init?: VariableInitialValue | null): string {
+  const v = normalizeVariableInitialValue(init);
+  switch (v.kind) {
+    case 'number':
+      return `数字 ${v.value}`;
+    case 'boolean':
+      return v.value ? '布尔 true' : '布尔 false';
+    case 'string':
+      return `文本 ${JSON.stringify(v.value)}`;
+    case 'list':
+      return '空列表 []';
+    case 'dict':
+      return '空字典 {}';
+    default:
+      return '空值 nil / None';
+  }
+}
 
 interface SerializedVarEntry {
   id: string;
@@ -163,9 +253,8 @@ export function collectUsedVariableNamesInJson(
       }
     }
     const fields = obj.fields as Record<string, unknown> | undefined;
-    if (fields) {
-      if (fields.VAR !== undefined) recordField(fields.VAR, nextExcluded);
-      if (fields.LIST !== undefined) recordField(fields.LIST, nextExcluded);
+    if (fields && fields.VAR !== undefined) {
+      recordField(fields.VAR, nextExcluded);
     }
     if (obj.inputs && typeof obj.inputs === 'object') {
       for (const v of Object.values(obj.inputs as Record<string, unknown>)) {
@@ -209,9 +298,8 @@ function collectReferencedVarIds(
     }
     const obj = node as Record<string, unknown>;
     const fields = obj.fields as Record<string, unknown> | undefined;
-    if (fields) {
-      if (fields.VAR !== undefined) checkField(fields.VAR);
-      if (fields.LIST !== undefined) checkField(fields.LIST);
+    if (fields && fields.VAR !== undefined) {
+      checkField(fields.VAR);
     }
     if (obj.inputs && typeof obj.inputs === 'object') {
       for (const v of Object.values(obj.inputs as Record<string, unknown>)) {
@@ -238,10 +326,10 @@ function replaceVarIdInWorkspaceJson(
   const obj = node as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
-    if ((k === 'VAR' || k === 'LIST') && v && typeof v === 'object') {
+    if (k === 'VAR' && v && typeof v === 'object') {
       const fo = v as Record<string, unknown>;
       out[k] = fo.id === fromId ? { ...fo, id: toId } : v;
-    } else if ((k === 'VAR' || k === 'LIST') && v === fromId) {
+    } else if (k === 'VAR' && v === fromId) {
       out[k] = toId;
     } else {
       out[k] = replaceVarIdInWorkspaceJson(v, fromId, toId);
@@ -250,45 +338,21 @@ function replaceVarIdInWorkspaceJson(
   return out;
 }
 
-/**
- * Legacy migration helper: for handles loaded from older `.polyblock.json` without an explicit
- * `sharedVariables` field, infer any variable name actively referenced across >= 2 scripts.
- */
-export function inferLegacyCrossFileSharedVariables(
-  scripts: ProjectScript[],
-): string[] {
-  if (scripts.length < 2) return [];
-  const counts = new Map<string, number>();
-  const order: string[] = [];
-  for (const scr of scripts) {
-    for (const name of collectUsedVariableNamesInJson(scr.workspace)) {
-      if (!counts.has(name)) order.push(name);
-      counts.set(name, (counts.get(name) ?? 0) + 1);
-    }
-  }
-  return order.filter((n) => (counts.get(n) ?? 0) >= 2);
-}
-
-/**
- * Returns the explicit list of cross-file shared variable names (`handle.sharedVariables`)
- * for this handle. Falls back to legacy cross-file inference only when `sharedVariables === undefined`.
- */
+/** Returns the authoritative list of explicit cross-file shared variable names (`handle.sharedVariables`). */
 export function collectHandleSharedVariableNames(
   handle: RuntimeHandle,
 ): string[] {
-  if (Array.isArray(handle.sharedVariables)) {
-    const out: string[] = [];
-    const seen = new Set<string>();
-    for (const raw of handle.sharedVariables) {
-      const name = typeof raw === 'string' ? raw.trim() : '';
-      if (name && !seen.has(name)) {
-        seen.add(name);
-        out.push(name);
-      }
+  if (!Array.isArray(handle.sharedVariables)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of handle.sharedVariables) {
+    const name = typeof raw === 'string' ? raw.trim() : '';
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      out.push(name);
     }
-    return out;
   }
-  return inferLegacyCrossFileSharedVariables(handle.scripts);
+  return out;
 }
 
 /** Collects ALL variable names (both shared and single-file) present in a single script's workspace JSON. */
@@ -365,13 +429,35 @@ export function applyHandleVariableMutation(
 
   if (mutation.kind === 'create') {
     const name = mutation.name.trim();
-    if (!name || mutation.scope !== 'shared') {
-      // Single-file variable: strictly private to source script (no sibling mutation)
+    const initVal = normalizeVariableInitialValue(mutation.initialValue);
+    if (!name) {
       return { handle: { ...handle, sharedVariables: currentShared }, keptInSiblings };
+    }
+    if (mutation.scope !== 'shared') {
+      // Single-file variable: strictly private to source script (store initialValue on source script)
+      const nextScripts = handle.scripts.map((scr) =>
+        scr.id === sourceScriptId
+          ? {
+              ...scr,
+              variableInitialValues: {
+                ...(scr.variableInitialValues ?? {}),
+                [name]: initVal,
+              },
+            }
+          : scr,
+      );
+      return {
+        handle: { ...handle, sharedVariables: currentShared, scripts: nextScripts },
+        keptInSiblings,
+      };
     }
     const nextShared = sharedSet.has(name)
       ? currentShared
       : [...currentShared, name];
+    const nextHandleInitials = {
+      ...(handle.variableInitialValues ?? {}),
+      [name]: initVal,
+    };
     const nextScripts = handle.scripts.map((scr) => {
       if (scr.id === sourceScriptId) return scr;
       return {
@@ -380,7 +466,47 @@ export function applyHandleVariableMutation(
       };
     });
     return {
-      handle: { ...handle, sharedVariables: nextShared, scripts: nextScripts },
+      handle: {
+        ...handle,
+        sharedVariables: nextShared,
+        variableInitialValues: nextHandleInitials,
+        scripts: nextScripts,
+      },
+      keptInSiblings,
+    };
+  }
+
+  if (mutation.kind === 'set-initial') {
+    const name = mutation.name.trim();
+    if (!name) return { handle, keptInSiblings };
+    const initVal = normalizeVariableInitialValue(mutation.initialValue);
+    if (mutation.scope === 'shared') {
+      return {
+        handle: {
+          ...handle,
+          variableInitialValues: {
+            ...(handle.variableInitialValues ?? {}),
+            [name]: initVal,
+          },
+        },
+        keptInSiblings,
+      };
+    }
+    return {
+      handle: {
+        ...handle,
+        scripts: handle.scripts.map((scr) =>
+          scr.id === sourceScriptId
+            ? {
+                ...scr,
+                variableInitialValues: {
+                  ...(scr.variableInitialValues ?? {}),
+                  [name]: initVal,
+                },
+              }
+            : scr,
+        ),
+      },
       keptInSiblings,
     };
   }
@@ -388,13 +514,33 @@ export function applyHandleVariableMutation(
   if (mutation.kind === 'rename') {
     const oldName = mutation.oldName.trim();
     const newName = mutation.newName.trim();
-    if (!oldName || !newName || oldName === newName || !sharedSet.has(oldName)) {
-      // Single-file variable rename: strictly isolated to source script
+    if (!oldName || !newName || oldName === newName) {
       return { handle: { ...handle, sharedVariables: currentShared }, keptInSiblings };
+    }
+    if (!sharedSet.has(oldName)) {
+      // Single-file variable rename: migrate initialValue entry inside sourceScriptId only
+      const nextScripts = handle.scripts.map((scr) => {
+        if (scr.id !== sourceScriptId || !scr.variableInitialValues?.[oldName]) {
+          return scr;
+        }
+        const nextInit = { ...scr.variableInitialValues };
+        nextInit[newName] = nextInit[oldName];
+        delete nextInit[oldName];
+        return { ...scr, variableInitialValues: nextInit };
+      });
+      return {
+        handle: { ...handle, sharedVariables: currentShared, scripts: nextScripts },
+        keptInSiblings,
+      };
     }
     const nextShared = Array.from(
       new Set(currentShared.map((n) => (n === oldName ? newName : n))),
     );
+    const nextHandleInitials = { ...(handle.variableInitialValues ?? {}) };
+    if (nextHandleInitials[oldName]) {
+      nextHandleInitials[newName] = nextHandleInitials[oldName];
+      delete nextHandleInitials[oldName];
+    }
     const nextScripts = handle.scripts.map((scr) => {
       if (scr.id === sourceScriptId) return scr;
       const existing = readSerializedVars(scr.workspace);
@@ -443,16 +589,34 @@ export function applyHandleVariableMutation(
       return scr;
     });
     return {
-      handle: { ...handle, sharedVariables: nextShared, scripts: nextScripts },
+      handle: {
+        ...handle,
+        sharedVariables: nextShared,
+        variableInitialValues: nextHandleInitials,
+        scripts: nextScripts,
+      },
       keptInSiblings,
     };
   }
 
   // delete
   const targetName = mutation.name.trim();
-  if (!targetName || !sharedSet.has(targetName)) {
-    // Single-file variable deletion: strictly isolated to source script
+  if (!targetName) {
     return { handle: { ...handle, sharedVariables: currentShared }, keptInSiblings };
+  }
+  if (!sharedSet.has(targetName)) {
+    const nextScripts = handle.scripts.map((scr) => {
+      if (scr.id !== sourceScriptId || !scr.variableInitialValues?.[targetName]) {
+        return scr;
+      }
+      const nextInit = { ...scr.variableInitialValues };
+      delete nextInit[targetName];
+      return { ...scr, variableInitialValues: nextInit };
+    });
+    return {
+      handle: { ...handle, sharedVariables: currentShared, scripts: nextScripts },
+      keptInSiblings,
+    };
   }
 
   const nextScripts = handle.scripts.map((scr) => {
@@ -474,14 +638,23 @@ export function applyHandleVariableMutation(
     };
   });
 
-  // Remove from `handle.sharedVariables` only if no sibling still actively references it
+  // Remove from `handle.sharedVariables` & `variableInitialValues` only if no sibling still actively references it
   const nextShared =
     keptInSiblings.length > 0
       ? currentShared
       : currentShared.filter((n) => n !== targetName);
+  const nextHandleInitials = { ...(handle.variableInitialValues ?? {}) };
+  if (keptInSiblings.length === 0) {
+    delete nextHandleInitials[targetName];
+  }
 
   return {
-    handle: { ...handle, sharedVariables: nextShared, scripts: nextScripts },
+    handle: {
+      ...handle,
+      sharedVariables: nextShared,
+      variableInitialValues: nextHandleInitials,
+      scripts: nextScripts,
+    },
     keptInSiblings,
   };
 }

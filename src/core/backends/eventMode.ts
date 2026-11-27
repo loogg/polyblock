@@ -11,8 +11,40 @@ import {
   type DispatchBranchMeta,
 } from '../blocks/timerConfigBridge';
 import { extensionRegistry } from '../extensions/registry';
-import { collectHandleSharedVariableNames } from '../projects/handleVariables';
+import type { ExtensionHatSpec } from '../extensions/types';
 import { sanitizeLocalIdent } from './scopeAnalysis';
+
+export interface UnifiedHatSpec {
+  eventName: string;
+  mode: 'singleton' | 'dispatch';
+  params: string[];
+  isCoroutine: boolean;
+  keepsAlive: boolean;
+}
+
+/** Canonical unified hat metadata for core `poly_on_start` (eliminates hardcoded special cases). */
+export const CORE_ON_START_HAT_SPEC: UnifiedHatSpec = {
+  eventName: 'on_start',
+  mode: 'singleton',
+  params: [],
+  isCoroutine: true,
+  keepsAlive: false,
+};
+
+/** Single source of truth for hat metadata across core `poly_on_start` and all declarative extension hats. */
+export function getUnifiedHatSpec(blockType: string): UnifiedHatSpec | undefined {
+  if (blockType === 'poly_on_start') return CORE_ON_START_HAT_SPEC;
+  const def = extensionRegistry.getHatBlockDef(blockType);
+  if (!def) return undefined;
+  const hat: ExtensionHatSpec = def.hat;
+  return {
+    eventName: hat.eventName,
+    mode: hat.mode,
+    params: hat.params ?? [],
+    isCoroutine: false,
+    keepsAlive: hat.keepsAlive !== false,
+  };
+}
 
 export const CORE_TOP_HAT_TYPES = new Set<string>([
   'poly_on_start',
@@ -29,10 +61,59 @@ export function isValidTopHatType(blockType: string): boolean {
   );
 }
 
+function jsonSubtreeUsesWait(node: unknown): boolean {
+  if (!node || typeof node !== 'object') return false;
+  if (Array.isArray(node)) return node.some((item) => jsonSubtreeUsesWait(item));
+  const obj = node as Record<string, unknown>;
+  if (obj.enabled === false) return false;
+  if (obj.type === 'poly_wait_ms') return true;
+  if (obj.inputs && typeof obj.inputs === 'object') {
+    for (const v of Object.values(obj.inputs as Record<string, unknown>)) {
+      if (jsonSubtreeUsesWait(v)) return true;
+    }
+  }
+  if (obj.next && jsonSubtreeUsesWait(obj.next)) return true;
+  if (obj.block && jsonSubtreeUsesWait(obj.block)) return true;
+  return false;
+}
+
+function jsonSubtreeCalledProcedures(node: unknown, out: Set<string>): void {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const item of node) jsonSubtreeCalledProcedures(item, out);
+    return;
+  }
+  const obj = node as Record<string, unknown>;
+  if (obj.enabled === false) return;
+  if (
+    obj.type === 'procedures_callnoreturn' ||
+    obj.type === 'procedures_callreturn'
+  ) {
+    const extra = obj.extraState as { name?: string } | undefined;
+    if (typeof extra?.name === 'string' && extra.name.trim()) {
+      out.add(extra.name.trim());
+    }
+  } else if (
+    obj.type === 'poly_call_shared_noreturn' ||
+    obj.type === 'poly_call_shared_return'
+  ) {
+    const extra = obj.extraState as { fnName?: string } | undefined;
+    if (typeof extra?.fnName === 'string' && extra.fnName.trim()) {
+      out.add(extra.fnName.trim());
+    }
+  }
+  if (obj.inputs && typeof obj.inputs === 'object') {
+    for (const v of Object.values(obj.inputs as Record<string, unknown>)) {
+      jsonSubtreeCalledProcedures(v, out);
+    }
+  }
+  if (obj.next) jsonSubtreeCalledProcedures(obj.next, out);
+  if (obj.block) jsonSubtreeCalledProcedures(obj.block, out);
+}
+
 /**
- * Extracts declared top-level global callback names (e.g. 'on_start', 'on_run', 'on_timer'),
- * required sibling script names, and extracted Scheme A dispatch branches (`on_timer_0`, etc.)
- * directly from a serialized Blockly workspace JSON.
+ * Extracts declared top-level callback names, explicitly loaded sibling script names,
+ * dispatch branches, referenced variables, and custom procedure metadata from a workspace JSON.
  */
 export function inspectWorkspaceScriptMeta(
   workspaceJson: Record<string, unknown>,
@@ -49,10 +130,10 @@ export function inspectWorkspaceScriptMeta(
   const required = new Set<string>();
   const dispatchBranches: DispatchBranchMeta[] = [];
   const declaredFunctions: DeclaredFunctionMeta[] = [];
+  const fnCallGraph = new Map<string, Set<string>>();
   const usedFnNames = new Set<string>();
   const declaredVariables = new Set<string>();
 
-  // Map Blockly variable id -> user variable name from workspaceJson.variables
   const varNameById = new Map<string, string>();
   const rawVars = workspaceJson?.variables;
   if (Array.isArray(rawVars)) {
@@ -76,10 +157,6 @@ export function inspectWorkspaceScriptMeta(
   topList.forEach((top, idx) => {
     if (!top || top.enabled === false) return;
     const t = String(top.type ?? '');
-    if (t === 'poly_on_start') {
-      declared.add('on_start');
-      return;
-    }
     if (t === 'procedures_defnoreturn' || t === 'procedures_defreturn') {
       const fields =
         top.fields && typeof top.fields === 'object'
@@ -95,21 +172,27 @@ export function inspectWorkspaceScriptMeta(
               .map((p) => (typeof p?.name === 'string' ? p.name.trim() : ''))
               .filter(Boolean)
           : [];
+        const directWait = jsonSubtreeUsesWait(top.inputs);
+        const callees = new Set<string>();
+        jsonSubtreeCalledProcedures(top.inputs, callees);
+        fnCallGraph.set(fnName, callees);
         declaredFunctions.push({
           name: fnName,
           params,
           hasReturn: t === 'procedures_defreturn',
+          usesSleep: directWait,
           scriptId,
           scriptName,
         });
       }
       return;
     }
-    const hatDef = extensionRegistry.getHatBlockDef(t);
-    if (!hatDef) return;
-    declared.add(hatDef.hat.eventName);
 
-    if (hatDef.hat.mode === 'dispatch') {
+    const hatSpec = getUnifiedHatSpec(t);
+    if (!hatSpec) return;
+    declared.add(hatSpec.eventName);
+
+    if (hatSpec.mode === 'dispatch') {
       const fields =
         top.fields && typeof top.fields === 'object'
           ? (top.fields as Record<string, unknown>)
@@ -147,8 +230,28 @@ export function inspectWorkspaceScriptMeta(
     }
   });
 
-  // Deep scan for `poly_require_script` and actively referenced workspace variables
-  // (excluding formal parameter names inside procedure definitions).
+  // Propagate `usesSleep` transitively inside this script's procedures
+  const sleepFnNames = new Set(
+    declaredFunctions.filter((f) => f.usesSleep).map((f) => f.name),
+  );
+  let propagated = true;
+  while (propagated) {
+    propagated = false;
+    for (const fn of declaredFunctions) {
+      if (sleepFnNames.has(fn.name)) continue;
+      const callees = fnCallGraph.get(fn.name);
+      if (!callees) continue;
+      for (const c of callees) {
+        if (sleepFnNames.has(c)) {
+          sleepFnNames.add(fn.name);
+          fn.usesSleep = true;
+          propagated = true;
+          break;
+        }
+      }
+    }
+  }
+
   const recordVarField = (rawField: unknown, excludedParams: Set<string>) => {
     if (!rawField) return;
     let resolvedName = '';
@@ -199,9 +302,8 @@ export function inspectWorkspaceScriptMeta(
       const targetName = String(fields?.SCRIPT ?? '').trim();
       if (targetName) required.add(targetName);
     }
-    if (fields) {
-      if (fields.VAR !== undefined) recordVarField(fields.VAR, nextExcluded);
-      if (fields.LIST !== undefined) recordVarField(fields.LIST, nextExcluded);
+    if (fields && fields.VAR !== undefined) {
+      recordVarField(fields.VAR, nextExcluded);
     }
 
     if (obj.inputs && typeof obj.inputs === 'object') {
@@ -297,110 +399,46 @@ export function collectHandleSharedFunctionEntries(
   return out;
 }
 
-/** Collects non-parameter workspace variable names actively used by enabled blocks in a live workspace. */
-function collectLiveWorkspaceVariableNames(
-  workspace: Blockly.Workspace,
-): string[] {
-  const used = new Set<string>();
-  const varMap = workspace.getVariableMap();
-
-  const getEnclosingProcedureParams = (blk: Blockly.Block): Set<string> => {
-    const params = new Set<string>();
-    let cur: Blockly.Block | null = blk;
-    while (cur) {
-      if (
-        cur.type === 'procedures_defnoreturn' ||
-        cur.type === 'procedures_defreturn'
-      ) {
-        const proc = cur as Blockly.Block & {
-          getProcedureDef?: () => [string, string[], boolean];
-        };
-        const def = proc.getProcedureDef?.();
-        if (def && Array.isArray(def[1])) {
-          for (const p of def[1]) params.add(p);
-        }
-      }
-      cur = cur.getSurroundParent();
-    }
-    return params;
-  };
-
-  for (const blk of workspace.getAllBlocks(false)) {
-    if (blk.isShadow() || !blk.isEnabled()) continue;
-    const varFieldNames = ['VAR', 'LIST'];
-    let paramsCache: Set<string> | null = null;
-    for (const fName of varFieldNames) {
-      if (!blk.getField(fName)) continue;
-      const rawVal = blk.getFieldValue(fName);
-      if (!rawVal) continue;
-      const model = varMap.getVariableById(String(rawVal));
-      if (!model) continue;
-      const vName = model.getName().trim();
-      if (!vName) continue;
-      if (!paramsCache) paramsCache = getEnclosingProcedureParams(blk);
-      if (!paramsCache.has(vName)) {
-        used.add(vName);
-      }
-    }
-  }
-  return Array.from(used);
-}
-
-export interface HandlePythonSharedVarsInfo {
-  /** Safe collision-free Python module name (usually `shared`). */
+export interface HandleSharedInfo {
+  /** Safe collision-free shared module name (usually `shared`). */
   moduleName: string;
-  /** Sorted cross-file shared variables mapped to deterministic Python attributes. */
+  /** Explicit cross-file shared variables mapped to deterministic Lua/Python attributes. */
   entries: Array<{ name: string; attr: string }>;
 }
 
 /**
- * Resolves the authoritative cross-file shared variables for the active RuntimeHandle:
- * 1. Explicit `explicitSharedNames` (passed directly when building for a `RuntimeHandle`),
- * 2. Active bridge list `getActiveHandleSharedVariables()` (set by workbench / runner / exporter),
- * 3. Legacy fallback (when neither is set, e.g. older standalone tests): variables actively used across >= 2 scripts.
+ * Resolves the collision-free `shared` module name and attribute mapping purely from
+ * explicit `handle.sharedVariables` (and optional `handle.sharedFunctions` so `moduleName`
+ * is still resolved when a handle has shared functions even with zero shared variables!).
  */
-export function resolveHandleSharedPythonVars(
+export function resolveHandleSharedInfo(
   scriptsMeta: ActiveHandleScriptMeta[],
-  liveWorkspace?: Blockly.Workspace,
-  liveScriptId?: string | null,
   explicitSharedNames?: string[] | null,
-): HandlePythonSharedVarsInfo {
-  const activeExplicit =
+  explicitSharedFunctions?: string[] | null,
+): HandleSharedInfo {
+  const activeVars =
     explicitSharedNames !== undefined
       ? explicitSharedNames
       : getActiveHandleSharedVariables();
+  const activeFns =
+    explicitSharedFunctions !== undefined
+      ? explicitSharedFunctions
+      : getActiveHandleSharedFunctions();
 
-  let sharedNames: string[] = [];
-  if (activeExplicit !== null) {
+  const sharedVarNames: string[] = [];
+  if (activeVars && activeVars.length > 0) {
     const seen = new Set<string>();
-    for (const raw of activeExplicit) {
+    for (const raw of activeVars) {
       const n = raw.trim();
       if (n && !seen.has(n)) {
         seen.add(n);
-        sharedNames.push(n);
+        sharedVarNames.push(n);
       }
     }
-  } else if (scriptsMeta.length >= 2) {
-    const currentId = liveScriptId ?? getActiveHandleScriptId();
-    const varScriptCounts = new Map<string, number>();
-
-    for (const scr of scriptsMeta) {
-      const names =
-        liveWorkspace && currentId && scr.id === currentId
-          ? collectLiveWorkspaceVariableNames(liveWorkspace)
-          : scr.declaredVariables ?? [];
-      for (const name of new Set(names)) {
-        varScriptCounts.set(name, (varScriptCounts.get(name) ?? 0) + 1);
-      }
-    }
-
-    sharedNames = Array.from(varScriptCounts.entries())
-      .filter(([, count]) => count >= 2)
-      .map(([name]) => name)
-      .sort((a, b) => a.localeCompare(b));
   }
+  const hasSharedFns = Boolean(activeFns && activeFns.some((n) => n.trim()));
 
-  if (sharedNames.length === 0) {
+  if (sharedVarNames.length === 0 && !hasSharedFns) {
     return { moduleName: '', entries: [] };
   }
 
@@ -408,11 +446,11 @@ export function resolveHandleSharedPythonVars(
   const moduleName =
     ['shared', '_poly_shared', '_handle_shared'].find(
       (cand) => !existingScriptNames.has(cand),
-    ) ?? '_poly_shared_vars';
+    ) ?? '_poly_shared_mod';
 
   const usedAttrs = new Set<string>();
   const entries: Array<{ name: string; attr: string }> = [];
-  for (const name of sharedNames) {
+  for (const name of sharedVarNames) {
     const base = sanitizeLocalIdent(name);
     let attr = base;
     let idx = 2;
@@ -427,70 +465,9 @@ export function resolveHandleSharedPythonVars(
   return { moduleName, entries };
 }
 
-/**
- * Builds the auto-generated read-only `shared.py` source module for a Python handle whenever
- * the handle has >= 1 explicit cross-file shared variable (`handle.sharedVariables`).
- * Returns `null` when the handle has no cross-file shared variables.
- */
-export function buildHandlePythonSharedModule(
-  handle: RuntimeHandle,
-  liveScriptOverride?: { scriptId: string; workspace: Record<string, unknown> },
-): {
-  moduleName: string;
-  fileName: string;
-  entries: Array<{ name: string; attr: string }>;
-  pythonSource: string;
-} | null {
-  const effectiveHandle: RuntimeHandle = liveScriptOverride
-    ? {
-        ...handle,
-        scripts: handle.scripts.map((s) =>
-          s.id === liveScriptOverride.scriptId
-            ? { ...s, workspace: liveScriptOverride.workspace }
-            : s,
-        ),
-      }
-    : handle;
-  const metas = buildHandleScriptsMeta(effectiveHandle);
-  const explicitShared = collectHandleSharedVariableNames(effectiveHandle);
-  const info = resolveHandleSharedPythonVars(
-    metas,
-    undefined,
-    undefined,
-    explicitShared,
-  );
-  if (!info.moduleName || info.entries.length === 0) {
-    return null;
-  }
-  const lines = [
-    '# 由 PolyBlock 自动生成的同句柄跨文件共享变量模块（只读）',
-    ...info.entries.map((e) => `${e.attr} = None`),
-    '',
-  ];
-  return {
-    moduleName: info.moduleName,
-    fileName: `${info.moduleName}.py`,
-    entries: info.entries,
-    pythonSource: lines.join('\n'),
-  };
-}
-
 function getHandleSiblingScripts() {
   const currentId = getActiveHandleScriptId();
   return getActiveHandleScripts().filter((s) => s.id !== currentId);
-}
-
-/** Collects explicitly required sibling script names from a live Blockly workspace. */
-function collectLiveRequiredScripts(workspace: Blockly.Workspace): Set<string> {
-  const required = new Set<string>();
-  for (const blk of workspace.getAllBlocks(false)) {
-    if (blk.isShadow() || !blk.isEnabled() || blk.type !== 'poly_require_script') {
-      continue;
-    }
-    const target = String(blk.getFieldValue('SCRIPT') || '').trim();
-    if (target) required.add(target);
-  }
-  return required;
 }
 
 function sanitizePyIdent(raw: string): string {
@@ -500,14 +477,12 @@ function sanitizePyIdent(raw: string): string {
 }
 
 /**
- * Generates the handle-wide central dispatch router(s) (e.g. `function on_timer(id)` / `def on_timer(id):`)
- * EXCLUSIVELY in the entry script (`main.lua` / `main.py`), aggregating:
- * - Local extracted dispatch branches in the entry script itself
- * - All extracted dispatch branches across every sibling script in the same handle
+ * Generates the handle-wide central dispatch router(s) (`on_timer`, `on_button`, etc.)
+ * EXCLUSIVELY in the entry script (`main.lua` / `main.py`).
  *
- * Also returns `autoImports` (e.g. `require("timers")` or `import sys` / `import timers`)
- * ONLY for sibling scripts referenced by the router that were NOT already explicitly loaded via
- * `poly_require_script` in the entry script (so conditional `if cond then require("timers") end` stays intact!).
+ * Strictly does NOT auto-import ordinary companion scripts at file top — companion scripts
+ * must be loaded explicitly by the user via `poly_require_script` (verified by static diagnostics).
+ * Only returns `import sys` in Python when routing to sibling branches via `sys.modules.get(...)`.
  */
 export function buildEntryDispatchRouters(
   workspace: Blockly.Workspace,
@@ -528,7 +503,6 @@ export function buildEntryDispatchRouters(
   const currentMeta = getActiveHandleScripts().find((s) => s.id === currentId);
   const currentName = currentMeta?.name ?? 'main';
 
-  // 1. Collect live extracted dispatch branches from the current (entry) workspace
   const topBlocks = workspace.getTopBlocks(true);
   topBlocks.forEach((blk, idx) => {
     if (blk.isShadow() || !blk.isEnabled()) return;
@@ -560,7 +534,6 @@ export function buildEntryDispatchRouters(
     });
   });
 
-  // 2. Collect extracted dispatch branches from all sibling scripts in this handle
   for (const sib of getHandleSiblingScripts()) {
     for (const br of sib.dispatchBranches ?? []) {
       allBranches.push({
@@ -576,7 +549,6 @@ export function buildEntryDispatchRouters(
     return { autoImports: [], routerCode: '' };
   }
 
-  // Group branches by `eventName` (e.g. 'on_timer', 'on_button', custom dispatch hats)
   const byEvent = new Map<string, AggregatedBranch[]>();
   for (const br of allBranches) {
     const list = byEvent.get(br.eventName) ?? [];
@@ -584,8 +556,6 @@ export function buildEntryDispatchRouters(
     byEvent.set(br.eventName, list);
   }
 
-  // Keep ONLY event groups that route centrally via extracted branch functions:
-  // either `alwaysExtract` (e.g. `on_timer`) OR at least one branch lives in a sibling script!
   const routedEvents = new Map<string, AggregatedBranch[]>();
   for (const [evName, list] of byEvent.entries()) {
     if (list.some((b) => b.alwaysExtract || !b.isLocal)) {
@@ -597,34 +567,11 @@ export function buildEntryDispatchRouters(
     return { autoImports: [], routerCode: '' };
   }
 
-  const manuallyRequired = collectLiveRequiredScripts(workspace);
-  const autoImports: string[] = [];
-  const autoImportSet = new Set<string>();
-  const addImport = (line: string) => {
-    if (!autoImportSet.has(line)) {
-      autoImportSet.add(line);
-      autoImports.push(line);
-    }
-  };
-
-  let hasAnySiblingBranch = false;
-  for (const list of routedEvents.values()) {
-    for (const br of list) {
-      if (!br.isLocal) {
-        hasAnySiblingBranch = true;
-        if (!manuallyRequired.has(br.scriptName)) {
-          if (language === 'lua') {
-            addImport(`require(${JSON.stringify(br.scriptName)})`);
-          } else {
-            addImport(`import ${sanitizePyIdent(br.scriptName)}`);
-          }
-        }
-      }
-    }
-  }
-  if (language === 'python' && hasAnySiblingBranch) {
-    addImport('import sys');
-  }
+  const hasAnySiblingBranch = Array.from(routedEvents.values()).some((list) =>
+    list.some((br) => !br.isLocal),
+  );
+  const autoImports: string[] =
+    language === 'python' && hasAnySiblingBranch ? ['import sys'] : [];
 
   const routerBlocks: string[] = [];
   for (const [eventName, rawBranches] of routedEvents.entries()) {

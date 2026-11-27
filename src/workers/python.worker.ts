@@ -161,14 +161,6 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
       activeScheduler ? activeScheduler.msToTick(ms) : 0,
     rt_is_expired: (startTick: unknown, timeoutTicks: unknown) =>
       activeScheduler ? activeScheduler.isTickExpired(startTick, timeoutTicks) : false,
-    should_loop: (hasRun: unknown, hasTimer: unknown, hasBtn: unknown) =>
-      activeScheduler
-        ? activeScheduler.shouldEnterEventLoop(
-            Boolean(hasRun),
-            Boolean(hasTimer),
-            Boolean(hasBtn),
-          )
-        : false,
     init_scheduler: (
       hasStart: unknown,
       hasRun: unknown,

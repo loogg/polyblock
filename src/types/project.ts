@@ -105,11 +105,22 @@ export interface RuntimeTelemetry {
   timers: RuntimeTimerTelemetry[];
 }
 
+/** Explicit initial value for handle-shared or file-scoped variables (Lua & Python symmetric). */
+export type VariableInitialValue =
+  | { kind: 'null' }
+  | { kind: 'number'; value: number }
+  | { kind: 'boolean'; value: boolean }
+  | { kind: 'string'; value: string }
+  | { kind: 'list' }
+  | { kind: 'dict' };
+
 /** Single visual-block script inside a RuntimeHandle. */
 export interface ProjectScript {
   id: string;
   name: string;
   workspace: Record<string, unknown>;
+  /** Explicit initial values for single-file global variables in this script. */
+  variableInitialValues?: Record<string, VariableInitialValue>;
   breakpoints: string[];
   updatedAt: string;
 }
@@ -125,15 +136,15 @@ export interface RuntimeHandle {
   capabilityConfigs: Record<string, unknown>;
   /**
    * Explicit handle-wide cross-file shared variable names.
-   * - Lua 5.4: bare `_G` globals shared across all scripts in this handle.
-   * - Python 3: auto-generated `shared.py` module (`import shared` / `shared.<var>`).
-   * Variables NOT in this list are strictly single-file globals (Lua top-level `local`, Python module global).
+   * Both Lua (`shared.lua`) and Python (`shared.py`) auto-generate a read-only `shared` module
+   * accessed uniformly as `shared.<var>`.
    */
   sharedVariables?: string[];
+  /** Explicit initial values for cross-file shared variables in `shared.lua` / `shared.py`. */
+  variableInitialValues?: Record<string, VariableInitialValue>;
   /**
    * Explicit handle-wide cross-file shared custom function names.
-   * - Lua 5.4: global `function name(...)` callable across scripts (private functions emit `local function`).
-   * - Python 3: module-level `def name(...):` called via `<script>.<name>(...)` across sibling scripts.
+   * Exported centrally into read-only `shared.lua` / `shared.py` and called uniformly as `shared.<fn>(...)`.
    */
   sharedFunctions?: string[];
   entryScriptId: string;
@@ -179,33 +190,6 @@ export interface WorkspaceStoreState {
   version: 3;
   activeProjectId: string;
   projects: ProjectModel[];
-}
-
-/** Legacy v2 two-tier project format kept for lossless import & migration. */
-export interface LegacyProjectModelV2 {
-  format?: 'polyblock-project';
-  version: 2;
-  id?: string;
-  name?: string;
-  description?: string;
-  language?: ScriptLanguageId;
-  enabledExtensions?: string[];
-  timerConfig?: Partial<ProjectTimerConfig>;
-  entryScriptId?: string;
-  activeScriptId?: string;
-  scripts: ProjectScript[];
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-/** Legacy v1 single-canvas file format kept for seamless import & migration. */
-export interface LegacyProjectFileV1 {
-  format?: 'polyblock-project';
-  version?: 1;
-  name?: string;
-  language?: ScriptLanguageId;
-  updatedAt?: string;
-  workspace: Record<string, unknown>;
 }
 
 export interface AppSettings {

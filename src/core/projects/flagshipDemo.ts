@@ -407,8 +407,8 @@ export const MEDIUM_DICT_CONFIG_WS: Record<string, unknown> = {
                     block: {
                       type: 'ext_dict_set',
                       id: 'md_set_mode',
-                      fields: { DICT: { id: 'var_md_cfg' } },
                       inputs: {
+                        DICT: { block: { type: 'variables_get', id: 'md_dref_1', fields: { VAR: { id: 'var_md_cfg' } } } },
                         KEY: { block: { type: 'text', id: 'md_k1', fields: { TEXT: 'mode' } } },
                         VAL: { block: { type: 'text', id: 'md_v1', fields: { TEXT: 'SMART_ECO' } } },
                       },
@@ -416,8 +416,8 @@ export const MEDIUM_DICT_CONFIG_WS: Record<string, unknown> = {
                         block: {
                           type: 'ext_dict_set',
                           id: 'md_set_limit',
-                          fields: { DICT: { id: 'var_md_cfg' } },
                           inputs: {
+                            DICT: { block: { type: 'variables_get', id: 'md_dref_2', fields: { VAR: { id: 'var_md_cfg' } } } },
                             KEY: { block: { type: 'text', id: 'md_k2', fields: { TEXT: 'limit' } } },
                             VAL: { block: { type: 'math_number', id: 'md_v2', fields: { NUM: 35 } } },
                           },
@@ -441,8 +441,8 @@ export const MEDIUM_DICT_CONFIG_WS: Record<string, unknown> = {
                                             block: {
                                               type: 'ext_dict_get',
                                               id: 'md_get_m',
-                                              fields: { DICT: { id: 'var_md_cfg' } },
                                               inputs: {
+                                                DICT: { block: { type: 'variables_get', id: 'md_dref_3', fields: { VAR: { id: 'var_md_cfg' } } } },
                                                 KEY: { block: { type: 'text', id: 'md_gk', fields: { TEXT: 'mode' } } },
                                               },
                                             },
@@ -461,8 +461,8 @@ export const MEDIUM_DICT_CONFIG_WS: Record<string, unknown> = {
                                           block: {
                                             type: 'ext_dict_get',
                                             id: 'md_get_lim',
-                                            fields: { DICT: { id: 'var_md_cfg' } },
                                             inputs: {
+                                              DICT: { block: { type: 'variables_get', id: 'md_dref_4', fields: { VAR: { id: 'var_md_cfg' } } } },
                                               KEY: { block: { type: 'text', id: 'md_gk2', fields: { TEXT: 'limit' } } },
                                             },
                                           },
@@ -1279,8 +1279,8 @@ export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
                     block: {
                       type: 'ext_dict_set',
                       id: 'fg_t_d1',
-                      fields: { DICT: { id: 'var_fg_report' } },
                       inputs: {
+                        DICT: { block: { type: 'variables_get', id: 'fg_t_dref1', fields: { VAR: { id: 'var_fg_report' } } } },
                         KEY: { block: { type: 'text', id: 'fg_t_k1', fields: { TEXT: 'uptime_ms' } } },
                         VAL: { block: { type: 'poly_local_get', id: 'fg_t_gup', fields: { NAME: 'uptime_ms' } } },
                       },
@@ -1288,8 +1288,8 @@ export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
                         block: {
                           type: 'ext_dict_set',
                           id: 'fg_t_d2',
-                          fields: { DICT: { id: 'var_fg_report' } },
                           inputs: {
+                            DICT: { block: { type: 'variables_get', id: 'fg_t_dref2', fields: { VAR: { id: 'var_fg_report' } } } },
                             KEY: { block: { type: 'text', id: 'fg_t_k2', fields: { TEXT: 'temp' } } },
                             VAL: { block: { type: 'ext_board_temp', id: 'fg_t_rt' } },
                           },
@@ -1297,8 +1297,8 @@ export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
                             block: {
                               type: 'ext_dict_set',
                               id: 'fg_t_d3',
-                              fields: { DICT: { id: 'var_fg_report' } },
                               inputs: {
+                                DICT: { block: { type: 'variables_get', id: 'fg_t_dref3', fields: { VAR: { id: 'var_fg_report' } } } },
                                 KEY: { block: { type: 'text', id: 'fg_t_k3', fields: { TEXT: 'battery' } } },
                                 VAL: { block: { type: 'ext_drive_battery', id: 'fg_t_rb' } },
                               },
@@ -1320,8 +1320,8 @@ export const FLAGSHIP_TELEMETRY_HUB_WS: Record<string, unknown> = {
                                           block: {
                                             type: 'ext_dict_get',
                                             id: 'fg_t_gms',
-                                            fields: { DICT: { id: 'var_fg_report' } },
                                             inputs: {
+                                              DICT: { block: { type: 'variables_get', id: 'fg_t_dref4', fields: { VAR: { id: 'var_fg_report' } } } },
                                               KEY: { block: { type: 'text', id: 'fg_t_gk1', fields: { TEXT: 'uptime_ms' } } },
                                             },
                                           },

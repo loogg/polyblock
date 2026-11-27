@@ -8,15 +8,15 @@ import type {
   ScriptLanguageId,
 } from '../../types/project';
 import { backendRegistry } from '../backends/registry';
-import {
-  buildHandlePythonSharedModule,
-  buildHandleScriptsMeta,
-} from '../backends/eventMode';
+import { buildHandleScriptsMeta } from '../backends/eventMode';
+import { buildHandleSharedModule } from '../backends/sharedModule';
 import {
   setActiveChannelPoolConfigs,
   setActiveHandleScripts,
   setActiveHandleSharedFunctions,
+  setActiveHandleSharedVarInitials,
   setActiveHandleSharedVariables,
+  setActiveScriptVarInitials,
 } from '../blocks/timerConfigBridge';
 import { collectHandleSharedVariableNames } from '../projects/handleVariables';
 import { CAP_RT_TIMERS } from '../capabilities/registry';
@@ -92,16 +92,22 @@ export function buildHandleScriptModules(
   const handleMetas = buildHandleScriptsMeta(effectiveHandle);
   const sharedVars = collectHandleSharedVariableNames(effectiveHandle);
   setActiveHandleSharedVariables(sharedVars);
+  setActiveHandleSharedVarInitials(effectiveHandle.variableInitialValues);
   setActiveHandleSharedFunctions(effectiveHandle.sharedFunctions ?? []);
 
-  if (language === 'python') {
-    const sharedMod = buildHandlePythonSharedModule(effectiveHandle);
-    if (sharedMod) {
-      modules.push({
-        moduleName: sharedMod.moduleName,
-        pythonSource: sharedMod.pythonSource,
-      });
-    }
+  // Unified Style A1 read-only `shared.lua` / `shared.py` (for BOTH Lua and Python!)
+  const sharedMod = buildHandleSharedModule(
+    effectiveHandle,
+    language,
+    poolCfgs,
+  );
+  if (sharedMod) {
+    const sharedSrc = useDebugCompanion ? sharedMod.debugSource : sharedMod.source;
+    modules.push({
+      moduleName: sharedMod.moduleName,
+      luaSource: language === 'lua' ? sharedSrc : undefined,
+      pythonSource: language === 'python' ? sharedSrc : undefined,
+    });
   }
 
   for (const script of candidates) {
@@ -110,6 +116,7 @@ export function buildHandleScriptModules(
         liveScriptOverride && liveScriptOverride.scriptId === script.id
           ? liveScriptOverride.workspace
           : script.workspace;
+      setActiveScriptVarInitials(script.variableInitialValues);
       setActiveHandleScripts(handleMetas, script.id);
       const compiled = compileScriptHeadless(wsJson, language, poolCfgs);
       const src = useDebugCompanion ? compiled.moduleDebugCode : compiled.code;
@@ -131,8 +138,6 @@ export interface MultiHandleRunOptions {
   timeoutMs: number;
   timeSliceMs?: number;
   stepDelayMs: number;
-  /** Optional legacy override; when omitted, modules are resolved per handle via `resolveProjectModules`. */
-  extensionMocks?: ExtensionModuleSource[];
   mockInputs: Record<string, unknown>;
 }
 
@@ -202,7 +207,9 @@ export class MultiHandleRunnerOrchestrator {
       );
       setActiveChannelPoolConfigs(poolCfgs);
       setActiveHandleSharedVariables(collectHandleSharedVariableNames(handle));
+      setActiveHandleSharedVarInitials(handle.variableInitialValues);
       setActiveHandleSharedFunctions(handle.sharedFunctions ?? []);
+      setActiveScriptVarInitials(entryScript.variableInitialValues);
       const scriptMetas = buildHandleScriptsMeta(handle);
       setActiveHandleScripts(scriptMetas, entryScript.id);
       const compiled = compileScriptHeadless(

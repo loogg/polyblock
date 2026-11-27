@@ -107,11 +107,6 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
         fields: { LABEL: 'total' },
         inputs: { VALUE: numShadow(0) },
       },
-      {
-        kind: 'block',
-        type: 'poly_clear_log',
-        keywords: '清空日志 clear console 清理',
-      },
     ],
   },
   {
@@ -325,13 +320,21 @@ export const BLOCK_CATEGORIES: BlockCategorySpec[] = [
       },
       {
         kind: 'block',
-        type: 'lists_getIndex',
-        keywords: '获取列表项 索引 index get',
+        type: 'poly_list_get',
+        keywords: '获取列表项 取第 索引 index get',
+        inputs: { INDEX: numShadow(1) },
       },
       {
         kind: 'block',
-        type: 'lists_setIndex',
+        type: 'poly_list_set',
         keywords: '设置列表项 修改 set index',
+        inputs: { INDEX: numShadow(1), VALUE: numShadow(0) },
+      },
+      {
+        kind: 'block',
+        type: 'poly_list_remove',
+        keywords: '移除列表项 删除 remove pop index',
+        inputs: { INDEX: numShadow(1) },
       },
     ],
   },
@@ -389,16 +392,6 @@ export function getOrderedToolboxCategories(
 
   combined.sort((a, b) => a.cat.order - b.cat.order || a.seq - b.seq);
   return combined.map((entry) => entry.cat);
-}
-
-/**
- * Backward-compatible helper returning ordered categories for the given enabled capabilities
- * (including any enabled packs whose `toolboxOrder` places them among or after core categories).
- */
-export function getCoreCategoriesForCapabilities(
-  enabledCapabilities: string[] = [],
-): BlockCategorySpec[] {
-  return getOrderedToolboxCategories(enabledCapabilities);
 }
 
 /**
@@ -578,7 +571,7 @@ export function buildFlyoutToolbox(
 
     const items: Blockly.utils.toolbox.FlyoutItemInfoArray = [
       topSpacer,
-      { kind: 'label', text: '跨文件公共函数 (同句柄共享)' },
+      { kind: 'label', text: '跨文件公共函数 (shared · 同句柄共享)' },
       {
         kind: 'button',
         text: '+ 新建跨文件函数',
@@ -586,36 +579,32 @@ export function buildFlyoutToolbox(
       },
     ];
 
-    const seenSharedKeys = new Set<string>();
+    const seenSharedNames = new Set<string>();
     for (const fn of allSharedEntries) {
-      const key = `${fn.scriptId}::${fn.name}`;
-      if (seenSharedKeys.has(key)) continue;
-      seenSharedKeys.add(key);
+      if (seenSharedNames.has(fn.name)) continue;
+      seenSharedNames.add(fn.name);
 
-      if (!currentScriptId || fn.scriptId === currentScriptId) {
-        items.push({
-          kind: 'block',
-          type: fn.hasReturn ? 'procedures_callreturn' : 'procedures_callnoreturn',
-          extraState: { name: fn.name, params: fn.params },
-        } as unknown as Blockly.utils.toolbox.BlockInfo);
-      } else {
-        items.push({
-          kind: 'block',
-          type: fn.hasReturn
-            ? 'poly_call_shared_return'
-            : 'poly_call_shared_noreturn',
-          extraState: {
-            scriptName: fn.scriptName,
-            fnName: fn.name,
-            params: fn.params,
-          },
-        } as unknown as Blockly.utils.toolbox.BlockInfo);
-      }
+      items.push({
+        kind: 'block',
+        type: fn.hasReturn
+          ? 'poly_call_shared_return'
+          : 'poly_call_shared_noreturn',
+        extraState: {
+          scriptName: fn.scriptName,
+          fnName: fn.name,
+          params: fn.params,
+        },
+      } as unknown as Blockly.utils.toolbox.BlockInfo);
     }
 
     items.push(
       { kind: 'sep', gap: '16' },
       { kind: 'label', text: '本文件私有函数 (仅本脚本)' },
+      {
+        kind: 'button',
+        text: '+ 新建私有函数',
+        callbackkey: 'CREATE_PRIVATE_FUNCTION',
+      },
       {
         kind: 'block',
         type: 'procedures_defnoreturn',

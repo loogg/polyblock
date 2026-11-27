@@ -22,7 +22,7 @@ import type {
   PolyExtensionPack,
   ResolvedHandleChannelPoolSpec,
 } from '../extensions/types';
-import { inferLegacyCrossFileSharedVariables } from './handleVariables';
+import { normalizeVariableInitialValue } from './handleVariables';
 import {
   FLAGSHIP_DRIVE_CTRL_WS,
   FLAGSHIP_PATROL_TEST_WS,
@@ -33,20 +33,17 @@ import {
   MEDIUM_DICT_CONFIG_WS,
 } from './flagshipDemo';
 import type {
-  LegacyProjectFileV1,
-  LegacyProjectModelV2,
   ProjectModel,
   ProjectScript,
   ProjectTimerConfig,
   RuntimeHandle,
   ScriptLanguageId,
   TargetProfile,
+  VariableInitialValue,
   WorkspaceStoreState,
 } from '../../types/project';
 
-export const STORAGE_STORE_V5_KEY = 'polyblock.store.v5';
-export const STORAGE_STORE_V2_KEY = 'polyblock.store.v2';
-export const STORAGE_LEGACY_V1_KEY = 'polyblock.workspace.v1';
+export const STORAGE_STORE_V6_KEY = 'polyblock.store.v6';
 
 export const HANDLE_COLOR_PALETTE = [
   '#4f46e5',
@@ -65,12 +62,17 @@ export interface HandleTemplateSpec {
   timerConfig?: Partial<ProjectTimerConfig>;
   /** Additional per-handle channel pool configs (e.g. `pwm-servo` isolated from `rt.timers`). */
   capabilityConfigs?: Record<string, Partial<ProjectTimerConfig>>;
-  /** Explicit cross-file shared variables for this handle (Lua `_G` / Python `shared.py`). */
+  /** Explicit cross-file shared variables for this handle (Lua `shared.lua` / Python `shared.py`). */
   sharedVariables?: string[];
+  /** Explicit cross-file shared functions exported into `shared.lua` / `shared.py`. */
+  sharedFunctions?: string[];
+  /** Optional explicit initial values for cross-file shared variables. */
+  variableInitialValues?: Record<string, VariableInitialValue>;
   scripts: Array<{
     name: string;
     isEntry?: boolean;
     workspace: Record<string, unknown>;
+    variableInitialValues?: Record<string, VariableInitialValue>;
   }>;
 }
 
@@ -217,11 +219,7 @@ export function getHandleChannelPoolConfig(
   const fromCap = handle.capabilityConfigs?.[configKey] as
     | Partial<ProjectTimerConfig>
     | undefined;
-  const legacy =
-    configKey === CAP_RT_TIMERS
-      ? (handle as unknown as { timerConfig?: Partial<ProjectTimerConfig> }).timerConfig
-      : undefined;
-  return normalizeTimerConfig(fromCap ?? legacy, fallbackCount, minCount, maxCount);
+  return normalizeTimerConfig(fromCap, fallbackCount, minCount, maxCount);
 }
 
 export function setHandleChannelPoolConfig(
@@ -1359,6 +1357,10 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
           },
         },
         sharedVariables: ['led_on', 'ticks'],
+        variableInitialValues: {
+          led_on: { kind: 'boolean', value: false },
+          ticks: { kind: 'number', value: 0 },
+        },
         scripts: [
           { name: 'main', isEntry: true, workspace: EVENT_LOOP_MAIN_WS },
           { name: 'timers', workspace: EVENT_LOOP_TIMERS_WS },
@@ -1492,6 +1494,21 @@ export const MULTI_SCRIPT_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] = [
 export const DEMO_PROJECT_TEMPLATES: MultiHandleProjectTemplate[] =
   MULTI_SCRIPT_PROJECT_TEMPLATES.filter((t) => !t.hiddenFromDemoList);
 
+function normalizeInitialValuesMap(
+  raw: unknown,
+): Record<string, VariableInitialValue> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: Record<string, VariableInitialValue> = {};
+  let count = 0;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const key = k.trim();
+    if (!key) continue;
+    out[key] = normalizeVariableInitialValue(v as VariableInitialValue);
+    count += 1;
+  }
+  return count > 0 ? out : undefined;
+}
+
 function instantiateHandleSpec(
   spec: HandleTemplateSpec,
   idx: number,
@@ -1499,13 +1516,17 @@ function instantiateHandleSpec(
   hasTimersCap: boolean,
   now: string,
 ): RuntimeHandle {
-  const scripts: ProjectScript[] = spec.scripts.map((s) => ({
-    id: createId('scr'),
-    name: sanitizeScriptName(s.name),
-    workspace: cloneJson(s.workspace),
-    breakpoints: [],
-    updatedAt: now,
-  }));
+  const scripts: ProjectScript[] = spec.scripts.map((s) => {
+    const scriptInitials = normalizeInitialValuesMap(s.variableInitialValues);
+    return {
+      id: createId('scr'),
+      name: sanitizeScriptName(s.name),
+      workspace: cloneJson(s.workspace),
+      breakpoints: [],
+      ...(scriptInitials ? { variableInitialValues: scriptInitials } : {}),
+      updatedAt: now,
+    };
+  });
   const entryIdx = Math.max(
     0,
     spec.scripts.findIndex((s) => s.isEntry),
@@ -1526,7 +1547,11 @@ function instantiateHandleSpec(
 
   const sharedVariables = Array.isArray(spec.sharedVariables)
     ? [...spec.sharedVariables]
-    : inferLegacyCrossFileSharedVariables(scripts);
+    : [];
+  const sharedFunctions = Array.isArray(spec.sharedFunctions)
+    ? [...spec.sharedFunctions]
+    : [];
+  const handleInitials = normalizeInitialValuesMap(spec.variableInitialValues);
 
   return {
     id: createId('hdl'),
@@ -1536,7 +1561,8 @@ function instantiateHandleSpec(
     autoStart: spec.autoStart ?? true,
     capabilityConfigs,
     sharedVariables,
-    sharedFunctions: [],
+    sharedFunctions,
+    ...(handleInitials ? { variableInitialValues: handleInitials } : {}),
     entryScriptId: entryId,
     activeScriptId: entryId,
     scripts,
@@ -1656,6 +1682,7 @@ function normalizeScriptsArray(
     if (typeof rs.id === 'string') {
       idMap.set(rs.id, newId);
     }
+    const scriptInitials = normalizeInitialValuesMap(rs.variableInitialValues);
     return {
       id: newId,
       name: uniqueName,
@@ -1666,79 +1693,11 @@ function normalizeScriptsArray(
       breakpoints: Array.isArray(rs.breakpoints)
         ? rs.breakpoints.filter((b): b is string => typeof b === 'string')
         : [],
+      ...(scriptInitials ? { variableInitialValues: scriptInitials } : {}),
       updatedAt: typeof rs.updatedAt === 'string' ? rs.updatedAt : now,
     };
   });
   return { scripts, idMap };
-}
-
-/** Losslessly migrates a v2 two-tier ProjectModel into v3 three-tier ProjectModel. */
-export function migrateProjectV2ToV3(
-  v2: LegacyProjectModelV2,
-  existingProjectNames: string[] = [],
-  fallbackName = '导入项目',
-): ProjectModel {
-  const now = new Date().toISOString();
-  const rawScripts = Array.isArray(v2.scripts) && v2.scripts.length > 0
-    ? (v2.scripts as unknown as Array<Record<string, unknown>>)
-    : [{ name: 'main', workspace: createBlankWorkspace() }];
-  const { scripts, idMap } = normalizeScriptsArray(rawScripts, now);
-  const entryId =
-    (v2.entryScriptId && idMap.get(v2.entryScriptId)) || scripts[0].id;
-  const activeScriptId =
-    (v2.activeScriptId && idMap.get(v2.activeScriptId)) || entryId;
-  const timerCfg = normalizeTimerConfig(v2.timerConfig);
-  const inferred = inferCapabilitiesFromWorkspaces(scripts.map((s) => s.workspace));
-  const mergedCaps = Array.from(
-    new Set([
-      ...(Array.isArray(v2.enabledExtensions)
-        ? v2.enabledExtensions.filter((e): e is string => typeof e === 'string')
-        : []),
-      ...inferred,
-      ...(v2.timerConfig ? [CAP_RT_TIMERS] : []),
-    ]),
-  );
-
-  const handle: RuntimeHandle = {
-    id: createId('hdl'),
-    name: 'main_vm',
-    description: '由 v2 工程自动迁移的主句柄',
-    color: HANDLE_COLOR_PALETTE[0],
-    autoStart: true,
-    capabilityConfigs:
-      v2.timerConfig || hasCapability(mergedCaps, CAP_RT_TIMERS)
-        ? { [CAP_RT_TIMERS]: timerCfg }
-        : {},
-    sharedVariables: inferLegacyCrossFileSharedVariables(scripts),
-    sharedFunctions: [],
-    entryScriptId: entryId,
-    activeScriptId,
-    scripts,
-    updatedAt: v2.updatedAt || now,
-  };
-
-  return {
-    format: 'polyblock-project',
-    version: 3,
-    id: v2.id || createId('proj'),
-    name:
-      existingProjectNames.length > 0
-        ? makeUniqueProjectName(
-            typeof v2.name === 'string' && v2.name.trim() ? v2.name : fallbackName,
-            existingProjectNames,
-          )
-        : (typeof v2.name === 'string' && v2.name.trim()) || fallbackName,
-    description: typeof v2.description === 'string' ? v2.description : undefined,
-    language: v2.language === 'python' ? 'python' : 'lua',
-    targetProfileId: inferProfileId(mergedCaps),
-    enabledCapabilities: mergedCaps,
-    localExtensions: [],
-    defaultTimerCount: timerCfg.count,
-    activeHandleId: handle.id,
-    handles: [handle],
-    createdAt: typeof v2.createdAt === 'string' ? v2.createdAt : now,
-    updatedAt: typeof v2.updatedAt === 'string' ? v2.updatedAt : now,
-  };
 }
 
 function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
@@ -1756,8 +1715,30 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
 
   const allWs: Array<Record<string, unknown>> = [];
   const handles: RuntimeHandle[] = rawHandles.map((rh, idx) => {
-    const scripts = Array.isArray(rh.scripts)
-      ? (rh.scripts as ProjectScript[])
+    const scripts: ProjectScript[] = Array.isArray(rh.scripts)
+      ? (rh.scripts as Array<Record<string, unknown>>).map((rs, sIdx) => {
+          const scriptInitials = normalizeInitialValuesMap(
+            rs.variableInitialValues,
+          );
+          return {
+            id: typeof rs.id === 'string' ? rs.id : createId('scr'),
+            name:
+              typeof rs.name === 'string'
+                ? rs.name
+                : sIdx === 0
+                  ? 'main'
+                  : `script_${sIdx + 1}`,
+            workspace:
+              rs.workspace && typeof rs.workspace === 'object'
+                ? (rs.workspace as Record<string, unknown>)
+                : createBlankWorkspace(),
+            breakpoints: Array.isArray(rs.breakpoints)
+              ? rs.breakpoints.filter((b): b is string => typeof b === 'string')
+              : [],
+            ...(scriptInitials ? { variableInitialValues: scriptInitials } : {}),
+            updatedAt: typeof rs.updatedAt === 'string' ? rs.updatedAt : now,
+          };
+        })
       : [
           {
             id: createId('scr'),
@@ -1775,12 +1756,6 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
       rh.capabilityConfigs && typeof rh.capabilityConfigs === 'object'
         ? cloneJson(rh.capabilityConfigs as Record<string, unknown>)
         : {};
-    if (!existingCapConfigs[CAP_RT_TIMERS] && rh.timerConfig) {
-      existingCapConfigs[CAP_RT_TIMERS] = normalizeTimerConfig(
-        rh.timerConfig as Partial<ProjectTimerConfig>,
-        defaultCount,
-      );
-    }
 
     const entryId =
       typeof rh.entryScriptId === 'string' &&
@@ -1792,6 +1767,7 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
       scripts.some((s) => s.id === rh.activeScriptId)
         ? rh.activeScriptId
         : entryId;
+    const handleInitials = normalizeInitialValuesMap(rh.variableInitialValues);
 
     return {
       id: typeof rh.id === 'string' ? rh.id : createId('hdl'),
@@ -1807,12 +1783,13 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
         ? rh.sharedVariables.filter(
             (v): v is string => typeof v === 'string' && v.trim().length > 0,
           )
-        : inferLegacyCrossFileSharedVariables(scripts),
+        : [],
       sharedFunctions: Array.isArray(rh.sharedFunctions)
         ? rh.sharedFunctions.filter(
             (v): v is string => typeof v === 'string' && v.trim().length > 0,
           )
         : [],
+      ...(handleInitials ? { variableInitialValues: handleInitials } : {}),
       entryScriptId: entryId,
       activeScriptId: activeId,
       scripts,
@@ -1820,19 +1797,9 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
     };
   });
 
-  // Migrate early-v3 `enabledExtensions` -> unified `enabledCapabilities`
-  let enabledCapabilities: string[];
-  if (Array.isArray(raw.enabledCapabilities)) {
-    enabledCapabilities = raw.enabledCapabilities.filter(
-      (c): c is string => typeof c === 'string',
-    );
-  } else {
-    const legacyExts = Array.isArray(raw.enabledExtensions)
-      ? raw.enabledExtensions.filter((e): e is string => typeof e === 'string')
-      : [];
-    const inferred = inferCapabilitiesFromWorkspaces(allWs);
-    enabledCapabilities = Array.from(new Set([...legacyExts, ...inferred]));
-  }
+  const enabledCapabilities = Array.isArray(raw.enabledCapabilities)
+    ? raw.enabledCapabilities.filter((c): c is string => typeof c === 'string')
+    : inferCapabilitiesFromWorkspaces(allWs);
 
   const profileId =
     typeof raw.targetProfileId === 'string' && raw.targetProfileId.trim()
@@ -1874,180 +1841,107 @@ export function parseImportedProject(
   const obj = raw as Record<string, unknown>;
   const now = new Date().toISOString();
 
-  // v3 Three-tier Project -> Handles -> Scripts
-  if (obj.version === 3 && Array.isArray(obj.handles) && obj.handles.length > 0) {
-    const rawHandles = obj.handles as Array<Record<string, unknown>>;
-    const defaultCount = Number.isFinite(Number(obj.defaultTimerCount))
-      ? Math.max(
-          MIN_TIMER_COUNT,
-          Math.min(MAX_TIMER_COUNT, Math.trunc(Number(obj.defaultTimerCount))),
-        )
-      : DEFAULT_TIMER_COUNT;
-
-    const usedHandleNames: string[] = [];
-    const handleIdMap = new Map<string, string>();
-    const handles: RuntimeHandle[] = rawHandles.map((rh, hIdx) => {
-      const hName = makeUniqueHandleName(
-        typeof rh.name === 'string' ? rh.name : `handle_${hIdx + 1}`,
-        usedHandleNames,
-      );
-      usedHandleNames.push(hName);
-      const rawScripts =
-        Array.isArray(rh.scripts) && rh.scripts.length > 0
-          ? (rh.scripts as Array<Record<string, unknown>>)
-          : [{ name: 'main', workspace: createBlankWorkspace() }];
-      const { scripts, idMap } = normalizeScriptsArray(rawScripts, now);
-      const entryId =
-        (typeof rh.entryScriptId === 'string' && idMap.get(rh.entryScriptId)) ||
-        scripts[0].id;
-      const newHandleId = createId('hdl');
-      if (typeof rh.id === 'string') {
-        handleIdMap.set(rh.id, newHandleId);
-      }
-      const capCfgs =
-        rh.capabilityConfigs && typeof rh.capabilityConfigs === 'object'
-          ? cloneJson(rh.capabilityConfigs as Record<string, unknown>)
-          : {};
-      if (!capCfgs[CAP_RT_TIMERS] && rh.timerConfig) {
-        capCfgs[CAP_RT_TIMERS] = normalizeTimerConfig(
-          rh.timerConfig as Partial<ProjectTimerConfig>,
-          defaultCount,
-        );
-      }
-      return {
-        id: newHandleId,
-        name: hName,
-        description: typeof rh.description === 'string' ? rh.description : undefined,
-        color:
-          typeof rh.color === 'string' && rh.color.startsWith('#')
-            ? rh.color
-            : HANDLE_COLOR_PALETTE[hIdx % HANDLE_COLOR_PALETTE.length],
-        autoStart: rh.autoStart !== false,
-        capabilityConfigs: capCfgs,
-        sharedVariables: Array.isArray(rh.sharedVariables)
-          ? rh.sharedVariables.filter(
-              (v): v is string => typeof v === 'string' && v.trim().length > 0,
-            )
-          : inferLegacyCrossFileSharedVariables(scripts),
-        sharedFunctions: Array.isArray(rh.sharedFunctions)
-          ? rh.sharedFunctions.filter(
-              (v): v is string => typeof v === 'string' && v.trim().length > 0,
-            )
-          : [],
-        entryScriptId: entryId,
-        activeScriptId: entryId,
-        scripts,
-        updatedAt: typeof rh.updatedAt === 'string' ? rh.updatedAt : now,
-      };
-    });
-
-    const activeHandleId =
-      (typeof obj.activeHandleId === 'string' &&
-        handleIdMap.get(obj.activeHandleId)) ||
-      handles[0].id;
-
-    const allWs = handles.flatMap((h) => h.scripts.map((s) => s.workspace));
-    const enabledCapabilities = Array.isArray(obj.enabledCapabilities)
-      ? obj.enabledCapabilities.filter((c): c is string => typeof c === 'string')
-      : Array.from(
-          new Set([
-            ...(Array.isArray(obj.enabledExtensions)
-              ? obj.enabledExtensions.filter((e): e is string => typeof e === 'string')
-              : []),
-            ...inferCapabilitiesFromWorkspaces(allWs),
-          ]),
-        );
-
-    const targetProfileId =
-      typeof obj.targetProfileId === 'string' && obj.targetProfileId.trim()
-        ? obj.targetProfileId
-        : inferProfileId(enabledCapabilities);
-
-    const localPacks = normalizeLocalExtensions(obj.localExtensions);
-    const absorbedBundled = getAbsorbedBundledExtensions(obj);
-    const mergedLocalExtensions = [...localPacks, ...absorbedBundled];
-
-    return {
-      format: 'polyblock-project',
-      version: 3,
-      id: createId('proj'),
-      name: makeUniqueProjectName(
-        typeof obj.name === 'string' && obj.name.trim() ? obj.name : fallbackName,
-        existingProjectNames,
-      ),
-      description: typeof obj.description === 'string' ? obj.description : undefined,
-      language: obj.language === 'python' ? 'python' : 'lua',
-      targetProfileId,
-      enabledCapabilities,
-      localExtensions: mergedLocalExtensions,
-      defaultTimerCount: defaultCount,
-      activeHandleId,
-      handles,
-      createdAt: typeof obj.createdAt === 'string' ? obj.createdAt : now,
-      updatedAt: now,
-    };
+  if (obj.version !== 3 || !Array.isArray(obj.handles) || obj.handles.length === 0) {
+    throw new Error('仅支持 PolyBlock v3 工程格式（缺少 version: 3 或 handles 数据）');
   }
 
-  // Legacy v2 Two-tier Project -> upgrade losslessly to v3
-  if (obj.version === 2 && Array.isArray(obj.scripts) && obj.scripts.length > 0) {
-    const migrated = migrateProjectV2ToV3(
-      obj as unknown as LegacyProjectModelV2,
-      existingProjectNames,
-      fallbackName,
+  const rawHandles = obj.handles as Array<Record<string, unknown>>;
+  const defaultCount = Number.isFinite(Number(obj.defaultTimerCount))
+    ? Math.max(
+        MIN_TIMER_COUNT,
+        Math.min(MAX_TIMER_COUNT, Math.trunc(Number(obj.defaultTimerCount))),
+      )
+    : DEFAULT_TIMER_COUNT;
+
+  const usedHandleNames: string[] = [];
+  const handleIdMap = new Map<string, string>();
+  const handles: RuntimeHandle[] = rawHandles.map((rh, hIdx) => {
+    const hName = makeUniqueHandleName(
+      typeof rh.name === 'string' ? rh.name : `handle_${hIdx + 1}`,
+      usedHandleNames,
     );
+    usedHandleNames.push(hName);
+    const rawScripts =
+      Array.isArray(rh.scripts) && rh.scripts.length > 0
+        ? (rh.scripts as Array<Record<string, unknown>>)
+        : [{ name: 'main', workspace: createBlankWorkspace() }];
+    const { scripts, idMap } = normalizeScriptsArray(rawScripts, now);
+    const entryId =
+      (typeof rh.entryScriptId === 'string' && idMap.get(rh.entryScriptId)) ||
+      scripts[0].id;
+    const newHandleId = createId('hdl');
+    if (typeof rh.id === 'string') {
+      handleIdMap.set(rh.id, newHandleId);
+    }
+    const capCfgs =
+      rh.capabilityConfigs && typeof rh.capabilityConfigs === 'object'
+        ? cloneJson(rh.capabilityConfigs as Record<string, unknown>)
+        : {};
+    const handleInitials = normalizeInitialValuesMap(rh.variableInitialValues);
     return {
-      ...migrated,
-      id: createId('proj'),
-      updatedAt: now,
+      id: newHandleId,
+      name: hName,
+      description: typeof rh.description === 'string' ? rh.description : undefined,
+      color:
+        typeof rh.color === 'string' && rh.color.startsWith('#')
+          ? rh.color
+          : HANDLE_COLOR_PALETTE[hIdx % HANDLE_COLOR_PALETTE.length],
+      autoStart: rh.autoStart !== false,
+      capabilityConfigs: capCfgs,
+      sharedVariables: Array.isArray(rh.sharedVariables)
+        ? rh.sharedVariables.filter(
+            (v): v is string => typeof v === 'string' && v.trim().length > 0,
+          )
+        : [],
+      sharedFunctions: Array.isArray(rh.sharedFunctions)
+        ? rh.sharedFunctions.filter(
+            (v): v is string => typeof v === 'string' && v.trim().length > 0,
+          )
+        : [],
+      ...(handleInitials ? { variableInitialValues: handleInitials } : {}),
+      entryScriptId: entryId,
+      activeScriptId: entryId,
+      scripts,
+      updatedAt: typeof rh.updatedAt === 'string' ? rh.updatedAt : now,
     };
-  }
+  });
 
-  // Legacy v1 single-canvas project -> upgrade seamlessly to v3
-  const v1 = obj as unknown as LegacyProjectFileV1;
-  if (!v1.workspace || typeof v1.workspace !== 'object') {
-    throw new Error('缺少 handles / scripts 或 workspace 数据');
-  }
+  const activeHandleId =
+    (typeof obj.activeHandleId === 'string' &&
+      handleIdMap.get(obj.activeHandleId)) ||
+    handles[0].id;
 
-  const cleanProjName = (v1.name || fallbackName)
-    .replace(/\.polyblock\.json$|\.json$/i, '')
-    .trim();
-  const scriptId = createId('scr');
-  const handleId = createId('hdl');
+  const allWs = handles.flatMap((h) => h.scripts.map((s) => s.workspace));
+  const enabledCapabilities = Array.isArray(obj.enabledCapabilities)
+    ? obj.enabledCapabilities.filter((c): c is string => typeof c === 'string')
+    : inferCapabilitiesFromWorkspaces(allWs);
+
+  const targetProfileId =
+    typeof obj.targetProfileId === 'string' && obj.targetProfileId.trim()
+      ? obj.targetProfileId
+      : inferProfileId(enabledCapabilities);
+
+  const localPacks = normalizeLocalExtensions(obj.localExtensions);
+  const absorbedBundled = getAbsorbedBundledExtensions(obj);
+  const mergedLocalExtensions = [...localPacks, ...absorbedBundled];
 
   return {
     format: 'polyblock-project',
     version: 3,
     id: createId('proj'),
-    name: makeUniqueProjectName(cleanProjName || '导入项目', existingProjectNames),
-    description: '由 v1 单脚本工程自动升级导入',
-    language: v1.language === 'python' ? 'python' : 'lua',
-    targetProfileId: 'generic-script',
-    enabledCapabilities: inferCapabilitiesFromWorkspaces([v1.workspace]),
-    localExtensions: [],
-    defaultTimerCount: DEFAULT_TIMER_COUNT,
-    activeHandleId: handleId,
-    handles: [
-      {
-        id: handleId,
-        name: 'main_vm',
-        color: HANDLE_COLOR_PALETTE[0],
-        autoStart: true,
-        capabilityConfigs: {},
-        entryScriptId: scriptId,
-        activeScriptId: scriptId,
-        scripts: [
-          {
-            id: scriptId,
-            name: 'main',
-            workspace: cloneJson(v1.workspace),
-            breakpoints: [],
-            updatedAt: v1.updatedAt || now,
-          },
-        ],
-        updatedAt: v1.updatedAt || now,
-      },
-    ],
-    createdAt: v1.updatedAt || now,
+    name: makeUniqueProjectName(
+      typeof obj.name === 'string' && obj.name.trim() ? obj.name : fallbackName,
+      existingProjectNames,
+    ),
+    description: typeof obj.description === 'string' ? obj.description : undefined,
+    language: obj.language === 'python' ? 'python' : 'lua',
+    targetProfileId,
+    enabledCapabilities,
+    localExtensions: mergedLocalExtensions,
+    defaultTimerCount: defaultCount,
+    activeHandleId,
+    handles,
+    createdAt: typeof obj.createdAt === 'string' ? obj.createdAt : now,
     updatedAt: now,
   };
 }
@@ -2077,9 +1971,8 @@ export function countProjectScripts(project: ProjectModel): number {
 }
 
 export function loadWorkspaceStore(): WorkspaceStoreState {
-  // 1. Try current v5 store
   try {
-    const rawCurrent = localStorage.getItem(STORAGE_STORE_V5_KEY);
+    const rawCurrent = localStorage.getItem(STORAGE_STORE_V6_KEY);
     if (rawCurrent) {
       const parsed = JSON.parse(rawCurrent) as WorkspaceStoreState;
       if (
@@ -2104,70 +1997,15 @@ export function loadWorkspaceStore(): WorkspaceStoreState {
       }
     }
   } catch {
-    // fall through
+    // fall through to clean defaults
   }
 
-  // 2. Losslessly migrate existing v2 store
-  try {
-    const rawV2 = localStorage.getItem(STORAGE_STORE_V2_KEY);
-    if (rawV2) {
-      const parsedV2 = JSON.parse(rawV2) as {
-        version: number;
-        activeProjectId?: string;
-        projects?: LegacyProjectModelV2[];
-      };
-      if (
-        parsedV2 &&
-        parsedV2.version === 2 &&
-        Array.isArray(parsedV2.projects) &&
-        parsedV2.projects.length > 0
-      ) {
-        const migratedProjects = parsedV2.projects.map((p) =>
-          migrateProjectV2ToV3(p),
-        );
-        const activeId =
-          migratedProjects.find((p) => p.id === parsedV2.activeProjectId)?.id ??
-          migratedProjects[0].id;
-        return {
-          version: 3,
-          activeProjectId: activeId,
-          projects: migratedProjects,
-        };
-      }
-    }
-  } catch {
-    // fall through
-  }
-
-  // 3. Migrate legacy v1 single workspace if present, otherwise preload 4 progressive demos
-  const defaultStore = createDefaultWorkspaceStore();
-  try {
-    const rawV1 = localStorage.getItem(STORAGE_LEGACY_V1_KEY);
-    if (rawV1) {
-      const parsedV1 = JSON.parse(rawV1) as LegacyProjectFileV1;
-      if (parsedV1 && parsedV1.workspace && typeof parsedV1.workspace === 'object') {
-        const migrated = parseImportedProject(
-          parsedV1,
-          '历史项目',
-          defaultStore.projects.map((p) => p.name),
-        );
-        return {
-          version: 3,
-          activeProjectId: defaultStore.activeProjectId,
-          projects: [...defaultStore.projects, migrated],
-        };
-      }
-    }
-  } catch {
-    // ignore invalid v1 cache
-  }
-
-  return defaultStore;
+  return createDefaultWorkspaceStore();
 }
 
 export function saveWorkspaceStore(store: WorkspaceStoreState): void {
   try {
-    localStorage.setItem(STORAGE_STORE_V5_KEY, JSON.stringify(store));
+    localStorage.setItem(STORAGE_STORE_V6_KEY, JSON.stringify(store));
   } catch {
     // ignore storage quota errors
   }
@@ -2298,10 +2136,13 @@ export function duplicateHandleInProject(
     capabilityConfigs: cloneJson(target.capabilityConfigs ?? {}),
     sharedVariables: Array.isArray(target.sharedVariables)
       ? [...target.sharedVariables]
-      : inferLegacyCrossFileSharedVariables(clonedScripts),
+      : [],
     sharedFunctions: Array.isArray(target.sharedFunctions)
       ? [...target.sharedFunctions]
       : [],
+    ...(target.variableInitialValues
+      ? { variableInitialValues: cloneJson(target.variableInitialValues) }
+      : {}),
     entryScriptId: scriptIdMap.get(target.entryScriptId) ?? clonedScripts[0].id,
     activeScriptId: scriptIdMap.get(target.activeScriptId) ?? clonedScripts[0].id,
     scripts: clonedScripts,
@@ -2404,6 +2245,9 @@ export function duplicateScriptInHandle(
     name: unique,
     workspace: cloneJson(target.workspace),
     breakpoints: [...target.breakpoints],
+    ...(target.variableInitialValues
+      ? { variableInitialValues: cloneJson(target.variableInitialValues) }
+      : {}),
     updatedAt: now,
   };
   const idx = handle.scripts.findIndex((s) => s.id === scriptId);
@@ -2500,6 +2344,11 @@ export function duplicateProjectInStore(
       ...h,
       id: newHId,
       capabilityConfigs: cloneJson(h.capabilityConfigs ?? {}),
+      sharedVariables: [...(h.sharedVariables ?? [])],
+      sharedFunctions: [...(h.sharedFunctions ?? [])],
+      ...(h.variableInitialValues
+        ? { variableInitialValues: cloneJson(h.variableInitialValues) }
+        : {}),
       entryScriptId: scriptIdMap.get(h.entryScriptId) ?? clonedScripts[0].id,
       activeScriptId: scriptIdMap.get(h.activeScriptId) ?? clonedScripts[0].id,
       scripts: clonedScripts,

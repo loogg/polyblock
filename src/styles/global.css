@@ -3747,6 +3747,8 @@ select {
   border: 1px solid var(--border);
   background: var(--bg-code);
   padding: 10px 0;
+  min-height: 160px;
+  flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.65;
@@ -3774,4 +3776,112 @@ select {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* Variable Initial Value Picker (Create Variable Modal) */
+.var-init-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel-subtle);
+}
+
+.var-init-picker-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.var-init-kind-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+
+.var-init-bool-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.var-init-kind-btn {
+  padding: 5px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg-chrome);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.14s, background 0.14s, color 0.14s;
+}
+
+.var-init-kind-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.var-init-kind-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Shared Module Inline Initial Value Controls & Function Jump */
+.shared-vars-empty {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px dashed var(--border);
+  background: var(--bg-panel-subtle);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.shared-var-init-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.shared-var-init-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.shared-var-init-select {
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.shared-var-init-input {
+  height: 24px;
+  width: 84px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.shared-fn-jump-btn {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 7px;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }

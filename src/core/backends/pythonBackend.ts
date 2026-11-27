@@ -2,7 +2,9 @@ import * as Blockly from 'blockly';
 import { Order, pythonGenerator } from 'blockly/python';
 import {
   buildPythonGlobalLineForBlocks,
+  buildPythonHoistedLocalsLine,
   codegenContext,
+  computeAsyncFunctionNames,
   formatPythonVarRef,
   resetCodegenPassContext,
 } from './codegenContext';
@@ -10,12 +12,14 @@ import {
   buildEntryDispatchRouters,
   hasExternalKeepAliveHat,
   isEventDrivenWorkspace,
-  resolveHandleSharedPythonVars,
+  resolveHandleSharedInfo,
 } from './eventMode';
 import {
-  getActiveHandleScriptId,
   getActiveHandleScripts,
+  getActiveHandleSharedFunctions,
+  getActiveScriptVarInitials,
 } from '../blocks/timerConfigBridge';
+import { formatInitialValuePython } from '../projects/handleVariables';
 import {
   analyzeWorkspaceScopes,
   sanitizeLocalIdent,
@@ -29,61 +33,58 @@ import {
 import type { GeneratedCodeResult, ScriptBackendAdapter } from './types';
 
 let pythonGeneratorsRegistered = false;
-let pySharedFnRequiredScripts = new Set<string>();
 
-function getCurrentPyScriptName(): string {
-  const curId = getActiveHandleScriptId();
-  if (!curId) return '';
-  return getActiveHandleScripts().find((s) => s.id === curId)?.name ?? '';
-}
-
-function collectManualPyRequireScripts(workspace: Blockly.Workspace): Set<string> {
-  const out = new Set<string>();
-  for (const blk of workspace.getAllBlocks(false)) {
-    if (blk.isShadow() || !blk.isEnabled()) continue;
-    if (blk.type === 'poly_require_script') {
-      const name = String(blk.getFieldValue('SCRIPT') || '').trim();
-      if (name) out.add(name);
-    }
+/** Converts a 1-based list index expression into clean 0-based Python index (`1` -> `0`, `k` -> `int(k) - 1`). */
+function formatPyZeroBasedIndex(rawIdx: string): string {
+  const trimmed = rawIdx.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const n = Number(trimmed);
+    if (Number.isInteger(n) && n >= 1) return String(n - 1);
   }
-  return out;
+  return `int(${trimmed}) - 1`;
 }
 
-function registerPythonBlockGenerators(): void {
+export function registerPythonBlockGenerators(): void {
   if (pythonGeneratorsRegistered) return;
 
   // Wrap Blockly's pythonGenerator.init so:
-  // 1) Cross-file shared variables are NOT re-declared as `<var> = None` and add `import shared`
-  // 2) Unused handle-synced variables in this script do NOT pollute top-level with redundant `<var> = None`
+  // 1) Cross-file shared variables are NOT re-declared at module top level
+  // 2) Unused handle-synced variables do NOT pollute top level
+  // 3) Used single-file globals emit their configured `initialValue` (`step = 0`, `items = []`, `x = None`)
   const origInit = pythonGenerator.init.bind(pythonGenerator);
   pythonGenerator.init = (workspace: Blockly.Workspace) => {
     origInit(workspace);
-    const sharedMod = codegenContext.pythonSharedModuleName;
     const sharedIdents = codegenContext.pythonSharedVarIdents;
     const usedIdents = codegenContext.pythonUsedVarIdents;
+    const scriptInitials = getActiveScriptVarInitials();
+    const identToVarName = new Map<string, string>();
+    for (const v of workspace.getVariableMap().getAllVariables()) {
+      identToVarName.set(pythonGenerator.getVariableName(v.getId()), v.getName());
+    }
+
     const defs = (
       pythonGenerator as unknown as { definitions_: Record<string, string> }
     ).definitions_;
-    if (
-      typeof defs.variables === 'string' &&
-      (sharedIdents.size > 0 || usedIdents !== null)
-    ) {
-      const kept = defs.variables.split('\n').filter((line) => {
+    if (typeof defs.variables === 'string') {
+      const kept: string[] = [];
+      for (const line of defs.variables.split('\n')) {
         const m = line.match(/^([A-Za-z0-9_]+)\s*=\s*None$/);
-        if (!m) return Boolean(line.trim());
+        if (!m) {
+          if (line.trim()) kept.push(line);
+          continue;
+        }
         const ident = m[1];
-        if (sharedIdents.has(ident)) return false;
-        if (usedIdents !== null && !usedIdents.has(ident)) return false;
-        return true;
-      });
+        if (codegenContext.compilingSharedModule) continue;
+        if (sharedIdents.has(ident)) continue;
+        if (usedIdents !== null && !usedIdents.has(ident)) continue;
+        const varName = identToVarName.get(ident) ?? ident;
+        kept.push(`${ident} = ${formatInitialValuePython(scriptInitials[varName])}`);
+      }
       if (kept.length > 0) {
         defs.variables = kept.join('\n');
       } else {
         delete defs.variables;
       }
-    }
-    if (sharedMod && sharedIdents.size > 0) {
-      defs['import_poly_shared'] = `import ${sharedMod}`;
     }
   };
 
@@ -106,17 +107,26 @@ function registerPythonBlockGenerators(): void {
     return `${ref} = ${val}\n`;
   };
 
-  const origTextAppend = pythonGenerator.forBlock['text_append'];
-  if (origTextAppend) {
-    pythonGenerator.forBlock['text_append'] = (block, generator) => {
-      const varId = String(block.getFieldValue('VAR') || '');
-      const ref = formatPythonVarRef(varId, generator, block);
-      const ident = generator.getVariableName(varId);
-      if (ref === ident) return origTextAppend(block, generator);
-      const val = generator.valueToCode(block, 'TEXT', Order.NONE) || "''";
-      return `${ref} = str(${ref}) + str(${val})\n`;
-    };
-  }
+  // Clean idiomatic Python `+=` (no hidden `isinstance` magic!)
+  pythonGenerator.forBlock['math_change'] = (block, generator) => {
+    const delta = generator.valueToCode(block, 'DELTA', Order.ADDITIVE) || '0';
+    const varName = formatPythonVarRef(
+      String(block.getFieldValue('VAR') || ''),
+      generator,
+      block,
+    );
+    return `${varName} += ${delta}\n`;
+  };
+
+  pythonGenerator.forBlock['text_append'] = (block, generator) => {
+    const ref = formatPythonVarRef(
+      String(block.getFieldValue('VAR') || ''),
+      generator,
+      block,
+    );
+    const val = generator.valueToCode(block, 'TEXT', Order.NONE) || "''";
+    return `${ref} = str(${ref}) + str(${val})\n`;
+  };
 
   const origControlsFor = pythonGenerator.forBlock['controls_for'];
   if (origControlsFor) {
@@ -150,18 +160,19 @@ function registerPythonBlockGenerators(): void {
     };
   }
 
+  // Unified Scheme 1 single-thread coroutine ABI: `on_start` ALWAYS exports as `async def on_start():`
   pythonGenerator.forBlock['poly_on_start'] = (block, generator) => {
     const body = generator.statementToCode(block, 'BODY');
-    const defKw = codegenContext.debugPass ? 'async def' : 'def';
     const globalLine = buildPythonGlobalLineForBlocks([block], generator);
+    const hoistedLocals = buildPythonHoistedLocalsLine([block], 'BODY', '  ');
     const safeBody = body.trim() ? body : '  pass\n';
     if (codegenContext.debugPass) {
-      return `${defKw} on_start():\n${globalLine}${safeBody}\n`;
+      return `async def on_start():\n${globalLine}${hoistedLocals}${safeBody}\n`;
     }
     return (
       `${SENTINEL_START_PREFIX}'${block.id}'__\n` +
-      `${defKw} on_start():\n` +
-      `${globalLine}${safeBody}` +
+      `async def on_start():\n` +
+      `${globalLine}${hoistedLocals}${safeBody}` +
       `${SENTINEL_END_PREFIX}'${block.id}'__\n`
     );
   };
@@ -182,13 +193,6 @@ function registerPythonBlockGenerators(): void {
     const label = JSON.stringify(`${rawLabel} =`);
     const value = generator.valueToCode(block, 'VALUE', Order.NONE) || 'None';
     return `print(${label}, ${value})\n`;
-  };
-
-  pythonGenerator.forBlock['poly_clear_log'] = () => {
-    if (codegenContext.debugPass) {
-      return `print("__POLYBLOCK_CLEAR__")\n`;
-    }
-    return `# 清空控制台（仅 PolyBlock 沙箱调试生效）\n`;
   };
 
   pythonGenerator.forBlock['poly_repeat_times'] = (block, generator) => {
@@ -228,13 +232,10 @@ function registerPythonBlockGenerators(): void {
     return `for ${variableName} in range(int(${from}), int(${to}) + (1 if int(${by}) >= 0 else -1), int(${by})):\n${branch}`;
   };
 
+  // Unified Scheme 1 coroutine sleep ABI: IDENTICAL in clean hardware export and sandbox!
   pythonGenerator.forBlock['poly_wait_ms'] = (block, generator) => {
     const ms = generator.valueToCode(block, 'MS', Order.NONE) || '0';
-    if (codegenContext.debugPass) {
-      return `await _poly_sleep_ms(${ms})\n`;
-    }
-    // Unified coroutine ABI with Lua: `sleep_ms(ms)` is provided by the host runtime inside `on_start`
-    return `sleep_ms(${ms})\n`;
+    return `await sleep_ms(${ms})\n`;
   };
 
   const origPyWhileUntil = pythonGenerator.forBlock['controls_whileUntil'];
@@ -280,93 +281,173 @@ function registerPythonBlockGenerators(): void {
     return [`str(${value})`, Order.FUNCTION_CALL];
   };
 
+  // Pure value-slot list primitives (zero hidden helper functions!)
   pythonGenerator.forBlock['poly_list_append'] = (block, generator) => {
-    const listVar = formatPythonVarRef(
-      String(block.getFieldValue('LIST') || ''),
-      generator,
-      block,
-    );
+    const listCode = generator.valueToCode(block, 'LIST', Order.MEMBER) || '[]';
     const item = generator.valueToCode(block, 'ITEM', Order.NONE) || 'None';
-    return `${listVar}.append(${item})\n`;
+    return `${listCode}.append(${item})\n`;
   };
 
-  // Override built-in math_change so it avoids `from numbers import Number`
-  // which is absent in MicroPython WASM while remaining 100% valid in CPython.
-  pythonGenerator.forBlock['math_change'] = (block, generator) => {
-    const delta = generator.valueToCode(block, 'DELTA', Order.ADDITIVE) || '0';
-    const varName = formatPythonVarRef(
-      String(block.getFieldValue('VAR') || ''),
-      generator,
-      block,
-    );
-    return `${varName} = (${varName} if isinstance(${varName}, (int, float)) else 0) + ${delta}\n`;
+  pythonGenerator.forBlock['poly_list_get'] = (block, generator) => {
+    const listCode = generator.valueToCode(block, 'LIST', Order.MEMBER) || '[]';
+    const idx = generator.valueToCode(block, 'INDEX', Order.NONE) || '1';
+    return [`${listCode}[${formatPyZeroBasedIndex(idx)}]`, Order.MEMBER];
   };
 
-  // Wrap built-in procedure calls/defs so breakpoints & async delays work inside custom functions
-  // during sandbox debug pass while keeping clean export 100% synchronous standard Python.
+  pythonGenerator.forBlock['poly_list_set'] = (block, generator) => {
+    const listCode = generator.valueToCode(block, 'LIST', Order.MEMBER) || '[]';
+    const idx = generator.valueToCode(block, 'INDEX', Order.NONE) || '1';
+    const val = generator.valueToCode(block, 'VALUE', Order.NONE) || 'None';
+    return `${listCode}[${formatPyZeroBasedIndex(idx)}] = ${val}\n`;
+  };
+
+  pythonGenerator.forBlock['poly_list_remove'] = (block, generator) => {
+    const listCode = generator.valueToCode(block, 'LIST', Order.MEMBER) || '[]';
+    const idx = generator.valueToCode(block, 'INDEX', Order.NONE) || '1';
+    return `${listCode}.pop(${formatPyZeroBasedIndex(idx)})\n`;
+  };
+
+  // Wrap built-in procedure defs/calls:
+  // 1) Shared functions live ONLY in `shared.py` (suppressed in normal script files)
+  // 2) Replace Blockly's shotgun `global ...` with our precise `buildPythonGlobalLineForBlocks`
+  // 3) Hoist nested `poly_local_set` vars as `msg = None` at function top
+  // 4) Emit `async def` + `await` for procedures containing `sleep_ms` (and all procs in debugPass)
   const origDefNoReturn = pythonGenerator.forBlock['procedures_defnoreturn'];
   const origDefReturn = pythonGenerator.forBlock['procedures_defreturn'];
-  const origCallNoReturn = pythonGenerator.forBlock['procedures_callnoreturn'];
-  const origCallReturn = pythonGenerator.forBlock['procedures_callreturn'];
 
   if (origDefReturn) {
-    const wrapDef = (orig: typeof origDefReturn) => (
-      block: Blockly.Block,
-      generator: typeof pythonGenerator,
-    ) => {
-      const out = orig(block, generator);
-      const defs = (
-        generator as unknown as { definitions_: Record<string, string> }
-      ).definitions_;
-      const sharedIdents = codegenContext.pythonSharedVarIdents;
-      for (const key of Object.keys(defs)) {
-        if (!key.startsWith('%')) continue;
-        if (sharedIdents.size > 0) {
-          defs[key] = defs[key].replace(
-            /^([ \t]+)global ([^\n]+)\n/gm,
-            (_m, indent: string, list: string) => {
-              const kept = list
-                .split(',')
-                .map((s) => s.trim())
-                .filter((name) => name && !sharedIdents.has(name));
-              return kept.length > 0 ? `${indent}global ${kept.join(', ')}\n` : '';
-            },
+    const wrapDef =
+      (orig: typeof origDefReturn) =>
+      (block: Blockly.Block, generator: typeof pythonGenerator) => {
+        const rawName = String(block.getFieldValue('NAME') || '').trim();
+        const sharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
+        const isSharedFn = sharedFnSet.has(rawName);
+        if (isSharedFn && !codegenContext.compilingSharedModule) {
+          return null;
+        }
+
+        const out = orig(block, generator);
+        const procIdent = generator.getProcedureName(rawName);
+        const defKey = `%${procIdent}`;
+        const defs = (
+          generator as unknown as { definitions_: Record<string, string> }
+        ).definitions_;
+        const existing = defs[defKey];
+        if (typeof existing === 'string') {
+          const proc = block as Blockly.Block & {
+            getProcedureDef?: () => [string, string[], boolean];
+          };
+          const paramNames = proc.getProcedureDef?.()?.[1] ?? [];
+          const varMap = block.workspace?.getVariableMap();
+          const paramIdents = paramNames.map((pName) => {
+            const vm = varMap?.getVariable(pName, '');
+            return vm ? generator.getVariableName(vm.getId()) : sanitizeLocalIdent(pName);
+          });
+
+          // Remove Blockly's shotgun `global ...` lines completely
+          let nextCode = existing.replace(/^[ \t]+global [^\n]+\n/gm, '');
+
+          // Inject precise `global` + hoisted nested locals right after `def ...:\n`
+          const preciseGlobal = buildPythonGlobalLineForBlocks(
+            [block],
+            generator,
+            paramIdents,
+            'STACK',
           );
+          const hoistedLocals = buildPythonHoistedLocalsLine([block], 'STACK', '  ');
+          const prefixLines = `${preciseGlobal}${hoistedLocals}`;
+          if (prefixLines) {
+            nextCode = nextCode.replace(
+              /(^|\n)((?:async\s+)?def\s+[^\n]+:\n)/,
+              `$1$2${prefixLines}`,
+            );
+          }
+
+          const shouldBeAsync =
+            codegenContext.debugPass ||
+            codegenContext.pythonAsyncFnNames.has(rawName);
+          if (shouldBeAsync) {
+            nextCode = nextCode.replace(/(^|\n)def /, '$1async def ');
+          }
+
+          defs[defKey] = nextCode;
         }
-        if (
-          codegenContext.debugPass &&
-          (defs[key].startsWith('def ') || defs[key].includes('\ndef '))
-        ) {
-          defs[key] = defs[key].replace(/(^|\n)def /g, '$1async def ');
-        }
-      }
-      return out;
-    };
+        return out;
+      };
     pythonGenerator.forBlock['procedures_defreturn'] = wrapDef(origDefReturn);
     if (origDefNoReturn) {
       pythonGenerator.forBlock['procedures_defnoreturn'] = wrapDef(origDefNoReturn);
     }
   }
 
-  if (origCallNoReturn) {
-    pythonGenerator.forBlock['procedures_callnoreturn'] = (block, generator) => {
-      const out = origCallNoReturn(block, generator);
-      if (codegenContext.debugPass && typeof out === 'string' && out.trim()) {
-        return `await ${out}`;
+  const formatPyProcCall = (
+    rawName: string,
+    fnIdent: string,
+    argsStr: string,
+    isShared: boolean,
+    asExpr: boolean,
+  ): string => {
+    const isAsyncClean = codegenContext.pythonAsyncFnNames.has(rawName);
+    if (isShared && !codegenContext.compilingSharedModule) {
+      const modName = codegenContext.pythonSharedModuleName || 'shared';
+      codegenContext.usedSharedModule = true;
+      if (codegenContext.debugPass) {
+        const callArgs = argsStr
+          ? `${JSON.stringify(modName)}, ${JSON.stringify(fnIdent)}, ${argsStr}`
+          : `${JSON.stringify(modName)}, ${JSON.stringify(fnIdent)}`;
+        return asExpr
+          ? `(await _poly_call_mod(${callArgs}))`
+          : `await _poly_call_mod(${callArgs})`;
       }
-      return out;
-    };
-  }
+      const expr = `${modName}.${fnIdent}(${argsStr})`;
+      if (isAsyncClean) {
+        return asExpr ? `(await ${expr})` : `await ${expr}`;
+      }
+      return expr;
+    }
 
-  if (origCallReturn) {
-    pythonGenerator.forBlock['procedures_callreturn'] = (block, generator) => {
-      const out = origCallReturn(block, generator);
-      if (codegenContext.debugPass && Array.isArray(out)) {
-        return [`(await ${out[0]})`, Order.ATOMIC];
-      }
-      return out;
+    // Local call (or shared function calling another shared function inside `shared.py`)
+    const expr = `${fnIdent}(${argsStr})`;
+    if (codegenContext.debugPass || isAsyncClean) {
+      return asExpr ? `(await ${expr})` : `await ${expr}`;
+    }
+    return expr;
+  };
+
+  pythonGenerator.forBlock['procedures_callnoreturn'] = (block, generator) => {
+    const call = block as Blockly.Block & {
+      getProcedureCall?: () => string;
+      arguments_?: string[];
     };
-  }
+    const rawName = call.getProcedureCall?.()?.trim() ?? '';
+    const sharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
+    const isShared = Boolean(rawName && sharedFnSet.has(rawName));
+    const fnIdent = generator.getProcedureName(rawName);
+    const args: string[] = [];
+    for (let i = 0; i < (call.arguments_?.length ?? 0); i++) {
+      args.push(generator.valueToCode(block, `ARG${i}`, Order.NONE) || 'None');
+    }
+    return `${formatPyProcCall(rawName, fnIdent, args.join(', '), isShared, false)}\n`;
+  };
+
+  pythonGenerator.forBlock['procedures_callreturn'] = (block, generator) => {
+    const call = block as Blockly.Block & {
+      getProcedureCall?: () => string;
+      arguments_?: string[];
+    };
+    const rawName = call.getProcedureCall?.()?.trim() ?? '';
+    const sharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
+    const isShared = Boolean(rawName && sharedFnSet.has(rawName));
+    const fnIdent = generator.getProcedureName(rawName);
+    const args: string[] = [];
+    for (let i = 0; i < (call.arguments_?.length ?? 0); i++) {
+      args.push(generator.valueToCode(block, `ARG${i}`, Order.NONE) || 'None');
+    }
+    const out = formatPyProcCall(rawName, fnIdent, args.join(', '), isShared, true);
+    const needsAtomic =
+      codegenContext.debugPass || codegenContext.pythonAsyncFnNames.has(rawName);
+    return [out, needsAtomic ? Order.ATOMIC : Order.FUNCTION_CALL];
+  };
 
   const emitPySharedFnCall = (
     block: Blockly.Block,
@@ -377,32 +458,12 @@ function registerPythonBlockGenerators(): void {
       block as Blockly.Block & {
         sharedFnMeta_?: { scriptName: string; fnName: string; params: string[] };
       }
-    ).sharedFnMeta_ ?? { scriptName: 'utils', fnName: 'my_func', params: [] };
-    const curScriptName = getCurrentPyScriptName();
+    ).sharedFnMeta_ ?? { scriptName: 'shared', fnName: 'my_func', params: [] };
     const fnIdent = generator.getProcedureName(meta.fnName);
     const args = meta.params.map(
       (_p, idx) => generator.valueToCode(block, `ARG${idx}`, Order.NONE) || 'None',
     );
-    const argsStr = args.join(', ');
-    if (!meta.scriptName || meta.scriptName === curScriptName) {
-      if (codegenContext.debugPass) {
-        return asExpr
-          ? `(await ${fnIdent}(${argsStr}))`
-          : `await ${fnIdent}(${argsStr})`;
-      }
-      return `${fnIdent}(${argsStr})`;
-    }
-    pySharedFnRequiredScripts.add(meta.scriptName);
-    const pyMod = sanitizeLocalIdent(meta.scriptName);
-    if (codegenContext.debugPass) {
-      const callArgs = argsStr
-        ? `${JSON.stringify(pyMod)}, ${JSON.stringify(fnIdent)}, ${argsStr}`
-        : `${JSON.stringify(pyMod)}, ${JSON.stringify(fnIdent)}`;
-      return asExpr
-        ? `(await _poly_call_mod(${callArgs}))`
-        : `await _poly_call_mod(${callArgs})`;
-    }
-    return `${pyMod}.${fnIdent}(${argsStr})`;
+    return formatPyProcCall(meta.fnName, fnIdent, args.join(', '), true, asExpr);
   };
 
   pythonGenerator.forBlock['poly_call_shared_noreturn'] = (block, generator) => {
@@ -410,18 +471,24 @@ function registerPythonBlockGenerators(): void {
   };
 
   pythonGenerator.forBlock['poly_call_shared_return'] = (block, generator) => {
+    const meta = (
+      block as Blockly.Block & { sharedFnMeta_?: { fnName: string } }
+    ).sharedFnMeta_;
+    const needsAtomic =
+      codegenContext.debugPass ||
+      Boolean(meta?.fnName && codegenContext.pythonAsyncFnNames.has(meta.fnName));
     return [
       emitPySharedFnCall(block, generator, true),
-      codegenContext.debugPass ? Order.ATOMIC : Order.FUNCTION_CALL,
+      needsAtomic ? Order.ATOMIC : Order.FUNCTION_CALL,
     ];
   };
 
   pythonGeneratorsRegistered = true;
 }
 
+/** Unified single-track Python coroutine & event-loop scheduler driver (matches C single-thread host model). */
 function buildPythonEventLoopDriver(keepAliveExternal: boolean): string {
   return `
-_POLY_EVENT_MODE = True
 _has_start = 'on_start' in globals() and callable(on_start)
 _has_run = 'on_run' in globals() and callable(on_run)
 _has_timer = 'on_timer' in globals() and callable(on_timer)
@@ -435,7 +502,9 @@ async def _poly_start_runner():
       return
     _POLY_IN_START = True
     _POLY_SLICE_START = _poly.now_ms()
-    await on_start()
+    _res = on_start()
+    if hasattr(_res, 'send'):
+      await _res
   except _PolyStopStart:
     pass
   except Exception as _e:
@@ -468,43 +537,45 @@ def _poly_refresh_handlers():
   )
 
 _start_task = asyncio.create_task(_poly_start_runner()) if _has_start else None
-if _poly.init_scheduler(_has_start, _has_run, _has_timer, _has_ext):
-  while True:
-    _ev = await _poly.next_event()
-    if _ev == 'start_resume':
-      await _poly.resume_start_slice()
-      if _POLY_START_ERR is not None:
-        raise _POLY_START_ERR
-      _poly_refresh_handlers()
-    elif _ev == 'run':
-      if 'on_run' in globals() and callable(on_run):
-        await _poly_call_cb('on_run', on_run)
-      _poly_refresh_handlers()
-    elif isinstance(_ev, str) and _ev.startswith('timer:'):
-      if 'on_timer' in globals() and callable(on_timer):
-        await _poly_call_cb('on_timer', on_timer, int(_ev[6:]))
-      _poly_refresh_handlers()
-    elif isinstance(_ev, str) and _ev.startswith('button:'):
-      _parts = _ev.split(':')
-      if 'on_button' in globals() and callable(on_button) and len(_parts) == 3:
-        await _poly_call_cb('on_button', on_button, _parts[1], _parts[2] == '1')
-      _poly_refresh_handlers()
-    elif isinstance(_ev, str) and _ev.startswith('event:'):
-      _epayload = json.loads(_ev[6:])
-      _ename = _epayload[0]
-      _eargs = _epayload[1] if len(_epayload) > 1 else []
-      _efn = globals().get(_ename)
-      if callable(_efn):
-        await _poly_call_cb(_ename, _efn, *_eargs)
-      _poly_refresh_handlers()
-    else:
-      break
-if _start_task is not None and not _start_task.done():
-  _poly.co_done()
-  try:
-    _start_task.cancel()
-  except Exception:
-    pass
+try:
+  if _poly.init_scheduler(_has_start, _has_run, _has_timer, _has_ext):
+    while True:
+      _ev = await _poly.next_event()
+      if _ev == 'start_resume':
+        await _poly.resume_start_slice()
+        if _POLY_START_ERR is not None:
+          raise _POLY_START_ERR
+        _poly_refresh_handlers()
+      elif _ev == 'run':
+        if 'on_run' in globals() and callable(on_run):
+          await _poly_call_cb('on_run', on_run)
+        _poly_refresh_handlers()
+      elif isinstance(_ev, str) and _ev.startswith('timer:'):
+        if 'on_timer' in globals() and callable(on_timer):
+          await _poly_call_cb('on_timer', on_timer, int(_ev[6:]))
+        _poly_refresh_handlers()
+      elif isinstance(_ev, str) and _ev.startswith('button:'):
+        _parts = _ev.split(':')
+        if 'on_button' in globals() and callable(on_button) and len(_parts) == 3:
+          await _poly_call_cb('on_button', on_button, _parts[1], _parts[2] == '1')
+        _poly_refresh_handlers()
+      elif isinstance(_ev, str) and _ev.startswith('event:'):
+        _epayload = json.loads(_ev[6:])
+        _ename = _epayload[0]
+        _eargs = _epayload[1] if len(_epayload) > 1 else []
+        _efn = globals().get(_ename)
+        if callable(_efn):
+          await _poly_call_cb(_ename, _efn, *_eargs)
+        _poly_refresh_handlers()
+      else:
+        break
+finally:
+  if _start_task is not None:
+    _poly.co_done()
+    try:
+      await _start_task
+    except Exception:
+      pass
 if 'on_stop' in globals() and callable(on_stop):
   await _poly_call_cb('on_stop', on_stop)
 `;
@@ -518,7 +589,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
   readonly fileName = 'main.py';
   readonly accentColor = '#f59e0b';
   readonly description =
-    '标准 Python 3 脚本生成器，支持干净导出（含顶层零闭包事件回调 ABI）与沙箱异步事件调试。';
+    '标准 Python 3 脚本生成器，支持 Style A1 只读 shared 模块、单线程 async 协程 ABI 与伴生脚本断点调试。';
 
   generate(workspace: Blockly.Workspace): GeneratedCodeResult {
     registerPythonBlockGenerators();
@@ -532,45 +603,54 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
     pythonGenerator.STATEMENT_PREFIX = `${SENTINEL_START_PREFIX}%1__\n`;
     pythonGenerator.STATEMENT_SUFFIX = `${SENTINEL_END_PREFIX}%1__\n`;
 
-    let rawClean = '';
-    const varEntries: Array<[string, string]> = [];
-    const varIdToIdent = new Map<string, string>();
-    const sharedInfo = resolveHandleSharedPythonVars(
-      getActiveHandleScripts(),
-      workspace,
-    );
+    const handleScripts = getActiveHandleScripts();
+    const sharedInfo = resolveHandleSharedInfo(handleScripts);
     const sharedAttrByName = new Map(
       sharedInfo.entries.map((e) => [e.name, e.attr]),
     );
+    const sharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
+    const externalAsyncSharedFns = new Set<string>();
+    for (const s of handleScripts) {
+      for (const fn of s.declaredFunctions ?? []) {
+        if (fn.usesSleep) externalAsyncSharedFns.add(fn.name);
+      }
+    }
+    const asyncFnNames = computeAsyncFunctionNames(
+      workspace,
+      externalAsyncSharedFns,
+    );
+
+    let rawClean = '';
+    let usedSharedClean = false;
+    const varEntries: Array<[string, string]> = [];
+    const varIdToIdent = new Map<string, string>();
     const sharedVarIdToAttr = new Map<string, string>();
     const sharedVarIdents = new Set<string>();
     const sharedSnapEntries: Array<[string, string]> = [];
     const nonSharedVarIdents: string[] = [];
     const usedVarIdents = new Set<string>();
 
-    const manualRequires = collectManualPyRequireScripts(workspace);
+    const isInsideSharedFunction = (blk: Blockly.Block): boolean => {
+      const root = blk.getRootBlock();
+      if (
+        root.type === 'procedures_defnoreturn' ||
+        root.type === 'procedures_defreturn'
+      ) {
+        return sharedFnSet.has(String(root.getFieldValue('NAME') || '').trim());
+      }
+      return false;
+    };
+
     try {
-      resetCodegenPassContext({
-        debugPass: false,
-        eventDrivenMode: eventDriven,
-      });
-      pySharedFnRequiredScripts = new Set();
+      resetCodegenPassContext({ debugPass: false });
       pythonGenerator.init(workspace);
       const usedVarIds = new Set<string>();
       for (const blk of workspace.getAllBlocks(false)) {
         if (blk.isShadow() || !blk.isEnabled()) continue;
-        for (const fName of ['VAR', 'LIST']) {
-          if (!blk.getField(fName)) continue;
-          const vId = blk.getFieldValue(fName);
+        if (isInsideSharedFunction(blk)) continue;
+        if (blk.getField('VAR')) {
+          const vId = blk.getFieldValue('VAR');
           if (vId) usedVarIds.add(String(vId));
-        }
-        for (const inp of blk.inputList) {
-          for (const field of inp.fieldRow) {
-            if (field instanceof Blockly.FieldVariable) {
-              const vId = field.getValue();
-              if (vId) usedVarIds.add(String(vId));
-            }
-          }
         }
       }
       for (const v of workspace.getVariableMap().getAllVariables()) {
@@ -589,19 +669,19 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
           nonSharedVarIdents.push(ident);
         }
       }
-      const activeSharedModName =
-        sharedVarIdToAttr.size > 0 ? sharedInfo.moduleName : '';
       resetCodegenPassContext({
         debugPass: false,
-        eventDrivenMode: eventDriven,
         pythonGlobalVarIdents: nonSharedVarIdents,
-        pythonSharedModuleName: activeSharedModName,
+        pythonSharedModuleName: sharedInfo.moduleName,
         pythonSharedVarIdToAttr: sharedVarIdToAttr,
         pythonSharedVarIdents: sharedVarIdents,
         pythonUsedVarIdents: usedVarIdents,
+        pythonAsyncFnNames: asyncFnNames,
       });
       rawClean = pythonGenerator.workspaceToCode(workspace);
+      usedSharedClean = codegenContext.usedSharedModule;
     } finally {
+      resetCodegenPassContext({ debugPass: false });
       pythonGenerator.STATEMENT_PREFIX = prevPrefix;
       pythonGenerator.STATEMENT_SUFFIX = prevSuffix;
     }
@@ -612,17 +692,17 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
     );
 
     const cleanRouter = buildEntryDispatchRouters(workspace, 'python', false);
-    const cleanAutoImports = [...cleanRouter.autoImports];
-    for (const sName of pySharedFnRequiredScripts) {
-      if (manualRequires.has(sName)) continue;
-      const imp = `import ${sanitizeLocalIdent(sName)}`;
-      if (!cleanAutoImports.includes(imp)) cleanAutoImports.push(imp);
+    const cleanPrependLines: string[] = [];
+    if (usedSharedClean && sharedInfo.moduleName) {
+      cleanPrependLines.push(`import ${sharedInfo.moduleName}`);
     }
-    const cleanPrepend = cleanAutoImports
-      .filter((imp) => !rawClean.includes(imp))
-      .join('\n');
+    for (const imp of cleanRouter.autoImports) {
+      if (!rawClean.includes(imp) && !cleanPrependLines.includes(imp)) {
+        cleanPrependLines.push(imp);
+      }
+    }
     const mergedCleanBody = [
-      cleanPrepend,
+      cleanPrependLines.join('\n'),
       rawClean.trim(),
       cleanRouter.routerCode.trim(),
     ]
@@ -630,44 +710,38 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       .join('\n\n');
 
     const header = eventDriven
-      ? `# 由 PolyBlock 自动生成 (Target: Python 3 · Event-Driven ABI)\n`
-      : `# 由 PolyBlock 自动生成 (Target: Python 3)\n`;
+      ? `# 由 PolyBlock 自动生成 (Target: Python 3 · Async Coroutine Event ABI)\n`
+      : `# 由 PolyBlock 自动生成 (Target: Python 3 · Async Coroutine ABI)\n`;
     const combinedClean = mergedCleanBody
       ? `${header}${mergedCleanBody}\n`
       : `${header}# 请从左侧拖入积木开始编排`;
     const { code, sourceMap, lineToBlock } = extractSourceMap(combinedClean);
 
-    // --- Pass 2: Instrumented async sandbox debug code ---
+    // --- Pass 2: Instrumented single-track coroutine sandbox debug code ---
     let debugBody = '';
-    const activeSharedModName =
-      sharedVarIdToAttr.size > 0 ? sharedInfo.moduleName : '';
+    let usedSharedDebug = false;
     try {
       resetCodegenPassContext({
         debugPass: true,
-        eventDrivenMode: eventDriven,
         pythonGlobalVarIdents: nonSharedVarIdents,
-        pythonSharedModuleName: activeSharedModName,
+        pythonSharedModuleName: sharedInfo.moduleName,
         pythonSharedVarIdToAttr: sharedVarIdToAttr,
         pythonSharedVarIdents: sharedVarIdents,
         pythonUsedVarIdents: usedVarIdents,
+        pythonAsyncFnNames: asyncFnNames,
       });
-      pySharedFnRequiredScripts = new Set();
       pythonGenerator.STATEMENT_PREFIX = `await _poly_tick(%1, _poly_snap(locals(), globals()))\n`;
       pythonGenerator.STATEMENT_SUFFIX = null;
       debugBody = pythonGenerator.workspaceToCode(workspace);
+      usedSharedDebug = codegenContext.usedSharedModule;
     } finally {
-      resetCodegenPassContext({
-        debugPass: false,
-        eventDrivenMode: false,
-        pythonGlobalVarIdents: [],
-        pythonSharedModuleName: '',
-        pythonSharedVarIdToAttr: new Map(),
-        pythonSharedVarIdents: new Set(),
-        pythonUsedVarIdents: null,
-      });
+      resetCodegenPassContext({ debugPass: false });
       pythonGenerator.STATEMENT_PREFIX = prevPrefix;
       pythonGenerator.STATEMENT_SUFFIX = prevSuffix;
     }
+
+    const activeSharedModName =
+      usedSharedDebug && sharedInfo.moduleName ? sharedInfo.moduleName : '';
 
     const snapVarEntries: Array<[string, string]> = varEntries.filter(
       ([, ident]) => !sharedVarIdents.has(ident),
@@ -715,7 +789,6 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       `_POLY_VAR_MAP = ${JSON.stringify(snapVarEntries)}`,
       `_POLY_SHARED_MOD = ${JSON.stringify(activeSharedModName)}`,
       `_POLY_SHARED_MAP = ${JSON.stringify(sharedSnapEntries)}`,
-      `_POLY_EVENT_MODE = False`,
       `_POLY_IN_START = False`,
       `_POLY_ACTIVE_CB = ''`,
       `_POLY_SLICE_START = 0.0`,
@@ -724,23 +797,20 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       `  pass`,
       `class _PolyStopCb(Exception):`,
       `  pass`,
-      `async def _poly_sleep_ms(_ms):`,
+      `async def sleep_ms(_ms):`,
       `  global _POLY_IN_START, _POLY_SLICE_START`,
-      `  if _poly.is_in_callback():`,
-      `    raise RuntimeError("禁止在事件回调（on_run / on_timer / on_button / on_stop）中调用等待 (sleep)；实板同步回调不可阻塞，请移至「当程序启动」协程或改用定时器。")`,
-      `  if _POLY_EVENT_MODE and _POLY_IN_START:`,
-      `    _POLY_IN_START = False`,
-      `    _poly.co_sleep(_ms)`,
-      `    _keep = await _poly.wait_start_turn()`,
-      `    if not _keep:`,
-      `      raise _PolyStopStart()`,
-      `    _POLY_IN_START = True`,
-      `    _POLY_SLICE_START = _poly.now_ms()`,
-      `    return`,
-      `  await _poly.sleep(_ms)`,
+      `  if _poly.is_in_callback() or not _POLY_IN_START:`,
+      `    raise RuntimeError("禁止在事件回调（on_run / on_timer / on_button / on_stop）或顶层脚本中调用等待 (sleep_ms)；请移至「当程序启动 (on_start)」协程内。")`,
+      `  _POLY_IN_START = False`,
+      `  _poly.co_sleep(_ms)`,
+      `  _keep = await _poly.wait_start_turn()`,
+      `  if not _keep:`,
+      `    raise _PolyStopStart()`,
+      `  _POLY_IN_START = True`,
+      `  _POLY_SLICE_START = _poly.now_ms()`,
       `async def _poly_tick(_bid, _snap):`,
       `  global _POLY_IN_START, _POLY_SLICE_START`,
-      `  if _POLY_EVENT_MODE and _POLY_IN_START and not _poly.is_in_callback():`,
+      `  if _POLY_IN_START and not _poly.is_in_callback():`,
       `    await _poly.step_start(_bid, _snap)`,
       `    if _poly.is_stop_requested():`,
       `      raise _PolyStopStart()`,
@@ -761,7 +831,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       `      raise RuntimeError("事件回调执行超时（疑似死循环），已按单次回调超时保护中断。")`,
       `async def _poly_yield_check():`,
       `  global _POLY_IN_START, _POLY_SLICE_START`,
-      `  if _POLY_EVENT_MODE and _POLY_IN_START and not _poly.is_in_callback():`,
+      `  if _POLY_IN_START and not _poly.is_in_callback():`,
       `    if _poly.is_stop_requested():`,
       `      raise _PolyStopStart()`,
       `    if (_poly.now_ms() - _POLY_SLICE_START) >= _poly.get_time_slice_ms():`,
@@ -791,7 +861,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
       `_poly_rt_mod = _PolyRtMod()`,
       `_poly_rt_mod._poly_tick = _poly_tick`,
       `_poly_rt_mod._poly_yield_check = _poly_yield_check`,
-      `_poly_rt_mod._poly_sleep_ms = _poly_sleep_ms`,
+      `_poly_rt_mod.sleep_ms = sleep_ms`,
       `_poly_rt_mod._poly_call_mod = _poly_call_mod`,
       `_poly_rt_mod._PolyStopStart = _PolyStopStart`,
       `_poly_rt_mod._PolyStopCb = _PolyStopCb`,
@@ -802,7 +872,7 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
 
     const companionDebugPrelude = [
       `import sys, json`,
-      `from _poly_rt import _poly_tick, _poly_yield_check, _poly_sleep_ms, _poly_call_mod`,
+      `from _poly_rt import _poly_tick, _poly_yield_check, sleep_ms, _poly_call_mod`,
       `_POLY_VAR_MAP = ${JSON.stringify(snapVarEntries)}`,
       `_POLY_SHARED_MOD = ${JSON.stringify(activeSharedModName)}`,
       `_POLY_SHARED_MAP = ${JSON.stringify(sharedSnapEntries)}`,
@@ -811,34 +881,29 @@ export class PythonBackendAdapter implements ScriptBackendAdapter {
     ].join('\n');
 
     const debugRouter = buildEntryDispatchRouters(workspace, 'python', true);
-    const debugAutoImports = [...debugRouter.autoImports];
-    for (const sName of pySharedFnRequiredScripts) {
-      if (manualRequires.has(sName)) continue;
-      const imp = `import ${sanitizeLocalIdent(sName)}`;
-      if (!debugAutoImports.includes(imp)) debugAutoImports.push(imp);
+    const debugPrependLines: string[] = [];
+    if (usedSharedDebug && sharedInfo.moduleName) {
+      debugPrependLines.push(`import ${sharedInfo.moduleName}`);
     }
-    const debugPrepend = debugAutoImports
-      .filter((imp) => !debugBody.includes(imp))
-      .join('\n');
+    for (const imp of debugRouter.autoImports) {
+      if (!debugBody.includes(imp) && !debugPrependLines.includes(imp)) {
+        debugPrependLines.push(imp);
+      }
+    }
     const fullDebugBody = [
-      debugPrepend,
+      debugPrependLines.join('\n'),
       debugBody.trim(),
       debugRouter.routerCode.trim(),
     ]
       .filter(Boolean)
       .join('\n\n');
 
-    // Companion Python modules are loaded via synchronous `import <mod>`, where module-level
-    // (column-0) `await` is a SyntaxError; strip column-0 `_poly_tick` lines while preserving
-    // all indented `await` instrumentation inside `async def` callbacks and functions!
     const companionDebugBody = fullDebugBody
       .split('\n')
       .filter((line) => !/^await _poly_tick\(/.test(line))
       .join('\n');
 
-    const driver = eventDriven
-      ? buildPythonEventLoopDriver(keepAliveExternal)
-      : `if 'on_start' in globals() and callable(on_start):\n  await on_start()\n`;
+    const driver = buildPythonEventLoopDriver(keepAliveExternal);
     const debugCode = fullDebugBody
       ? `${debugPrelude}${fullDebugBody}\n${driver}\n_poly.final_snap(_poly_snap(locals(), globals()))\n`
       : '';

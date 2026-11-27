@@ -13,7 +13,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
 import type { GeneratedCodeResult } from '../core/backends/types';
-import { formatTimerLabel } from '../core/blocks/timerConfigBridge';
+import { formatChannelLabel } from '../core/blocks/timerConfigBridge';
 import {
   CAP_RT_LIFECYCLE,
   CAP_RT_TIMERS,
@@ -685,7 +685,7 @@ export function CodeInspector({
                             <div key={t.id} className="rt-timer-row">
                               <div className="rt-timer-head">
                                 <span className="rt-timer-label">
-                                  {formatTimerLabel(t.id, hdlTimerCfg)}
+                                  {formatChannelLabel(t.id, hdlTimerCfg, 'T')}
                                 </span>
                                 <span className="rt-timer-meta">
                                   {t.elapsedMs}/{t.periodMs}ms · {repText}
