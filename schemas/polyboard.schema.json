@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://loogg.github.io/polyblock/schemas/polyboard.schema.json",
+  "title": "PolyBlock 目标板型规格规范 (.polyboard.json)",
+  "description": "PolyBlock Layer 1 目标运行环境与板型能力规格声明协议：定义默认脚本语言、最大隔离句柄数、每句柄默认通道池规模与默认启用的扩展包/组件能力清单。",
+  "type": "object",
+  "required": ["format", "version", "id", "name", "capabilities"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "可选 JSON Schema 路径（指向 schemas/polyboard.schema.json 以启用 VS Code 悬浮说明与自动补全）。"
+    },
+    "format": {
+      "const": "polyblock-board",
+      "description": "固定格式标识：polyblock-board。"
+    },
+    "version": {
+      "const": 1,
+      "description": "协议版本号，当前固定为 1。"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_-]{2,48}$",
+      "description": "板型规格唯一 ID（2~48 位字母、数字、横线或下划线；不可与内置板型冲突）。"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "板型展示名称。"
+    },
+    "description": {
+      "type": "string",
+      "description": "板型规格说明（显示在项目配置与扩展页板型卡片上）。"
+    },
+    "defaultLanguage": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,23}$",
+      "default": "lua",
+      "examples": ["lua", "python"],
+      "description": "新建或应用此板型时的默认目标脚本语言 ID（如 lua、python 及未来扩展语言；未识别时回退至默认语言）。"
+    },
+    "maxHandles": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16,
+      "default": 8,
+      "description": "此目标板最多支持的隔离运行句柄数（1~16）。"
+    },
+    "defaultChannelCounts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 64
+      },
+      "description": "可选按通道池 configKey 覆写的默认通道数量（如 { \"rt.timers\": 16 }）。"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "默认启用的能力 ID 列表：可写整包 ID（如 \"rt\"、\"virtual-board\"）或细粒度组件 ID（如 \"rt.lifecycle\"、\"rt.timers\"、\"rt.tick\"）。"
+    },
+    "builtin": {
+      "type": "boolean",
+      "description": "内部保留字段（用户导入板型自动置为 false）。"
+    }
+  }
+}

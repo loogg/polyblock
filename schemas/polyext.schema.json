@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://loogg.github.io/polyblock/schemas/polyext.schema.json",
   "title": "PolyBlock 扩展积木包规范 (.polyext.json)",
-  "description": "PolyBlock 单轨声明式扩展包协议：一模块一扩展包，所有积木与侧边栏排布统一声明在 sections[] 中。",
+  "description": "PolyBlock 单轨声明式多语言扩展包协议：一模块一扩展包，所有积木、侧边栏排布、句柄资源配置与运行时监控声明统一写在 sections[] 中，多语言字段按目标语言 ID 映射。",
   "type": "object",
   "required": ["format", "version", "id", "name", "sections"],
   "additionalProperties": false,
@@ -37,7 +37,7 @@
     "iconLabel": {
       "type": "string",
       "maxLength": 6,
-      "description": "扩展卡片彩色图标上的短缩写（1~4 字，如 MCU / 硬件；省略时默认取首个 section 的 label）。"
+      "description": "扩展卡片彩色图标上的短缩写（建议 1~4 字，上限 6 字，如 MCU / 硬件；省略时默认取首个 section 的 label）。"
     },
     "color": {
       "type": "string",
@@ -61,13 +61,13 @@
     },
     "imports": {
       "$ref": "#/definitions/ExtensionPackImports",
-      "description": "包级默认顶部导入语句（普通/表达式积木自动继承，并按内容全局去重；纯语法库不填）。"
+      "description": "包级默认顶部导入语句（按目标语言 ID 映射；普通/表达式积木自动继承，并按内容全局去重；纯语法库不填）。"
     },
     "sections": {
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/definitions/ExtensionSectionSpec" },
-      "description": "组件列表（至少 1 项）：每项决定侧边栏归属、显隐、排序、可选句柄资源配置，并直接内嵌属于该组件的积木。多组件包自动支持按组件细粒度裁剪。"
+      "description": "组件列表（至少 1 项）：每项决定侧边栏归属、显隐、排序、可选句柄资源配置、运行时监控卡片及内嵌积木。多组件包自动支持按组件细粒度裁剪。"
     },
     "simWidgets": {
       "type": "array",
@@ -85,9 +85,14 @@
     }
   },
   "definitions": {
+    "LanguageIdKey": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,23}$",
+      "description": "目标脚本语言 ID（如 lua、python，以及未来扩展的 c、js 等）。"
+    },
     "ExtensionPackImports": {
       "type": "object",
-      "additionalProperties": false,
+      "propertyNames": { "$ref": "#/definitions/LanguageIdKey" },
       "properties": {
         "lua": {
           "type": "array",
@@ -99,7 +104,13 @@
           "items": { "type": "string" },
           "description": "Python 3 文件顶层导入语句（如 [\"import mcu\"]）。"
         }
-      }
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "其他目标语言 ID 的文件顶层导入语句列表。"
+      },
+      "description": "按目标语言 ID 映射的顶层导入语句数组（不限制仅 lua/python，支持未来任意语言后端）。"
     },
     "ExtensionModuleSource": {
       "type": "object",
@@ -109,7 +120,7 @@
         "moduleName": {
           "type": "string",
           "minLength": 1,
-          "description": "供 require(\"<moduleName>\") / import <moduleName> 加载的模块名（支持点号路径如 utils.crc16，导出时自动映射为 utils/crc16.lua）。"
+          "description": "供 require(\"<moduleName>\") / import <moduleName> 加载的模块名（支持点号路径如 utils.crc16，导出时自动映射为 utils/crc16.<ext>）。"
         },
         "role": {
           "type": "string",
@@ -119,8 +130,13 @@
         "sources": {
           "type": "object",
           "minProperties": 1,
+          "propertyNames": { "$ref": "#/definitions/LanguageIdKey" },
+          "properties": {
+            "lua": { "type": "string", "description": "Lua 5.4 模块源码。" },
+            "python": { "type": "string", "description": "Python 3 模块源码。" }
+          },
           "additionalProperties": { "type": "string" },
-          "description": "按目标语言 ID 映射的模块源码（如 { \"lua\": \"...\", \"python\": \"...\" }）。"
+          "description": "按目标语言 ID 映射的模块源码（至少提供一种语言，如 { \"lua\": \"...\", \"python\": \"...\" }，支持任意未来语言 ID）。"
         }
       }
     },
@@ -135,6 +151,7 @@
         },
         "configKey": {
           "type": "string",
+          "minLength": 1,
           "description": "可选存储键覆盖；省略时自动派生为 <pack.id>.<section.id>（单组件包为 <pack.id>）。"
         },
         "label": {
@@ -166,7 +183,7 @@
         "id": {
           "type": "string",
           "pattern": "^[a-zA-Z0-9_-]{1,32}$",
-          "description": "组件在包内的唯一 ID（如 lifecycle / timers / main）。"
+          "description": "组件在包内的唯一 ID（如 lifecycle / timers / tick / main）。"
         },
         "label": {
           "type": "string",
@@ -199,19 +216,24 @@
             "functions"
           ],
           "default": "own",
-          "description": "侧边栏落位：'own' 新建独立分类（默认），或填任意 10 个核心分类 ID 将积木并入该核心分类。"
+          "description": "侧边栏落位：'own' 新建独立分类（默认），或填任意 10 个 Layer 0 核心分类 ID 将积木并入该核心分类。"
         },
         "toolboxOrder": {
           "type": "integer",
           "minimum": 0,
           "maximum": 9999,
           "default": 100,
-          "description": "独立分类时的排序序号（核心分类占 10~90：事件=10..函数=90；扩展默认 100+）。"
+          "description": "独立分类时的排序序号（核心分类占 10~90：事件=10..字典=85、函数=90；扩展默认 100+）。"
         },
         "color": {
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$",
           "description": "可选组件独立主题色（省略时继承 pack.color）。"
+        },
+        "runtimeMonitor": {
+          "type": "string",
+          "enum": ["scheduler", "timers"],
+          "description": "可选声明式运行时监控卡片类型：'scheduler' 表示启用周期调度器遥测监控（如 on_run），'timers' 表示启用多路定时器进度监控卡片。"
         },
         "handleConfigs": {
           "type": "array",
@@ -233,7 +255,7 @@
       "properties": {
         "template": {
           "type": "string",
-          "description": "代码模板，支持语言中立修饰器 {{ARG}}、{{ARG:json}}、{{ARG:int}}、{{ARG:bool}}、{{ARG:edge:<param>}}、{{ARG:channel_comment}}。"
+          "description": "语言中立代码模板，支持修饰器：{{ARG}}、{{ARG:json}}、{{ARG:int}}、{{ARG:min10_int}}、{{ARG:bool}}、{{ARG:edge:<param>}}、{{ARG:edge_zh}}、{{ARG:channel_comment}}、{{ARG:channel_label}}。"
         },
         "imports": {
           "type": "array",
@@ -260,26 +282,39 @@
         "mode": {
           "type": "string",
           "enum": ["singleton", "dispatch"],
-          "description": "singleton：全句柄唯一顶层回调；dispatch：将多个帽块聚合成一个 if/elseif 路由函数。"
+          "description": "singleton：全句柄唯一顶层回调（仅主入口可用）；dispatch：将全句柄多个帽块聚合成主入口中的单一路由分发函数。"
         },
-        "imports": { "$ref": "#/definitions/ExtensionPackImports" },
+        "imports": {
+          "$ref": "#/definitions/ExtensionPackImports",
+          "description": "可选帽块出现时自动提升的顶层导入（帽块默认不自动继承包级 imports）。"
+        },
         "condition": {
           "type": "object",
+          "propertyNames": { "$ref": "#/definitions/LanguageIdKey" },
+          "properties": {
+            "lua": { "type": "string" },
+            "python": { "type": "string" }
+          },
           "additionalProperties": { "type": "string" },
-          "description": "dispatch 模式下按语言 ID 映射的分支条件模板（如 { \"lua\": \"...\", \"python\": \"...\" }）。"
+          "description": "dispatch 模式下按目标语言 ID 映射的分支条件模板（如 { \"lua\": \"id == {{TIMER_ID:int}}\", \"python\": \"id == {{TIMER_ID:int}}\" }）。"
         },
         "branchComment": {
           "type": "object",
+          "propertyNames": { "$ref": "#/definitions/LanguageIdKey" },
+          "properties": {
+            "lua": { "type": "string" },
+            "python": { "type": "string" }
+          },
           "additionalProperties": { "type": "string" },
-          "description": "dispatch 模式下按语言 ID 映射的分支注释模板（如 { \"lua\": \"{{ID:channel_comment}}\", \"python\": \"{{ID:channel_comment}}\" }）。"
+          "description": "dispatch 模式下按目标语言 ID 映射的分支尾注模板（如 { \"lua\": \"{{ID:channel_comment}}\", \"python\": \"{{ID:channel_comment}}\" }）。"
         },
         "extractBranchFnPrefix": {
           "type": "string",
-          "description": "可选方案 A 提取前缀（如 on_timer_），将各分支生成独立全局函数并由路由函数调用。"
+          "description": "可选独立分支函数提取前缀（如 on_timer_），将各分支生成独立全局函数并由主入口路由函数调用。"
         },
-        "duplicateKeyTemplate": { "type": "string", "description": "用于静态检测重复分支的唯一键模板。" },
-        "scopeLabelTemplate": { "type": "string" },
-        "scopeShortTemplate": { "type": "string" },
+        "duplicateKeyTemplate": { "type": "string", "description": "用于静态检测重复分支的唯一键模板（如 \"{{KEY}}:{{EDGE}}\"）。" },
+        "scopeLabelTemplate": { "type": "string", "description": "变量作用域树中的完整显示标题模板（如 \"on_button · 按键 {{KEY}} {{EDGE:edge_zh}}\"）。" },
+        "scopeShortTemplate": { "type": "string", "description": "变量作用域树中的简短徽标模板（如 \"T{{TIMER_ID:int}}\"）。" },
         "scopeCategory": {
           "type": "string",
           "enum": ["lifecycle", "event", "function"],
@@ -288,7 +323,7 @@
         "keepsAlive": {
           "type": "boolean",
           "default": true,
-          "description": "声明该回调是否使沙箱事件循环保持常驻等待外部事件（默认 true）。"
+          "description": "声明该回调是否使沙箱事件循环保持常驻等待外部事件（默认 true；on_run/on_stop/on_timer 由各自调度器控制，设为 false）。"
         }
       }
     },
@@ -301,13 +336,13 @@
         "kind": {
           "type": "string",
           "enum": ["statement", "value", "hat"],
-          "description": "statement：语句动作块（含变量赋值）；value：带返回值表达式块；hat：顶层事件回调帽块。"
+          "description": "statement：语句动作块；value：带返回值表达式块；hat：顶层事件回调帽块。"
         },
         "message0": { "type": "string", "minLength": 1, "description": "积木展示文案，用 %1 / %2 对应 args0 各项。" },
         "args0": {
           "type": "array",
           "items": { "type": "object" },
-          "description": "Blockly 参数定义（input_value / field_number / field_input / field_dropdown / field_checkbox / field_variable / field_channel_id；其中 field_channel_id 自动绑定本 section 的 handleConfigs 通道池）。"
+          "description": "Blockly 参数定义（input_value / field_number / field_input / field_dropdown / field_checkbox / field_variable / field_channel_id；容器表达式请遵循纯值槽原则使用 input_value；field_channel_id 自动绑定本 section 的 handleConfigs 通道池）。"
         },
         "inputsInline": { "type": "boolean", "default": true },
         "outputType": {
@@ -316,24 +351,31 @@
         },
         "tooltip": { "type": "string", "description": "鼠标悬浮积木时的提示说明。" },
         "keywords": { "type": "string", "description": "用于左侧搜索框检索的空格分隔关键词。" },
-        "blockStyle": { "type": "string" },
-        "fields": { "type": "object" },
+        "blockStyle": { "type": "string", "description": "可选 Blockly 主题样式覆写（如 event_blocks / timer_hat_blocks / timer_blocks）。" },
+        "fields": { "type": "object", "description": "工具箱拖出时的默认字段初值。" },
         "shadows": {
           "type": "object",
           "additionalProperties": {
             "type": "object",
             "required": ["type", "value"],
+            "additionalProperties": false,
             "properties": {
               "type": { "enum": ["math_number", "text"] },
               "value": { "type": ["number", "string"] }
             }
-          }
+          },
+          "description": "input_value 插槽的默认阴影块（支持 math_number 或 text）。"
         },
         "code": {
           "type": "object",
           "minProperties": 1,
+          "propertyNames": { "$ref": "#/definitions/LanguageIdKey" },
+          "properties": {
+            "lua": { "$ref": "#/definitions/ExtensionCodeTemplate" },
+            "python": { "$ref": "#/definitions/ExtensionCodeTemplate" }
+          },
           "additionalProperties": { "$ref": "#/definitions/ExtensionCodeTemplate" },
-          "description": "按目标语言 ID 映射的代码模板对象（如 { \"lua\": { \"template\": \"...\" }, \"python\": { \"template\": \"...\" } }；statement/value 积木至少提供一种语言）。"
+          "description": "按目标语言 ID 映射的代码模板对象（statement/value 积木必填且至少提供一种语言，支持任意未来语言 ID）。"
         },
         "hat": { "$ref": "#/definitions/ExtensionHatSpec" },
         "simWidgetKeys": {
@@ -346,7 +388,23 @@
           "default": true,
           "description": "默认 true；仅真机可用、浏览器沙箱无实现的积木标 false。"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["kind"],
+            "properties": { "kind": { "const": "hat" } }
+          },
+          "then": { "required": ["hat"] }
+        },
+        {
+          "if": {
+            "required": ["kind"],
+            "properties": { "kind": { "enum": ["statement", "value"] } }
+          },
+          "then": { "required": ["code"] }
+        }
+      ]
     },
     "SimWidgetSpec": {
       "type": "object",
@@ -358,13 +416,17 @@
           "enum": ["led", "tricolor", "rgb", "bar", "screen", "slider", "toggle", "button"],
           "description": "模拟控件类型（所有控件关闭态均自动跟随明暗主题，无需配置熄灭色）。"
         },
-        "key": { "type": "string", "minLength": 1, "description": "包内唯一状态键（加 global: 前缀可跨包共享）。" },
+        "key": { "type": "string", "minLength": 1, "description": "包内唯一状态键（自动归入 <packId>::<key> 命名空间；加 global: 前缀可跨包共享）。" },
         "label": { "type": "string", "minLength": 1, "description": "控件中文标签名。" },
-        "default": { "description": "初始默认值与复位值。" },
+        "default": {
+          "type": ["boolean", "number", "string", "array"],
+          "items": { "type": "string" },
+          "description": "初始默认值与复位值（布尔 / 数值 / 字符串 / 多行文本数组）。"
+        },
         "color": { "type": "string", "description": "可选亮态/强调色（如 #22c55e）。" },
         "min": { "type": "number" },
         "max": { "type": "number" },
-        "step": { "type": "number" },
+        "step": { "type": "number", "exclusiveMinimum": 0 },
         "unit": { "type": "string" },
         "maxLines": { "type": "integer", "minimum": 1, "maximum": 12 },
         "hint": { "type": "string" },
@@ -374,10 +436,19 @@
         "emitEvent": {
           "type": "object",
           "required": ["eventName"],
+          "additionalProperties": false,
           "properties": {
             "eventName": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
-            "args": { "type": "array", "items": { "type": ["string", "number", "boolean"] } },
-            "trigger": { "enum": ["change", "rising"] }
+            "args": {
+              "type": "array",
+              "items": { "type": ["string", "number", "boolean"] },
+              "description": "传递给顶层回调的实参列表，支持特殊占位符 \"$value\" 与 \"$state:<key>\"。"
+            },
+            "trigger": {
+              "enum": ["change", "rising"],
+              "default": "change",
+              "description": "change：每次按下/释放/切换触发（默认）；rising：仅在变为 true 时触发。"
+            }
           }
         }
       }

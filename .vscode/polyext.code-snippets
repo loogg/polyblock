@@ -40,7 +40,7 @@
       "  \"id\": \"${1:sec_id}\",",
       "  \"label\": \"${2:组件名}\",",
       "  \"visible\": ${3|true,false|},",
-      "  \"categoryTarget\": \"${4|own,event,print,control,variables,math,logic,text,lists,functions|}\",",
+      "  \"categoryTarget\": \"${4|own,event,print,control,variables,math,logic,text,lists,dicts,functions|}\",",
       "  \"toolboxOrder\": ${5:100},",
       "  \"blocks\": [",
       "    $0",
@@ -149,6 +149,27 @@
       "  \"sources\": {",
       "    \"lua\": \"${3:local M = {}\\nreturn M\\n}\"",
       "  }",
+      "}$0"
+    ]
+  },
+  "PolyBlock: Target Board Profile Skeleton": {
+    "scope": "json,jsonc",
+    "prefix": "poly-board",
+    "description": "插入 PolyBlock 目标板型规格 (.polyboard.json) 骨架",
+    "body": [
+      "{",
+      "  \"\\$schema\": \"./schemas/polyboard.schema.json\",",
+      "  \"format\": \"polyblock-board\",",
+      "  \"version\": 1,",
+      "  \"id\": \"${1:my-board}\",",
+      "  \"name\": \"${2:自定义目标板型}\",",
+      "  \"description\": \"${3:目标硬件运行环境与默认能力清单}\",",
+      "  \"defaultLanguage\": \"${4|lua,python|}\",",
+      "  \"maxHandles\": ${5:8},",
+      "  \"defaultChannelCounts\": {",
+      "    \"rt.timers\": ${6:8}",
+      "  },",
+      "  \"capabilities\": [\"${7:rt}\"]",
       "}$0"
     ]
   }
