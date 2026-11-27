@@ -58,6 +58,7 @@ export function resolvePackSections(
       categoryTarget: sec.categoryTarget ?? 'own',
       toolboxOrder: sec.toolboxOrder ?? DEFAULT_PACK_TOOLBOX_ORDER,
       color: sec.color ?? pack.color,
+      ...(sec.runtimeMonitor ? { runtimeMonitor: sec.runtimeMonitor } : {}),
       handleConfigs: resolvedConfigs,
       channelPool: resolvedConfigs[0],
       blocks: sec.blocks,

@@ -10,6 +10,7 @@ import type {
   ExtensionSectionSpec,
   HandleConfigSpec,
   PolyExtensionPack,
+  RuntimeMonitorKind,
   SimWidgetEventTrigger,
   SimWidgetKind,
   SimWidgetSpec,
@@ -367,6 +368,15 @@ function validateSections(raw: unknown): ExtensionSectionSpec[] {
     const blocks = s.blocks.map((b) => validateBlockDef(b, seenBlockTypes));
     const rawOrder = Number(s.toolboxOrder);
     const handleConfigs = validateHandleConfigs(s.handleConfigs);
+    let runtimeMonitor: RuntimeMonitorKind | undefined;
+    if (s.runtimeMonitor !== undefined && s.runtimeMonitor !== null) {
+      if (s.runtimeMonitor !== 'scheduler' && s.runtimeMonitor !== 'timers') {
+        throw new Error(
+          `section "${s.id}" 的 runtimeMonitor 必须为 "scheduler" 或 "timers"`,
+        );
+      }
+      runtimeMonitor = s.runtimeMonitor;
+    }
 
     out.push({
       id: s.id,
@@ -380,6 +390,7 @@ function validateSections(raw: unknown): ExtensionSectionSpec[] {
       ...(typeof s.color === 'string' && s.color.startsWith('#')
         ? { color: s.color }
         : {}),
+      ...(runtimeMonitor ? { runtimeMonitor } : {}),
       ...(handleConfigs ? { handleConfigs } : {}),
       blocks,
     });

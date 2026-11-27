@@ -9,6 +9,7 @@ import type {
   ScriptLanguageId,
 } from '../../types/project';
 import { backendRegistry } from '../backends/registry';
+import { LANGUAGE_DIALECTS } from '../backends/types';
 import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { buildHandleSharedModule } from '../backends/sharedModule';
 import { type CompileContext } from '../blocks/workspaceContextBridge';
@@ -171,8 +172,27 @@ export class MultiHandleRunnerOrchestrator {
       mockInputs,
     } = options;
     const targetHandles = project.handles.filter((h) => h.autoStart);
-    const handlesToRun =
-      targetHandles.length > 0 ? targetHandles : [project.handles[0]];
+    const handlesToRun = (
+      targetHandles.length > 0 ? targetHandles : project.handles.slice(0, 1)
+    ).filter(Boolean);
+
+    if (!runnerManager.findForLanguage(project.language)) {
+      const langLabel =
+        LANGUAGE_DIALECTS[project.language]?.displayName ?? project.language;
+      const errorMessage = `当前目标语言（${langLabel}）未注册浏览器沙箱 Runner（仅支持代码导出），无法启动多句柄模拟运行。`;
+      for (const handle of handlesToRun) {
+        callbacks.onHandleLog(handle, 'error', errorMessage);
+      }
+      callbacks.onStatusChange('ready');
+      return handlesToRun.map((handle) => ({
+        handle,
+        result: {
+          ok: false,
+          durationMs: 0,
+          errorMessage,
+        },
+      }));
+    }
 
     this.running = true;
     callbacks.onStatusChange('running');

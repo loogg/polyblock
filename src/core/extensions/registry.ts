@@ -1,7 +1,10 @@
 import * as Blockly from 'blockly';
 import type { ScriptLanguageId } from '../../types/project';
-import { backendRegistry } from '../backends/registry';
-import { LANGUAGE_DIALECTS, SUPPORTED_LANGUAGE_IDS } from '../backends/types';
+import {
+  LANGUAGE_DIALECTS,
+  SUPPORTED_LANGUAGE_IDS,
+  type ScriptBackendAdapter,
+} from '../backends/types';
 import type { BlockCategorySpec, ToolboxBlockSpec } from '../blocks/catalog';
 import { createChannelIdField } from '../blocks/channelField';
 import {
@@ -191,8 +194,6 @@ export function formatPackPlacementSummary(pack: PolyExtensionPack): string {
  */
 export function getPackSupportedLanguages(pack: PolyExtensionPack): {
   supported: ScriptLanguageId[];
-  lua: boolean;
-  python: boolean;
   label: string;
 } {
   const nonHatBlocks = getAllPackBlocks(pack).filter((b) => b.kind !== 'hat');
@@ -208,8 +209,6 @@ export function getPackSupportedLanguages(pack: PolyExtensionPack): {
       : supported.map((lang) => LANGUAGE_DIALECTS[lang].displayName).join(' / ');
   return {
     supported,
-    lua: supported.includes('lua'),
-    python: supported.includes('python'),
     label,
   };
 }
@@ -319,9 +318,48 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
   return badges;
 }
 
+/** Tracks the last registered Blockly visual definition fingerprint per block type to avoid redundant overwrites. */
+const registeredBlockVisualFingerprints = new Map<string, string>();
+
+function buildBlockVisualFingerprint(
+  b: ExtensionBlockDef,
+  section: ResolvedPackSection,
+  fullTooltip: string,
+  hasChannelField: boolean,
+): string {
+  const pool = section.channelPool;
+  return JSON.stringify({
+    type: b.type,
+    kind: b.kind,
+    message0: b.message0,
+    args0: b.args0 ?? [],
+    inputsInline: b.inputsInline ?? true,
+    outputType: b.outputType ?? null,
+    blockStyle: b.blockStyle ?? null,
+    color: section.color,
+    tooltip: fullTooltip,
+    hasChannelField,
+    ...(hasChannelField
+      ? {
+          pool: pool
+            ? {
+                configKey: pool.configKey,
+                prefix: pool.prefix,
+                label: pool.label,
+                defaultCount: pool.defaultCount,
+                max: pool.max,
+              }
+            : null,
+        }
+      : {}),
+  });
+}
+
 /**
  * Registers a single declarative block (including dynamic `field_channel_id` dropdowns
  * and top-level `hat` event callbacks) into Blockly's visual block registry.
+ * Skips identical re-registrations and cleanly replaces modified definitions without
+ * triggering Blockly's spurious overwrite console warnings.
  */
 function registerSingleBlockInBlockly(
   pack: PolyExtensionPack,
@@ -338,6 +376,22 @@ function registerSingleBlockInBlockly(
   const hasChannelField = (b.args0 ?? []).some(
     (arg) => arg.type === 'field_channel_id',
   );
+
+  const fingerprint = buildBlockVisualFingerprint(
+    b,
+    section,
+    fullTooltip,
+    hasChannelField,
+  );
+  if (
+    Blockly.Blocks[b.type] &&
+    registeredBlockVisualFingerprints.get(b.type) === fingerprint
+  ) {
+    return;
+  }
+  if (Blockly.Blocks[b.type]) {
+    delete Blockly.Blocks[b.type];
+  }
 
   if (!hasChannelField) {
     const jsonDef: Record<string, unknown> = {
@@ -365,6 +419,7 @@ function registerSingleBlockInBlockly(
     }
 
     Blockly.defineBlocksWithJsonArray([jsonDef]);
+    registeredBlockVisualFingerprints.set(b.type, fingerprint);
     return;
   }
 
@@ -455,6 +510,7 @@ function registerSingleBlockInBlockly(
       this.setTooltip(fullTooltip);
     },
   };
+  registeredBlockVisualFingerprints.set(b.type, fingerprint);
 }
 
 function shouldExtractDispatchBranchesForEvent(
@@ -470,34 +526,48 @@ function shouldExtractDispatchBranchesForEvent(
   );
 }
 
+function registerPackIntoBackend(
+  pack: PolyExtensionPack,
+  adapter: ScriptBackendAdapter,
+): void {
+  const sections = resolvePackSections(pack);
+  for (const section of sections) {
+    for (const b of section.blocks) {
+      if (b.kind === 'hat' && b.hat) {
+        const hat = b.hat;
+        adapter.registerExtensionHat({
+          pack,
+          section,
+          block: b,
+          hat,
+          shouldExtractBranches: () =>
+            shouldExtractDispatchBranchesForEvent(hat),
+        });
+      } else {
+        adapter.registerExtensionBlock({ pack, section, block: b });
+      }
+    }
+  }
+}
+
 /**
  * Registers visual Blockly blocks and delegates per-language generator binding
- * dynamically to every registered `ScriptBackendAdapter` (zero language hardcoding!).
+ * dynamically to every attached `ScriptBackendAdapter` (zero language hardcoding, zero circular imports!).
  */
-function registerPackIntoBlocklyAndGenerators(pack: PolyExtensionPack): void {
+function registerPackIntoBlocklyAndGenerators(
+  pack: PolyExtensionPack,
+  adapters: Iterable<ScriptBackendAdapter>,
+): void {
   const sections = resolvePackSections(pack);
-  const adapters = backendRegistry.list();
 
   for (const section of sections) {
     for (const b of section.blocks) {
       registerSingleBlockInBlockly(pack, b, section);
-
-      for (const adapter of adapters) {
-        if (b.kind === 'hat' && b.hat) {
-          const hat = b.hat;
-          adapter.registerExtensionHat({
-            pack,
-            section,
-            block: b,
-            hat,
-            shouldExtractBranches: () =>
-              shouldExtractDispatchBranchesForEvent(hat),
-          });
-        } else {
-          adapter.registerExtensionBlock({ pack, section, block: b });
-        }
-      }
     }
+  }
+
+  for (const adapter of adapters) {
+    registerPackIntoBackend(pack, adapter);
   }
 }
 
@@ -531,7 +601,29 @@ class ExtensionRegistry {
   private readonly packs = new Map<string, PolyExtensionPack>();
   /** Currently active project's embedded local packs (override same-ID global packs without polluting global). */
   private readonly activeLocalPacks = new Map<string, PolyExtensionPack>();
+  /** Attached target script backends bound via `backendRegistry.register(...)` (inverts circular dependency). */
+  private readonly attachedBackends = new Map<ScriptLanguageId, ScriptBackendAdapter>();
   private initialized = false;
+
+  /**
+   * Attaches a `ScriptBackendAdapter` so all currently active packs (and any future packs)
+   * automatically register their declarative blocks and hats into that backend.
+   */
+  attachBackend(adapter: ScriptBackendAdapter): void {
+    this.attachedBackends.set(adapter.id, adapter);
+    if (!this.initialized) {
+      this.ensureInitialized();
+      return;
+    }
+    for (const [id, pack] of this.packs.entries()) {
+      if (!this.activeLocalPacks.has(id)) {
+        registerPackIntoBackend(pack, adapter);
+      }
+    }
+    for (const localPack of this.activeLocalPacks.values()) {
+      registerPackIntoBackend(localPack, adapter);
+    }
+  }
 
   ensureInitialized(): void {
     if (this.initialized) return;
@@ -564,7 +656,7 @@ class ExtensionRegistry {
   register(pack: PolyExtensionPack, persistCustom = true): void {
     this.packs.set(pack.id, pack);
     if (!this.activeLocalPacks.has(pack.id)) {
-      registerPackIntoBlocklyAndGenerators(pack);
+      registerPackIntoBlocklyAndGenerators(pack, this.attachedBackends.values());
     }
     if (persistCustom && !pack.builtin) {
       this.persistCustomPacks();
@@ -578,19 +670,27 @@ class ExtensionRegistry {
   setActiveProjectLocalPacks(localPacks: PolyExtensionPack[] = []): void {
     this.ensureInitialized();
     const prevOverriddenIds = Array.from(this.activeLocalPacks.keys());
+    const nextLocalIds = new Set(localPacks.map((p) => p.id));
     this.activeLocalPacks.clear();
 
     for (const oldId of prevOverriddenIds) {
+      if (nextLocalIds.has(oldId)) continue;
       const globalPack = this.packs.get(oldId);
       if (globalPack) {
-        registerPackIntoBlocklyAndGenerators(globalPack);
+        registerPackIntoBlocklyAndGenerators(
+          globalPack,
+          this.attachedBackends.values(),
+        );
       }
     }
 
     for (const rawPack of localPacks) {
       const normalized: PolyExtensionPack = { ...rawPack, builtin: false };
       this.activeLocalPacks.set(normalized.id, normalized);
-      registerPackIntoBlocklyAndGenerators(normalized);
+      registerPackIntoBlocklyAndGenerators(
+        normalized,
+        this.attachedBackends.values(),
+      );
     }
   }
 
@@ -1032,6 +1132,40 @@ class ExtensionRegistry {
       }
     }
     return out;
+  }
+
+  /**
+   * Declaratively summarizes enabled runtime monitor cards (`scheduler` / `timers`) and the active
+   * timer channel pool `configKey` purely from enabled sections' `runtimeMonitor` metadata.
+   */
+  getRuntimeMonitorSummary(
+    enabledCaps: string[],
+    localExts?: PolyExtensionPack[],
+  ): {
+    hasSchedulerMonitor: boolean;
+    hasTimerMonitor: boolean;
+    timerPoolConfigKey: string | null;
+  } {
+    let hasSchedulerMonitor = false;
+    let hasTimerMonitor = false;
+    let timerPoolConfigKey: string | null = null;
+
+    for (const { section } of this.getEnabledSections(enabledCaps, localExts)) {
+      if (section.runtimeMonitor === 'scheduler') {
+        hasSchedulerMonitor = true;
+      } else if (section.runtimeMonitor === 'timers') {
+        hasTimerMonitor = true;
+        if (!timerPoolConfigKey && section.channelPool?.configKey) {
+          timerPoolConfigKey = section.channelPool.configKey;
+        }
+      }
+    }
+
+    return {
+      hasSchedulerMonitor,
+      hasTimerMonitor,
+      timerPoolConfigKey,
+    };
   }
 
   toCategorySpecs(

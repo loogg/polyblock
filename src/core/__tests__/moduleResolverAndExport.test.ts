@@ -481,8 +481,6 @@ def reset():
     expect(validated.sections[0].blocks[0].code?.python).toBeUndefined();
     expect(getPackSupportedLanguages(validated)).toEqual({
       supported: ['lua'],
-      lua: true,
-      python: false,
       label: '仅 Lua 5.4',
     });
     expect(derivePackBadges(validated).map((b) => b.label)).toContain('仅 Lua');
@@ -659,8 +657,6 @@ def reset():
     });
     expect(getPackSupportedLanguages(luaOnlyPack)).toEqual({
       supported: ['lua'],
-      lua: true,
-      python: false,
       label: '仅 Lua 5.4',
     });
     expect(derivePackBadges(luaOnlyPack).map((b) => b.label)).toContain('仅 Lua');
@@ -801,5 +797,53 @@ def reset():
     };
     const singleSharedBundle = buildSingleHandleTargetBundle(luaProj, singleWithShared);
     expect(singleSharedBundle.entries.map((e) => e.path)).toContain('shared.lua');
+  });
+
+  it('builds language-agnostic dual-language packs from script libs and extracts imports across all registered languages', () => {
+    const pyFile = scanScriptLibraryFile(
+      'checksum.PY',
+      'def calc(buf):\n    return len(buf)\n',
+    );
+    const luaFile = scanScriptLibraryFile(
+      'checksum.LUA',
+      'local M = {}\nfunction M.calc(buf)\n  return #buf\nend\nreturn M\n',
+    );
+    expect(pyFile.moduleName).toBe('checksum');
+    expect(pyFile.language).toBe('python');
+    expect(luaFile.moduleName).toBe('checksum');
+    expect(luaFile.language).toBe('lua');
+
+    const dualPack = buildExtensionPackFromScriptLibs({
+      packId: 'checksum-dual',
+      packName: '双语校验库',
+      iconLabel: '校验',
+      color: '#0ea5e9',
+      toolboxOrder: 135,
+      files: [luaFile, pyFile],
+      functions: luaFile.scannedFunctions,
+    });
+    const validated = validateExtensionPack(dualPack);
+    expect(validated.imports).toEqual({
+      lua: ['local checksum = require("checksum")'],
+      python: ['import checksum'],
+    });
+    expect(validated.sections[0].blocks[0].code).toEqual({
+      lua: { template: 'checksum.calc({{ARG1}})' },
+      python: { template: 'checksum.calc({{ARG1}})' },
+    });
+    expect(getPackSupportedLanguages(validated)).toEqual({
+      supported: ['lua', 'python'],
+      label: 'Lua 5.4 / Python 3',
+    });
+    expect(extractImportedModuleNames(validated)).toEqual(['checksum']);
+    expect(
+      extractImportedModuleNames({
+        ...validated,
+        imports: {
+          lua: ['local foo = require("pkg.foo")'],
+          python: ['from pkg.bar import helper', 'import baz'],
+        },
+      }),
+    ).toEqual(['pkg.foo', 'pkg.bar', 'baz']);
   });
 });

@@ -26,6 +26,7 @@ export interface LanguageDialect {
   shortLabel: string;
   compactLabel: string;
   extension: string;
+  accentGradient: string;
   boolTrue: string;
   boolFalse: string;
   nullLiteral: string;
@@ -47,6 +48,7 @@ export const LANGUAGE_DIALECTS: Record<ScriptLanguageId, LanguageDialect> = {
     shortLabel: 'Lua',
     compactLabel: 'Lua',
     extension: 'lua',
+    accentGradient: 'linear-gradient(135deg, #2563eb, #4f46e5)',
     boolTrue: 'true',
     boolFalse: 'false',
     nullLiteral: 'nil',
@@ -68,6 +70,7 @@ export const LANGUAGE_DIALECTS: Record<ScriptLanguageId, LanguageDialect> = {
     shortLabel: 'Python',
     compactLabel: 'Py',
     extension: 'py',
+    accentGradient: 'linear-gradient(135deg, #0d9488, #10b981)',
     boolTrue: 'True',
     boolFalse: 'False',
     nullLiteral: 'None',
@@ -102,6 +105,30 @@ export function normalizeLanguageId(
   fallback: ScriptLanguageId = 'lua',
 ): ScriptLanguageId {
   return isSupportedLanguageId(raw) ? raw : fallback;
+}
+
+/** Returns comma-separated `.ext` list for `<input accept>` from `LANGUAGE_DIALECTS` (e.g. `'.lua,.py'`). */
+export function getSupportedScriptAcceptAttr(): string {
+  return SUPPORTED_LANGUAGE_IDS.map(
+    (lang) => `.${LANGUAGE_DIALECTS[lang].extension}`,
+  ).join(',');
+}
+
+/** Returns human-readable supported extensions label from `LANGUAGE_DIALECTS` (e.g. `'.lua / .py'`). */
+export function formatSupportedExtensionsLabel(): string {
+  return SUPPORTED_LANGUAGE_IDS.map(
+    (lang) => `.${LANGUAGE_DIALECTS[lang].extension}`,
+  ).join(' / ');
+}
+
+/** Dynamically strips a trailing `.ext` matching any registered script language in `LANGUAGE_DIALECTS`. */
+export function stripScriptExtension(name: string): string {
+  const escapedExts = SUPPORTED_LANGUAGE_IDS.map((lang) =>
+    LANGUAGE_DIALECTS[lang].extension.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+  ).sort((a, b) => b.length - a.length);
+  if (escapedExts.length === 0) return name;
+  const extRe = new RegExp(`\\.(?:${escapedExts.join('|')})$`, 'i');
+  return name.replace(extRe, '');
 }
 
 /** Formats a VariableInitialValue into the exact target language literal via LANGUAGE_DIALECTS. */

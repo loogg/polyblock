@@ -1,5 +1,5 @@
 import * as Blockly from 'blockly';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { backendRegistry } from '../backends/registry';
 import {
@@ -1308,5 +1308,177 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     setActiveProjectCapabilities(null);
     setActiveChannelPoolConfigs({ [CAP_RT_TIMERS]: { count: 8, aliases: {} } });
     extensionRegistry.setActiveProjectLocalPacks([]);
+  });
+
+  it('derives declarative runtime monitor summary from section runtimeMonitor metadata with zero pack-ID hardcoding', () => {
+    expect(extensionRegistry.getRuntimeMonitorSummary([])).toEqual({
+      hasSchedulerMonitor: false,
+      hasTimerMonitor: false,
+      timerPoolConfigKey: null,
+    });
+
+    expect(extensionRegistry.getRuntimeMonitorSummary([CAP_RT])).toEqual({
+      hasSchedulerMonitor: true,
+      hasTimerMonitor: true,
+      timerPoolConfigKey: CAP_RT_TIMERS,
+    });
+
+    expect(extensionRegistry.getRuntimeMonitorSummary([CAP_RT_LIFECYCLE])).toEqual({
+      hasSchedulerMonitor: true,
+      hasTimerMonitor: false,
+      timerPoolConfigKey: null,
+    });
+
+    expect(extensionRegistry.getRuntimeMonitorSummary([CAP_RT_TIMERS])).toEqual({
+      hasSchedulerMonitor: false,
+      hasTimerMonitor: true,
+      timerPoolConfigKey: CAP_RT_TIMERS,
+    });
+
+    expect(extensionRegistry.getRuntimeMonitorSummary([CAP_RT_TICK])).toEqual({
+      hasSchedulerMonitor: false,
+      hasTimerMonitor: false,
+      timerPoolConfigKey: null,
+    });
+
+    // Custom pack declaring runtimeMonitor: 'timers' + custom channel-pool configKey
+    const customTimerPack = validateExtensionPack({
+      format: 'polyblock-extension',
+      version: 1,
+      id: 'custom-rtos',
+      name: '自定义 RTOS 扩展',
+      packVersion: '1.0.0',
+      iconLabel: 'RTOS',
+      color: '#6366f1',
+      description: '自定义定时器与调度监控',
+      sections: [
+        {
+          id: 'sched',
+          label: '调度',
+          runtimeMonitor: 'scheduler',
+          blocks: [
+            {
+              type: 'ext_custom_rtos_yield',
+              kind: 'statement',
+              message0: '让出调度',
+              code: { lua: { template: 'rtos.yield()' } },
+            },
+          ],
+        },
+        {
+          id: 'hw_timers',
+          label: '硬定时',
+          runtimeMonitor: 'timers',
+          handleConfigs: [
+            {
+              kind: 'channel-pool',
+              configKey: 'custom.hw_timers',
+              label: '硬件定时通道',
+              prefix: 'HT',
+              min: 1,
+              max: 16,
+              defaultCount: 4,
+            },
+          ],
+          blocks: [
+            {
+              type: 'ext_custom_rtos_timer',
+              kind: 'statement',
+              message0: '启动硬定时 %1',
+              args0: [{ type: 'field_channel_id', name: 'TID' }],
+              code: { lua: { template: 'rtos.timer({{TID:int}})' } },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(
+      extensionRegistry.getRuntimeMonitorSummary(['custom-rtos'], [customTimerPack]),
+    ).toEqual({
+      hasSchedulerMonitor: true,
+      hasTimerMonitor: true,
+      timerPoolConfigKey: 'custom.hw_timers',
+    });
+
+    // Validator rejects invalid runtimeMonitor values
+    expect(() =>
+      validateExtensionPack({
+        ...customTimerPack,
+        sections: [
+          {
+            ...customTimerPack.sections[0],
+            runtimeMonitor: 'invalid_kind',
+          },
+        ],
+      }),
+    ).toThrow(/runtimeMonitor/);
+  });
+
+  it('skips identical Blockly visual re-registrations and cleanly overrides modified blocks with zero overwrite warnings', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const makePack = (label: string, tpl: string) =>
+        extensionRegistry.validateProjectLocalPack({
+          format: 'polyblock-extension',
+          version: 1,
+          id: 'dedup-warn-pack',
+          name: '去重测试包',
+          packVersion: '1.0.0',
+          iconLabel: '去重',
+          color: '#0ea5e9',
+          description: '验证重复同步不产生 Blockly 覆写告警',
+          sections: [
+            {
+              id: 'main',
+              label: '去重',
+              blocks: [
+                {
+                  type: 'ext_dedup_warn_ping',
+                  kind: 'statement',
+                  message0: label,
+                  tooltip: `tip:${label}`,
+                  code: {
+                    lua: { template: tpl },
+                    python: { template: tpl },
+                  },
+                },
+              ],
+            },
+          ],
+        });
+
+      const v1 = makePack('发送心跳 v1', 'ping_v1()');
+      const v2 = makePack('发送心跳 v2', 'ping_v2()');
+
+      // Initial mount + repeated identical mounts (e.g. theme/project switches)
+      extensionRegistry.setActiveProjectLocalPacks([v1]);
+      const defRefAfterFirst = Blockly.Blocks['ext_dedup_warn_ping'];
+      extensionRegistry.setActiveProjectLocalPacks([v1]);
+      extensionRegistry.setActiveProjectLocalPacks([v1]);
+      expect(Blockly.Blocks['ext_dedup_warn_ping']).toBe(defRefAfterFirst);
+
+      // Genuine visual + codegen override replaces cleanly with 0 overwrite warnings
+      extensionRegistry.setActiveProjectLocalPacks([v2]);
+      expect(Blockly.Blocks['ext_dedup_warn_ping']).not.toBe(defRefAfterFirst);
+
+      const ws = new Blockly.Workspace();
+      try {
+        const blk = ws.newBlock('ext_dedup_warn_ping');
+        expect(blk.getTooltip()).toBe('tip:发送心跳 v2');
+        const luaOut = backendRegistry.get('lua').generate(ws).code;
+        expect(luaOut).toContain('ping_v2()');
+      } finally {
+        ws.dispose();
+      }
+
+      const overwriteWarns = warnSpy.mock.calls.filter((args) =>
+        args.some((a) => String(a).includes('overwrites previous definition')),
+      );
+      expect(overwriteWarns).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+      extensionRegistry.setActiveProjectLocalPacks([]);
+    }
   });
 });

@@ -32,6 +32,7 @@ export const RT_PACK: PolyExtensionPack = {
       visible: true,
       categoryTarget: 'event',
       color: '#e0911f',
+      runtimeMonitor: 'scheduler',
       blocks: [
         {
           type: 'poly_on_run',
@@ -123,6 +124,7 @@ export const RT_PACK: PolyExtensionPack = {
       categoryTarget: 'own',
       toolboxOrder: 15,
       color: '#6366f1',
+      runtimeMonitor: 'timers',
       handleConfigs: [
         {
           kind: 'channel-pool',
