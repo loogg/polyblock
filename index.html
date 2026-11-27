@@ -3,8 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="PolyBlock — 多语言嵌入式积木编程工作台（Blockly + 纯前端 WASM 沙箱与真机脚本打包导出）"
+    />
+    <meta name="theme-color" content="#ffffff" />
     <title>PolyBlock · 多语言积木编程工作台</title>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <script>
+      try {
+        var raw = localStorage.getItem('polyblock.settings.v1');
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          if (parsed && parsed.theme === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            var meta = document.querySelector('meta[name="theme-color"]');
+            if (meta) meta.setAttribute('content', '#151923');
+          }
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

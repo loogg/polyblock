@@ -3,7 +3,7 @@
 > **演进优先（防僵化总则）**：本文件只记录当前已验证的核心架构不变量，用于在新增语言后端（如 C / JS 等）或扩展功能时避免重踩旧坑。项目处于开发期，**默认零旧版/旧文件兼容**；若未来有更简洁正确的架构路线，直接彻底重构并同步更新本文件，严禁为兼容旧实现保留死代码或冗余兜底。
 
 ## 1. 声明式架构与核心边界
-- **元数据/包配置驱动（零硬编码扫描）**：扩展包的能力开关、帽块生命周期/保活（`hat.mode` / `hat.keepsAlive`）、模拟控件事件（`simWidgets[].emitEvent`）、句柄通道池（`handleConfigs`）统一由 `.polyext.json` / `.polyboard.json` 声明字段驱动。**严禁**在 IDE、编译器、Worker、调度器或 UI 中按具体包 ID / 积木名 / 事件名写硬编码扫描、专有事件通道或专用配置字段；若发现需要给某内置包开特例，优先补协议字段。
+- **元数据/包配置驱动（零硬编码扫描）**：扩展包的能力开关、帽块生命周期/保活（`hat.mode` / `hat.keepsAlive`）、模拟控件事件（`simWidgets[].emitEvent`）、句柄通道池（`handleConfigs`）、运行时监控（`sections[].runtimeMonitor`）统一由 `.polyext.json` / `.polyboard.json` 声明字段驱动。**严禁**在 IDE、编译器、Worker、调度器或 UI 中按具体包 ID / 积木名 / 事件名写硬编码扫描、专有事件通道或专用配置字段；若发现需要给某内置包开特例，优先补协议字段。
 - **Layer 0 核心**：所有零外部模块依赖的纯语言原语（`on_start`、`require`/`import`、控制/运算/逻辑/文本含 `str_replace`、列表、字典 5 块、变量、函数）必须留在核心，不放进扩展包。
 - **扩展包（`.polyext.json`）**：仅承载带真实外部模块接口（`imports` + `libs` 或 `sandboxMock`）的运行时/外设/库能力（如 `rt`、`virtual-board`、`clock-timer`）；多语言声明按语言 ID 映射（`Record<ScriptLanguageId, ...>`），不写死二元语言字段。
 - **纯值槽原则**：列表、字典等容器操作积木统一用 `input_value` 接收容器表达式，作用域自然随拖入的变量走；**禁止**用 `field_variable` 扫描推断作用域，**禁止**通过 Blockly `provideFunction_` 向导出代码注入隐藏辅助函数。
