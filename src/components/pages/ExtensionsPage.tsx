@@ -52,6 +52,7 @@ interface ExtensionsPageProps {
   activeProjectName: string;
   activeProjectLanguage: ScriptLanguageId;
   activeProfileId: string;
+  editingLocked?: boolean;
   allPacks: PolyExtensionPack[];
   allTargetProfiles: TargetProfile[];
   enabledCapabilityIds: string[];
@@ -88,6 +89,7 @@ export function ExtensionsPage({
   activeProjectName,
   activeProjectLanguage,
   activeProfileId,
+  editingLocked = false,
   allPacks,
   allTargetProfiles,
   enabledCapabilityIds,
@@ -269,13 +271,18 @@ export function ExtensionsPage({
                   key={sec.capId}
                   type="button"
                   aria-pressed={secOn}
+                  disabled={editingLocked}
                   className={`pack-section-chip ${secOn ? 'active' : ''}`}
                   style={
                     secOn
                       ? ({ '--chip-accent': sec.color } as CSSProperties)
                       : undefined
                   }
-                  title={`${sec.label}（${posText}）${sec.description ? `：${sec.description}` : ''} · 点击单独${secOn ? '取消勾选' : '勾选启用'}`}
+                  title={
+                    editingLocked
+                      ? '请先停止当前运行再修改启用组件'
+                      : `${sec.label}（${posText}）${sec.description ? `：${sec.description}` : ''} · 点击单独${secOn ? '取消勾选' : '勾选启用'}`
+                  }
                   onClick={() => onToggleCapability(sec.capId)}
                 >
                   {secOn ? (
@@ -331,7 +338,12 @@ export function ExtensionsPage({
                   type="button"
                   className="btn-ghost"
                   style={{ padding: '4px 6px' }}
-                  title={`附加或替换此包的真实库源码 (${supportedExtLabel} -> libs[])`}
+                  disabled={editingLocked}
+                  title={
+                    editingLocked
+                      ? '请先停止当前运行再修改库源码'
+                      : `附加或替换此包的真实库源码 (${supportedExtLabel} -> libs[])`
+                  }
                   aria-label={`为 ${pack.name} 附加库源码`}
                   onClick={() => {
                     setAttachTargetPackId(pack.id);
@@ -357,7 +369,12 @@ export function ExtensionsPage({
                   type="button"
                   className="btn-ghost"
                   style={{ padding: '4px 6px', color: 'var(--danger)' }}
-                  title="删除自定义扩展包"
+                  disabled={editingLocked}
+                  title={
+                    editingLocked
+                      ? '请先停止当前运行再删除扩展包'
+                      : '删除自定义扩展包'
+                  }
                   aria-label={`删除自定义扩展包 ${pack.name}`}
                   onClick={() => onRemoveCustomPack(pack.id)}
                 >
@@ -369,10 +386,13 @@ export function ExtensionsPage({
               type="button"
               className={`ext-toggle-btn ${toggleBtnClass}`}
               style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+              disabled={editingLocked}
               title={
-                enableState.status === 'full'
-                  ? '点击从当前项目停用整个扩展包'
-                  : '点击为当前项目启用整个扩展包'
+                editingLocked
+                  ? '请先停止当前运行再切换扩展开关'
+                  : enableState.status === 'full'
+                    ? '点击从当前项目停用整个扩展包'
+                    : '点击为当前项目启用整个扩展包'
               }
               onClick={() => onToggleCapability(pack.id)}
             >
@@ -400,6 +420,8 @@ export function ExtensionsPage({
             <button
               type="button"
               className="btn-primary"
+              disabled={editingLocked}
+              title={editingLocked ? '请先停止当前运行再导入脚本库' : undefined}
               onClick={onOpenScriptLibImportModal}
             >
               <FileCode2 size={14} />
@@ -408,6 +430,8 @@ export function ExtensionsPage({
             <button
               type="button"
               className="btn-outline"
+              disabled={editingLocked}
+              title={editingLocked ? '请先停止当前运行再导入扩展包' : undefined}
               onClick={() => extFileInputRef.current?.click()}
             >
               <Upload size={14} />
@@ -416,6 +440,8 @@ export function ExtensionsPage({
             <button
               type="button"
               className="btn-outline"
+              disabled={editingLocked}
+              title={editingLocked ? '请先停止当前运行再导入板型' : undefined}
               onClick={() => boardFileInputRef.current?.click()}
             >
               <Cpu size={14} />
@@ -624,7 +650,12 @@ export function ExtensionsPage({
                           type="button"
                           className="btn-ghost"
                           style={{ padding: '4px 6px', color: 'var(--danger)' }}
-                          title="删除自定义板型"
+                          disabled={editingLocked}
+                          title={
+                            editingLocked
+                              ? '请先停止当前运行再删除板型'
+                              : '删除自定义板型'
+                          }
                           aria-label={`删除自定义板型 ${prof.name}`}
                           onClick={() => onRemoveCustomProfile(prof.id)}
                         >
@@ -636,6 +667,10 @@ export function ExtensionsPage({
                       type="button"
                       className={isActive ? 'btn-primary' : 'btn-outline'}
                       style={{ padding: '4px 10px', fontSize: 11.5 }}
+                      disabled={editingLocked}
+                      title={
+                        editingLocked ? '请先停止当前运行再应用板型' : undefined
+                      }
                       onClick={() => onApplyTargetProfile(prof.id)}
                     >
                       {isActive ? '重新应用此板型' : '应用到当前项目'}

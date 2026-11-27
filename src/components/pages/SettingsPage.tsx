@@ -4,6 +4,7 @@ import { PolySelect } from '../PolySelect';
 
 interface SettingsPageProps {
   settings: AppSettings;
+  editingLocked?: boolean;
   onUpdateSettings: (patch: Partial<AppSettings>) => void;
   onResetWorkspace: () => void;
   onReturnToBlocks: () => void;
@@ -11,6 +12,7 @@ interface SettingsPageProps {
 
 export function SettingsPage({
   settings,
+  editingLocked = false,
   onUpdateSettings,
   onResetWorkspace,
   onReturnToBlocks,
@@ -58,20 +60,20 @@ export function SettingsPage({
 
         <div className="setting-row">
           <div>
-            <div style={{ fontWeight: 600, marginBottom: 2 }}>默认执行高亮速度</div>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>默认执行速度</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              控制沙箱逐块联动高亮的节奏（选择「极速」时不额外停顿，但仍会在断点处暂停）
+              「实时 (0ms)」按真实物理节拍运行定时器（支持 10ms 定时），「动画 / 慢放」用于逐块观察高亮并同步放慢逻辑时钟；任意档位均精确命中断点
             </div>
           </div>
           <PolySelect<ExecutionSpeedId>
             size="md"
-            ariaLabel="默认执行高亮速度"
+            ariaLabel="默认执行速度"
             value={settings.executionSpeed}
-            minPopoverWidth={190}
+            minPopoverWidth={210}
             options={[
-              { value: 'normal', label: '正常（每步 180ms）' },
-              { value: 'slow', label: '慢放（每步 450ms）' },
-              { value: 'fast', label: '极速（0ms 无停顿）' },
+              { value: 'realtime', label: '实时（0ms，推荐默认）' },
+              { value: 'animate', label: '动画（每步 60ms）' },
+              { value: 'slow', label: '慢放（每步 250ms）' },
             ]}
             onChange={(val) => onUpdateSettings({ executionSpeed: val })}
           />
@@ -152,6 +154,8 @@ export function SettingsPage({
           <button
             type="button"
             className="btn-outline"
+            disabled={editingLocked}
+            title={editingLocked ? '请先停止当前运行再重置示例' : '清除本地缓存并恢复内置演示项目'}
             onClick={onResetWorkspace}
           >
             <RotateCcw size={13} />

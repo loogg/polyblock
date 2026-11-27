@@ -1586,6 +1586,52 @@
   outline: none;
 }
 
+/* Runtime Read-Only Canvas Lock */
+.cat-strip.readonly-locked .cat-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.canvas-container.readonly-locked .blocklyFlyout,
+.canvas-container.readonly-locked .blocklyFlyoutScrollbar,
+.canvas-container.readonly-locked .blocklyTrash {
+  pointer-events: none !important;
+  opacity: 0.45;
+}
+
+.canvas-container.readonly-locked .flyout-search-dock {
+  opacity: 0.6;
+}
+
+.canvas-ctrl-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.canvas-readonly-badge {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  max-width: calc(100% - 24px);
+  z-index: 26;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-sm);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: auto;
+  user-select: none;
+}
+
 /* Responsive Workspace Breakpoints */
 @media (max-width: 1320px) {
   .inspector-pane {

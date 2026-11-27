@@ -23,6 +23,7 @@ interface ProjectExplorerProps {
   viewingSharedModule?: boolean;
   channelPools: ResolvedHandleChannelPoolSpec[];
   disabled?: boolean;
+  runningHandleIds?: string[];
   onSelectHandleScript: (handleId: string, scriptId: string) => void;
   onSelectHandleSharedModule?: (handleId: string) => void;
   onAddHandle: () => void;
@@ -40,6 +41,7 @@ export function ProjectExplorer({
   viewingSharedModule = false,
   channelPools,
   disabled = false,
+  runningHandleIds = [],
   onSelectHandleScript,
   onSelectHandleSharedModule,
   onAddHandle,
@@ -119,6 +121,13 @@ export function ProjectExplorer({
                   <span className="explorer-handle-name" title={handle.name}>
                     {handle.name}
                   </span>
+                  {runningHandleIds.includes(handle.id) && (
+                    <span
+                      className="running-handle-dot"
+                      title="此句柄正在运行"
+                      aria-label="运行中"
+                    />
+                  )}
                   <div
                     className="explorer-row-actions"
                     onClick={(e) => e.stopPropagation()}
@@ -170,7 +179,6 @@ export function ProjectExplorer({
                         className={`explorer-script-row ${
                           isActiveScript ? 'active' : ''
                         }`}
-                        disabled={disabled && !isActiveScript}
                         onClick={() => onSelectHandleScript(handle.id, scr.id)}
                       >
                         <FileCode2 size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
@@ -202,7 +210,6 @@ export function ProjectExplorer({
                         className={`explorer-script-row explorer-script-readonly ${
                           isActiveShared ? 'active' : ''
                         }`}
-                        disabled={disabled && !isActiveHandle}
                         onClick={() => onSelectHandleSharedModule(handle.id)}
                         title={`只读自动生成模块 ${sharedMod.fileName}（${sharedMod.variables.length} 跨文件变量 · ${sharedMod.functions.length} 公共函数）`}
                       >

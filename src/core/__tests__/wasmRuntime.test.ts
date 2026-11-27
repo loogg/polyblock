@@ -218,6 +218,87 @@ async function runLuaDebugInWasmoon(
   }
 }
 
+let sharedMpPromise: Promise<Awaited<ReturnType<typeof loadMicroPython>>> | null =
+  null;
+let activePyLogs: string[] = [];
+let activePyScheduler: WorkerRuntimeScheduler | null = null;
+let activePySession: WorkerDebugSession | null = null;
+let mountedTestModules: string[] = [];
+let mountedTestVfsFiles: string[] = [];
+
+async function getSharedTestMicroPython() {
+  if (!sharedMpPromise) {
+    sharedMpPromise = loadMicroPython({
+      stdout: (line) => activePyLogs.push(line),
+    }).then((mp) => {
+      mp.registerJsModule('_poly', {
+        step: (bid: string, vars: string) =>
+          activePySession
+            ? activePySession.onStep(String(bid), vars, false)
+            : Promise.resolve(),
+        step_start: (bid: string, vars: string) =>
+          activePySession
+            ? activePySession.onStep(String(bid), vars, true)
+            : Promise.resolve(),
+        sleep: (ms: number) => {
+          if (activePyScheduler?.isInCallback()) {
+            throw new Error('禁止在事件回调中调用等待 (sleep)');
+          }
+          return activePySession ? activePySession.onSleep(ms) : Promise.resolve();
+        },
+        final_snap: (vars: string) => activePySession?.setFinalVars(vars),
+        emit_device: () => {},
+        sim_set: () => {},
+        get_input: (k: unknown) => (k === 'temp' ? 28 : false),
+        sim_get: (k: unknown) => (k === 'temp' ? 28 : false),
+        now_ms: () => performance.now(),
+        logic_now_ms: () => activePyScheduler?.now() ?? performance.now(),
+        rt_set_run_period: (ms: unknown) => activePyScheduler?.setRunPeriod(ms),
+        rt_start_run: () => activePyScheduler?.startRun(),
+        rt_stop_run: () => activePyScheduler?.stopRun(),
+        rt_start_timer: (id: unknown, ms: unknown, rep: unknown) =>
+          activePyScheduler?.startTimer(id, ms, rep ?? 0),
+        rt_stop_timer: (id: unknown) => activePyScheduler?.stopTimer(id),
+        rt_get_timer_value: (id: unknown) =>
+          activePyScheduler?.getTimerValue(id) ?? 0,
+        rt_is_timer_running: (id: unknown) =>
+          activePyScheduler?.isTimerRunning(id) ?? false,
+        rt_tick: () => activePyScheduler?.getTick() ?? 0,
+        rt_ms_to_tick: (ms: unknown) => activePyScheduler?.msToTick(ms) ?? 0,
+        rt_is_expired: (s: unknown, t: unknown) =>
+          activePyScheduler?.isTickExpired(s, t) ?? false,
+        init_scheduler: (s: unknown, r: unknown, t: unknown, b: unknown) =>
+          activePyScheduler?.initCoroutineMode(
+            Boolean(s),
+            Boolean(r),
+            Boolean(t),
+            Boolean(b),
+          ) ?? false,
+        sync_handlers: (r: unknown, t: unknown, b: unknown) =>
+          activePyScheduler?.syncHandlers(Boolean(r), Boolean(t), Boolean(b)),
+        co_sleep: (ms: unknown) => activePyScheduler?.onStartCoSleep(ms),
+        co_yield_slice: () => activePyScheduler?.onStartCoYieldSlice(),
+        co_done: () => activePyScheduler?.onStartCoDone(),
+        wait_start_turn: () =>
+          activePyScheduler?.waitPythonStartTurn() ?? Promise.resolve(false),
+        resume_start_slice: () =>
+          activePyScheduler?.resumePythonStartSlice() ?? Promise.resolve(),
+        cb_enter: (n: unknown) =>
+          activePyScheduler?.beginCallback(String(n ?? 'cb')),
+        cb_exit: () => activePyScheduler?.endCallback(),
+        cb_expired: () => activePyScheduler?.isCallbackTimedOut() ?? false,
+        is_in_callback: () => activePyScheduler?.isInCallback() ?? false,
+        is_stop_requested: () => activePyScheduler?.isStopRequested() ?? false,
+        get_time_slice_ms: () => activePyScheduler?.getTimeSliceMs() ?? 20,
+        next_event: () =>
+          activePyScheduler?.nextEvent() ?? Promise.resolve('done'),
+      });
+      return mp;
+    });
+  }
+  return sharedMpPromise;
+}
+
 async function runPyDebugInMicroPython(
   pyDebug: string,
   opts: HarnessOptions = {},
@@ -247,53 +328,38 @@ async function runPyDebugInMicroPython(
       }
     },
   );
-  const mp = await loadMicroPython({
-    stdout: (line) => logs.push(line),
-  });
-  mp.registerJsModule('_poly', {
-    step: (bid: string, vars: string) => session.onStep(String(bid), vars, false),
-    step_start: (bid: string, vars: string) => session.onStep(String(bid), vars, true),
-    sleep: (ms: number) => {
-      if (scheduler.isInCallback()) {
-        throw new Error('禁止在事件回调中调用等待 (sleep)');
+  const mp = await getSharedTestMicroPython();
+  activePyLogs = logs;
+  activePyScheduler = scheduler;
+  activePySession = session;
+
+  const mpFs = (
+    mp as unknown as {
+      FS?: { writeFile: (path: string, data: string) => void; unlink: (path: string) => void };
+    }
+  ).FS;
+  if (mpFs && mountedTestVfsFiles.length > 0) {
+    for (const p of mountedTestVfsFiles) {
+      try {
+        mpFs.unlink(p);
+      } catch {
+        // ignore
       }
-      return session.onSleep(ms);
-    },
-    final_snap: (vars: string) => session.setFinalVars(vars),
-    emit_device: () => {},
-    sim_set: () => {},
-    get_input: (k: unknown) => (k === 'temp' ? 28 : false),
-    sim_get: (k: unknown) => (k === 'temp' ? 28 : false),
-    now_ms: () => performance.now(),
-    logic_now_ms: () => scheduler.now(),
-    rt_set_run_period: (ms: unknown) => scheduler.setRunPeriod(ms),
-    rt_start_run: () => scheduler.startRun(),
-    rt_stop_run: () => scheduler.stopRun(),
-    rt_start_timer: (id: unknown, ms: unknown, rep: unknown) =>
-      scheduler.startTimer(id, ms, rep ?? 0),
-    rt_stop_timer: (id: unknown) => scheduler.stopTimer(id),
-    rt_get_timer_value: (id: unknown) => scheduler.getTimerValue(id),
-    rt_is_timer_running: (id: unknown) => scheduler.isTimerRunning(id),
-    rt_tick: () => scheduler.getTick(),
-    rt_ms_to_tick: (ms: unknown) => scheduler.msToTick(ms),
-    rt_is_expired: (s: unknown, t: unknown) => scheduler.isTickExpired(s, t),
-    init_scheduler: (s: unknown, r: unknown, t: unknown, b: unknown) =>
-      scheduler.initCoroutineMode(Boolean(s), Boolean(r), Boolean(t), Boolean(b)),
-    sync_handlers: (r: unknown, t: unknown, b: unknown) =>
-      scheduler.syncHandlers(Boolean(r), Boolean(t), Boolean(b)),
-    co_sleep: (ms: unknown) => scheduler.onStartCoSleep(ms),
-    co_yield_slice: () => scheduler.onStartCoYieldSlice(),
-    co_done: () => scheduler.onStartCoDone(),
-    wait_start_turn: () => scheduler.waitPythonStartTurn(),
-    resume_start_slice: () => scheduler.resumePythonStartSlice(),
-    cb_enter: (n: unknown) => scheduler.beginCallback(String(n ?? 'cb')),
-    cb_exit: () => scheduler.endCallback(),
-    cb_expired: () => scheduler.isCallbackTimedOut(),
-    is_in_callback: () => scheduler.isInCallback(),
-    is_stop_requested: () => scheduler.isStopRequested(),
-    get_time_slice_ms: () => scheduler.getTimeSliceMs(),
-    next_event: () => scheduler.nextEvent(),
-  });
+    }
+    mountedTestVfsFiles = [];
+  }
+
+  mp.runPython(`
+for _k in list(globals().keys()):
+  if _k not in ('__name__', '__file__', '__builtins__'):
+    del globals()[_k]
+import sys
+for _mn in ${JSON.stringify([...mountedTestModules, '_poly_rt'])}:
+  if _mn in sys.modules:
+    del sys.modules[_mn]
+`);
+  mountedTestModules = [];
+
   mp.runPython(`
 import sys, _poly
 class _Rt:
@@ -309,15 +375,13 @@ class _Rt:
   def is_expired(self, s, t): return _poly.rt_is_expired(s, t)
 sys.modules["rt"] = _Rt()
 `);
-  const mpFs = (
-    mp as unknown as {
-      FS?: { writeFile: (path: string, data: string) => void; unlink: (path: string) => void };
-    }
-  ).FS;
   for (const mod of opts.preloadModules ?? []) {
     if (!mod.pythonSource) continue;
+    mountedTestModules.push(mod.name);
     if (mod.lazyVfs && mpFs) {
-      mpFs.writeFile(`/${mod.name}.py`, mod.pythonSource);
+      const vfsPath = `/${mod.name}.py`;
+      mpFs.writeFile(vfsPath, mod.pythonSource);
+      mountedTestVfsFiles.push(vfsPath);
     } else {
       mp.runPython(`
 import sys
@@ -332,7 +396,11 @@ sys.modules[${JSON.stringify(mod.name)}] = _m
     }
   }
   opts.onReady?.(scheduler);
-  await mp.runPythonAsync(pyDebug);
+  try {
+    await mp.runPythonAsync(pyDebug);
+  } finally {
+    scheduler.requestGracefulStop();
+  }
   return { logs, scheduler };
 }
 
@@ -2235,5 +2303,122 @@ sys.modules["board"] = _m
 
     const { logs: pyLogs } = await runPyDebugInMicroPython(pyRes.debugCode);
     expect(pyLogs).toEqual(['I = 1', 'I = 3', 'I = 4', 'LOOP_OK']);
+  });
+
+  it('executes a 5-shot 10ms timer swiftly in realtime (0ms) mode AND throttles 0ms STEP posts while preserving 100% exact breakpoints', async () => {
+    // 1. Unit-verify WorkerDebugSession 0ms STEP throttling + exact breakpoint hit
+    const posted: Array<Record<string, unknown>> = [];
+    const session = new WorkerDebugSession(
+      {
+        runId: 'throttle-test',
+        breakpoints: ['blk_57'],
+        stepDelayMs: 0,
+      },
+      (msg) => {
+        posted.push(msg);
+        if (msg.type === 'PAUSED') {
+          session.resume();
+        }
+      },
+    );
+    for (let i = 1; i <= 100; i++) {
+      await session.onStep(`blk_${i}`, `{"i":${i}}`, false);
+    }
+    const pausedMsgs = posted.filter((m) => m.type === 'PAUSED');
+    const stepMsgs = posted.filter((m) => m.type === 'STEP');
+    expect(pausedMsgs).toHaveLength(1);
+    expect(pausedMsgs[0].blockId).toBe('blk_57');
+    expect((pausedMsgs[0].vars as Record<string, string>).i).toBe('57');
+    // 99 non-paused rapid steps must be throttled heavily (< 10 posts)
+    expect(stepMsgs.length).toBeGreaterThanOrEqual(1);
+    expect(stepMsgs.length).toBeLessThan(10);
+
+    // 2. Real 10ms x 5 timer in BOTH Wasmoon Lua 5.4 & MicroPython WASM at 0ms realtime speed
+    const wsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 't10_start',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'variables_set',
+                  id: 't10_init',
+                  fields: { VAR: { id: 'v_cnt' } },
+                  inputs: { VALUE: { block: { type: 'math_number', id: 't10_z', fields: { NUM: 0 } } } },
+                  next: {
+                    block: {
+                      type: 'poly_start_timer',
+                      id: 't10_arm',
+                      fields: { TIMER_ID: '0' },
+                      inputs: {
+                        PERIOD_MS: { block: { type: 'math_number', id: 't10_ms', fields: { NUM: 10 } } },
+                        REPEAT: { block: { type: 'math_number', id: 't10_rep', fields: { NUM: 5 } } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: 'poly_on_timer',
+            id: 't10_hat',
+            fields: { TIMER_ID: '0' },
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'math_change',
+                  id: 't10_inc',
+                  fields: { VAR: { id: 'v_cnt' } },
+                  inputs: { DELTA: { block: { type: 'math_number', id: 't10_one', fields: { NUM: 1 } } } },
+                  next: {
+                    block: {
+                      type: 'poly_print_kv',
+                      id: 't10_log',
+                      fields: { LABEL: 'T10' },
+                      inputs: {
+                        VALUE: {
+                          block: {
+                            type: 'variables_get',
+                            id: 't10_get',
+                            fields: { VAR: { id: 'v_cnt' } },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [{ name: 'cnt', id: 'v_cnt' }],
+    };
+
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(wsJson, ws);
+    const luaRes = backendRegistry.get('lua').generate(ws);
+    const pyRes = backendRegistry.get('python').generate(ws);
+    ws.dispose();
+
+    const luaT0 = performance.now();
+    const { logs: luaLogs } = await runLuaDebugInWasmoon(luaRes.debugCode, {
+      stepDelayMs: 0,
+    });
+    const luaElapsed = performance.now() - luaT0;
+    expect(luaLogs).toEqual(['T10 = 1', 'T10 = 2', 'T10 = 3', 'T10 = 4', 'T10 = 5']);
+    expect(luaElapsed).toBeLessThan(1500);
+
+    const pyT0 = performance.now();
+    const { logs: pyLogs } = await runPyDebugInMicroPython(pyRes.debugCode, {
+      stepDelayMs: 0,
+    });
+    const pyElapsed = performance.now() - pyT0;
+    expect(pyLogs).toEqual(['T10 = 1', 'T10 = 2', 'T10 = 3', 'T10 = 4', 'T10 = 5']);
+    expect(pyElapsed).toBeLessThan(2000);
   });
 });

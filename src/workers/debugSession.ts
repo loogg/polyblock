@@ -73,6 +73,8 @@ export function parseVarsJson(raw: unknown): Record<string, string> {
  * supports real breakpoints, single-step execution, and non-blocking delays.
  */
 export class WorkerDebugSession {
+  private static readonly REALTIME_STEP_THROTTLE_MS = 33;
+
   readonly runId: string;
   private breakpoints: Set<string>;
   private stepDelayMs: number;
@@ -81,6 +83,7 @@ export class WorkerDebugSession {
   private pendingResume: (() => void) | null = null;
   private pendingDelayCancel: (() => void) | null = null;
   private lastVars: Record<string, string> = {};
+  private lastStepPostAt = 0;
   private readonly post: (msg: Record<string, unknown>) => void;
   private readonly onClockPause?: (paused: boolean, creditLogicalMs?: number) => void;
   private readonly getTimeSliceMs?: () => number;
@@ -112,6 +115,7 @@ export class WorkerDebugSession {
 
   setStepDelay(ms: number): void {
     this.stepDelayMs = Math.max(0, ms);
+    this.lastStepPostAt = 0;
   }
 
   pause(): void {
@@ -152,13 +156,13 @@ export class WorkerDebugSession {
     varsJson: unknown,
     inStartCoroutine = false,
   ): Promise<void> {
-    const vars = parseVarsJson(varsJson);
-    this.lastVars = vars;
-
     const hitBreakpoint = !this.shuttingDown && this.breakpoints.has(blockId);
     const shouldPause = !this.shuttingDown && (this.pauseOnNextStep || hitBreakpoint);
 
     if (shouldPause) {
+      const vars = parseVarsJson(varsJson);
+      this.lastVars = vars;
+      this.lastStepPostAt = 0;
       const reason = hitBreakpoint && !this.pauseOnNextStep ? 'breakpoint' : 'step';
       this.pauseOnNextStep = false;
       this.onClockPause?.(true);
@@ -182,6 +186,30 @@ export class WorkerDebugSession {
       return;
     }
 
+    if (this.stepDelayMs === 0) {
+      // Realtime (0ms) mode: breakpoints are still checked synchronously on every block above,
+      // while non-paused UI highlight & variable snapshots are throttled (~30fps) so 10ms timers
+      // and tight loops run at true real-time speed without flooding the main-thread message queue.
+      const now = performance.now();
+      if (
+        this.lastStepPostAt === 0 ||
+        now - this.lastStepPostAt >= WorkerDebugSession.REALTIME_STEP_THROTTLE_MS
+      ) {
+        this.lastStepPostAt = now;
+        const vars = parseVarsJson(varsJson);
+        this.lastVars = vars;
+        this.post({
+          type: 'STEP',
+          runId: this.runId,
+          blockId,
+          vars,
+        });
+      }
+      return;
+    }
+
+    const vars = parseVarsJson(varsJson);
+    this.lastVars = vars;
     this.post({
       type: 'STEP',
       runId: this.runId,
@@ -189,32 +217,30 @@ export class WorkerDebugSession {
       vars,
     });
 
-    if (this.stepDelayMs > 0) {
-      const delayMs = this.stepDelayMs;
-      this.onClockPause?.(true);
-      this.post({ type: 'WAITING', runId: this.runId, active: true });
-      try {
-        await new Promise<void>((resolve) => {
-          let done = false;
-          const finish = () => {
-            if (done) return;
-            done = true;
-            clearTimeout(handle);
-            if (this.pendingDelayCancel === finish) this.pendingDelayCancel = null;
-            resolve();
-          };
-          const handle = setTimeout(finish, delayMs);
-          this.pendingDelayCancel = finish;
-        });
-      } finally {
-        this.post({ type: 'WAITING', runId: this.runId, active: false });
-        // Freeze logical clock completely during event callback visual stepping so timers never self-starve;
-        // inside `on_start` coroutine, credit at most one time-slice quantum so tight loops still interleave smoothly.
-        const credit = inStartCoroutine
-          ? Math.min(delayMs, this.getTimeSliceMs?.() ?? 20)
-          : 0;
-        this.onClockPause?.(false, credit);
-      }
+    const delayMs = this.stepDelayMs;
+    this.onClockPause?.(true);
+    this.post({ type: 'WAITING', runId: this.runId, active: true });
+    try {
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(handle);
+          if (this.pendingDelayCancel === finish) this.pendingDelayCancel = null;
+          resolve();
+        };
+        const handle = setTimeout(finish, delayMs);
+        this.pendingDelayCancel = finish;
+      });
+    } finally {
+      this.post({ type: 'WAITING', runId: this.runId, active: false });
+      // Freeze logical clock completely during event callback visual stepping so timers never self-starve;
+      // inside `on_start` coroutine, credit at most one time-slice quantum so tight loops still interleave smoothly.
+      const credit = inStartCoroutine
+        ? Math.min(delayMs, this.getTimeSliceMs?.() ?? 20)
+        : 0;
+      this.onClockPause?.(false, credit);
     }
   }
 

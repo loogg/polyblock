@@ -273,6 +273,7 @@ export function TopBar({
                 <button
                   type="button"
                   className="dropdown-item"
+                  disabled={isRunning || isPaused}
                   onClick={() => {
                     setDraftProjectName(activeProject.name);
                     setRenamingProject(true);
@@ -365,15 +366,30 @@ export function TopBar({
           disabled={!hasSandboxRunner}
           title={
             hasSandboxRunner
-              ? '调节沙箱逐块高亮节奏（极速仍会在断点处暂停）'
+              ? '切换运行速度（实时 0ms 按物理节拍运行 10ms 定时；动画/慢放逐块高亮；均可运行中热切换且断点照常生效）'
               : noSandboxTooltip
           }
           value={executionSpeed}
-          minPopoverWidth={146}
+          minPopoverWidth={218}
           options={[
-            { value: 'normal', label: '正常', badge: '180ms' },
-            { value: 'slow', label: '慢放', badge: '450ms' },
-            { value: 'fast', label: '极速', badge: '0ms' },
+            {
+              value: 'realtime',
+              label: '实时',
+              badge: '0ms',
+              description: '真机物理节拍（支持 10ms 定时），断点仍精确命中',
+            },
+            {
+              value: 'animate',
+              label: '动画',
+              badge: '60ms',
+              description: '轻快逐块高亮流转（逻辑时钟同步放慢）',
+            },
+            {
+              value: 'slow',
+              label: '慢放',
+              badge: '250ms',
+              description: '慢速观察每块变量变化（逻辑时钟同步放慢）',
+            },
           ]}
           onChange={onSelectSpeed}
         />
@@ -402,7 +418,7 @@ export function TopBar({
                 onClick={onRunAllHandles}
                 title={
                   hasSandboxRunner
-                    ? `同时启动 ${activeProject.handles.filter((h) => h.autoStart).length} 个自启动隔离句柄（多 Worker 并发模拟）`
+                    ? `同时启动 ${activeProject.handles.filter((h) => h.autoStart).length} 个自启动隔离句柄（多 VM 实时联动，不触发断点暂停）`
                     : noSandboxTooltip
                 }
               >

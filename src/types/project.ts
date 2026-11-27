@@ -8,7 +8,7 @@ export type ThemeMode = 'light' | 'dark';
 
 export type LogLevel = 'print' | 'info' | 'warn' | 'error' | 'ok' | 'system';
 
-export type ExecutionSpeedId = 'fast' | 'normal' | 'slow';
+export type ExecutionSpeedId = 'realtime' | 'animate' | 'slow';
 
 export interface LogEntry {
   id: string;

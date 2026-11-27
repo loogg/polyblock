@@ -35,7 +35,7 @@ import {
   useProjectStore,
   type ProjectStoreExecutionBridge,
 } from './hooks/useProjectStore';
-import type { AppSettings, PageId } from './types/project';
+import type { AppSettings, ExecutionSpeedId, PageId } from './types/project';
 
 const STORAGE_SETTINGS_KEY = 'polyblock.settings.v1';
 
@@ -57,12 +57,12 @@ function loadSavedSettings(): AppSettings {
     const raw = localStorage.getItem(STORAGE_SETTINGS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<AppSettings>;
-      const speed =
-        parsed.executionSpeed === 'fast' ||
-        parsed.executionSpeed === 'normal' ||
+      const speed: ExecutionSpeedId =
+        parsed.executionSpeed === 'realtime' ||
+        parsed.executionSpeed === 'animate' ||
         parsed.executionSpeed === 'slow'
           ? parsed.executionSpeed
-          : 'normal';
+          : 'realtime';
       return {
         theme: parsed.theme === 'dark' ? 'dark' : 'light',
         timeoutMs:
@@ -87,7 +87,7 @@ function loadSavedSettings(): AppSettings {
     timeoutMs: 5000,
     timeSliceMs: 20,
     autoOpenConsoleOnRun: true,
-    executionSpeed: 'normal',
+    executionSpeed: 'realtime',
   };
 }
 
@@ -96,6 +96,7 @@ const NOOP_EXECUTION_BRIDGE: ProjectStoreExecutionBridge = {
   isExecutionActive: () => false,
   clearErrorLine: () => {},
   resetExecutionForSwitch: () => {},
+  syncViewSwitchDuringRun: () => {},
   deleteProjectSimState: () => {},
   resetAllSimStates: () => {},
   syncActiveBreakpoints: () => {},
@@ -223,6 +224,10 @@ export function App() {
     workbenchRef,
     flushActiveCanvasIntoStore,
     regenerateFromWorkspace,
+    onFocusScriptForPause: (hdlId, scrId) => {
+      setViewingSharedModule(false);
+      projectStore.handleSelectHandleAndScript(hdlId, scrId);
+    },
     notify,
   });
 
@@ -231,6 +236,7 @@ export function App() {
     isExecutionActive: execution.isExecutionActive,
     clearErrorLine: execution.clearErrorLine,
     resetExecutionForSwitch: execution.resetExecutionForSwitch,
+    syncViewSwitchDuringRun: execution.syncViewSwitchDuringRun,
     deleteProjectSimState: execution.deleteProjectSimState,
     resetAllSimStates: execution.resetAllSimStates,
     syncActiveBreakpoints: execution.syncActiveBreakpoints,
@@ -380,6 +386,7 @@ export function App() {
                   viewingSharedModule={viewingSharedModule}
                   channelPools={extActions.activeChannelPools}
                   disabled={isRunningOrPaused}
+                  runningHandleIds={execution.runningHandleIds}
                   onSelectHandleScript={(hdlId, scrId) => {
                     setViewingSharedModule(false);
                     projectStore.handleSelectHandleAndScript(hdlId, scrId);
@@ -416,6 +423,7 @@ export function App() {
                   channelPools={extActions.activeChannelPools}
                   showExplorer={showExplorer}
                   disabled={isRunningOrPaused}
+                  runningHandleIds={execution.runningHandleIds}
                   sharedModuleTab={
                     extActions.activeSharedModule
                       ? {
@@ -517,6 +525,14 @@ export function App() {
                     }
                     executingBlockId={execution.executingBlockId}
                     isPaused={execution.runnerStatus === 'paused'}
+                    readOnlyLocked={isRunningOrPaused}
+                    readOnlyLabel={
+                      execution.multiHandleRunning
+                        ? '并发运行 · 画布只读'
+                        : execution.runnerStatus === 'paused'
+                          ? '调试暂停 · 画布只读'
+                          : '运行中 · 画布只读'
+                    }
                     breakpoints={breakpoints}
                     enabledCapabilities={activeProject.enabledCapabilities}
                     extraCategories={extActions.extraCategories}
@@ -552,6 +568,7 @@ export function App() {
                   isPaused={execution.runnerStatus === 'paused'}
                   runnerStatus={execution.runnerStatus}
                   multiHandleRunning={execution.multiHandleRunning}
+                  runningHandleIds={execution.runningHandleIds}
                   breakpoints={breakpoints}
                   variables={execution.liveVariables}
                   errorLine={execution.errorLine}
@@ -597,6 +614,7 @@ export function App() {
             <ProjectsPage
               projects={store.projects}
               activeProjectId={activeProject.id}
+              editingLocked={isRunningOrPaused}
               onSelectProject={projectStore.handleSelectProject}
               onCreateBlankProject={projectStore.handleCreateBlankProject}
               onCreateFromTemplate={projectStore.handleCreateFromTemplate}
@@ -625,6 +643,7 @@ export function App() {
               activeProjectName={activeProject.name}
               activeProjectLanguage={activeProject.language}
               activeProfileId={activeProject.targetProfileId}
+              editingLocked={isRunningOrPaused}
               allPacks={extActions.allExtensionPacks}
               allTargetProfiles={extActions.allTargetProfiles}
               enabledCapabilityIds={activeProject.enabledCapabilities}
@@ -650,7 +669,11 @@ export function App() {
           {activePage === 'settings' && (
             <SettingsPage
               settings={settings}
+              editingLocked={isRunningOrPaused}
               onUpdateSettings={(patch) => {
+                if (patch.executionSpeed) {
+                  execution.handleSelectSpeed(patch.executionSpeed);
+                }
                 setSettings((prev) => ({ ...prev, ...patch }));
                 if (typeof patch.timeSliceMs === 'number') {
                   execution.updateTimeSlice(patch.timeSliceMs);

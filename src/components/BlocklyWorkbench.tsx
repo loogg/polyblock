@@ -2,6 +2,7 @@ import * as Blockly from 'blockly';
 import {
   Crosshair,
   LayoutGrid,
+  Lock,
   Minus,
   Plus,
   Puzzle,
@@ -177,6 +178,8 @@ interface BlocklyWorkbenchProps {
   visible: boolean;
   executingBlockId: string | null;
   isPaused: boolean;
+  readOnlyLocked?: boolean;
+  readOnlyLabel?: string;
   breakpoints: string[];
   enabledCapabilities: string[];
   extraCategories: BlockCategorySpec[];
@@ -200,6 +203,62 @@ let currentToggleBpHandler: ((blockId: string) => void) | null = null;
 let currentEditAliasHandler: ((req: ChannelAliasPromptRequest) => void) | null = null;
 let currentToggleSharedFnHandler: ((fnName: string) => void) | null = null;
 let currentBreakpointsSet = new Set<string>();
+let currentReadOnlyLocked = false;
+
+function applyWorkspaceReadOnlyLock(
+  ws: Blockly.WorkspaceSvg,
+  locked: boolean,
+): void {
+  for (const blk of ws.getAllBlocks(false)) {
+    if (!blk.isShadow()) {
+      blk.setMovable(!locked);
+      blk.setDeletable(!locked);
+    }
+    blk.setEditable(!locked);
+  }
+}
+
+function syncExecutionHighlightClasses(
+  ws: Blockly.WorkspaceSvg,
+  executingBlockId: string | null,
+  isPaused: boolean,
+): void {
+  for (const block of ws.getAllBlocks(false)) {
+    const root = (block as Blockly.BlockSvg).getSvgRoot?.();
+    if (!root) continue;
+    root.classList.remove('pb-block-executing', 'pb-block-paused');
+  }
+  if (executingBlockId) {
+    const target = ws.getBlockById(executingBlockId) as Blockly.BlockSvg | null;
+    const root = target?.getSvgRoot?.();
+    if (root) {
+      root.classList.add(isPaused ? 'pb-block-paused' : 'pb-block-executing');
+    }
+  }
+}
+
+function syncBreakpointDots(
+  ws: Blockly.WorkspaceSvg,
+  breakpoints: string[],
+): void {
+  const bpSet = new Set(breakpoints);
+  for (const block of ws.getAllBlocks(false)) {
+    const root = (block as Blockly.BlockSvg).getSvgRoot?.();
+    if (!root) continue;
+    const existing = root.querySelector(':scope > circle.pb-bp-dot');
+    const hasBp = bpSet.has(block.id);
+    if (hasBp && !existing) {
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('class', 'pb-bp-dot');
+      dot.setAttribute('cx', '1');
+      dot.setAttribute('cy', '15');
+      dot.setAttribute('r', '5.5');
+      root.appendChild(dot);
+    } else if (!hasBp && existing) {
+      existing.remove();
+    }
+  }
+}
 
 function registerBreakpointContextMenu(): void {
   if (breakpointMenuRegistered) return;
@@ -244,7 +303,12 @@ function registerBreakpointContextMenu(): void {
     },
     preconditionFn: (scope) => {
       const blk = scope.block;
-      if (!blk || blk.isInFlyout || !findChannelFieldOnBlock(blk)) {
+      if (
+        currentReadOnlyLocked ||
+        !blk ||
+        blk.isInFlyout ||
+        !findChannelFieldOnBlock(blk)
+      ) {
         return 'hidden';
       }
       return 'enabled';
@@ -271,7 +335,13 @@ function registerBreakpointContextMenu(): void {
     displayText: () => '仅抽出此积木 (Ctrl+拖)',
     preconditionFn: (scope) => {
       const blk = scope.block;
-      if (!blk || blk.isInFlyout || !blk.previousConnection || !blk.nextConnection) {
+      if (
+        currentReadOnlyLocked ||
+        !blk ||
+        blk.isInFlyout ||
+        !blk.previousConnection ||
+        !blk.nextConnection
+      ) {
         return 'hidden';
       }
       if (!blk.previousConnection.isConnected() && !blk.nextConnection.isConnected()) {
@@ -306,6 +376,7 @@ function registerBreakpointContextMenu(): void {
     preconditionFn: (scope) => {
       const blk = scope.block;
       if (
+        currentReadOnlyLocked ||
         !blk ||
         blk.isInFlyout ||
         (blk.type !== 'procedures_defnoreturn' && blk.type !== 'procedures_defreturn')
@@ -355,6 +426,8 @@ export const BlocklyWorkbench = forwardRef<
     visible,
     executingBlockId,
     isPaused,
+    readOnlyLocked = false,
+    readOnlyLabel,
     breakpoints,
     enabledCapabilities,
     extraCategories,
@@ -386,6 +459,11 @@ export const BlocklyWorkbench = forwardRef<
   const initialDataRef = useRef(initialWorkspace);
   const enabledCapsRef = useRef<string[]>(enabledCapabilities);
   const extraCatsRef = useRef<BlockCategorySpec[]>(extraCategories);
+  const readOnlyLockedRef = useRef<boolean>(readOnlyLocked);
+  const executingBlockIdRef = useRef<string | null>(executingBlockId);
+  const isPausedRef = useRef<boolean>(isPaused);
+  const breakpointsRef = useRef<string[]>(breakpoints);
+  const effectiveFlyoutCollapsedRef = useRef<boolean>(false);
 
   const [activeCat, setActiveCat] = useState<string>('print');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -426,6 +504,15 @@ export const BlocklyWorkbench = forwardRef<
   currentToggleSharedFnHandler = onToggleSharedFunction ?? null;
   registerChannelAliasPromptHandler(onEditChannelAlias);
   currentBreakpointsSet = new Set(breakpoints);
+  currentReadOnlyLocked = readOnlyLocked;
+  readOnlyLockedRef.current = readOnlyLocked;
+  executingBlockIdRef.current = executingBlockId;
+  isPausedRef.current = isPaused;
+  breakpointsRef.current = breakpoints;
+
+  // Auto-collapse unusable toolbox flyout while running/paused to maximize viewing canvas space
+  const effectiveFlyoutCollapsed = flyoutCollapsed || readOnlyLocked;
+  effectiveFlyoutCollapsedRef.current = effectiveFlyoutCollapsed;
 
   const refreshFlyout = useCallback(
     (catId: string, query: string) => {
@@ -439,7 +526,12 @@ export const BlocklyWorkbench = forwardRef<
         enabledCapsRef.current,
       );
       ws.updateToolbox(toolboxDef);
-      requestAnimationFrame(() => syncFlyoutWidth(ws));
+      if (effectiveFlyoutCollapsedRef.current) {
+        ws.getFlyout()?.setVisible(false);
+        Blockly.svgResize(ws);
+      } else {
+        requestAnimationFrame(() => syncFlyoutWidth(ws));
+      }
     },
     [syncFlyoutWidth],
   );
@@ -447,9 +539,15 @@ export const BlocklyWorkbench = forwardRef<
   useEffect(() => {
     const ws = workspaceRef.current;
     if (!ws) return;
-    ws.getFlyout()?.setVisible(!flyoutCollapsed);
+    effectiveFlyoutCollapsedRef.current = effectiveFlyoutCollapsed;
+    ws.getFlyout()?.setVisible(!effectiveFlyoutCollapsed);
     Blockly.svgResize(ws);
-  }, [flyoutCollapsed]);
+    if (effectiveFlyoutCollapsed && executingBlockIdRef.current) {
+      ws.centerOnBlock(executingBlockIdRef.current);
+    } else {
+      ws.scroll(0, 0);
+    }
+  }, [effectiveFlyoutCollapsed]);
 
   // Initialize Blockly workspace once
   useEffect(() => {
@@ -496,7 +594,17 @@ export const BlocklyWorkbench = forwardRef<
 
     workspaceRef.current = ws;
 
+    // Ensure Blockly MetricsManager reports flyout width=0 whenever collapsed (manual or runtime read-only)
+    // so scroll(0, 0), scrollCenter(), and centerOnBlock() use the full dot-grid canvas with zero phantom margin.
+    const metricsMgr = ws.getMetricsManager();
+    const origGetFlyoutMetrics = metricsMgr.getFlyoutMetrics.bind(metricsMgr);
+    metricsMgr.getFlyoutMetrics = (own?: boolean) => {
+      const m = origGetFlyoutMetrics(own);
+      return effectiveFlyoutCollapsedRef.current ? { ...m, width: 0 } : m;
+    };
+
     ws.registerButtonCallback('CREATE_SHARED_VARIABLE', () => {
+      if (readOnlyLockedRef.current) return;
       if (onRequestCreateVarRef.current) {
         onRequestCreateVarRef.current('shared');
       } else {
@@ -507,6 +615,7 @@ export const BlocklyWorkbench = forwardRef<
     });
 
     ws.registerButtonCallback('CREATE_FILE_VARIABLE', () => {
+      if (readOnlyLockedRef.current) return;
       if (onRequestCreateVarRef.current) {
         onRequestCreateVarRef.current('file');
       } else {
@@ -517,6 +626,7 @@ export const BlocklyWorkbench = forwardRef<
     });
 
     ws.registerButtonCallback('CREATE_VARIABLE', () => {
+      if (readOnlyLockedRef.current) return;
       if (onRequestCreateVarRef.current) {
         onRequestCreateVarRef.current('file');
       } else {
@@ -527,14 +637,17 @@ export const BlocklyWorkbench = forwardRef<
     });
 
     ws.registerButtonCallback('CREATE_SHARED_FUNCTION', () => {
+      if (readOnlyLockedRef.current) return;
       onRequestCreateFnRef.current?.('shared');
     });
 
     ws.registerButtonCallback('CREATE_PRIVATE_FUNCTION', () => {
+      if (readOnlyLockedRef.current) return;
       onRequestCreateFnRef.current?.('file');
     });
 
     ws.registerButtonCallback(OPEN_HANDLE_CHANNEL_CONFIG_CALLBACK, () => {
+      if (readOnlyLockedRef.current) return;
       onOpenTimerCfgRef.current();
     });
 
@@ -758,51 +871,28 @@ export const BlocklyWorkbench = forwardRef<
     return () => cancelAnimationFrame(id);
   }, [visible]);
 
+  // Sync runtime read-only debug lock without destroying workspace or losing pan/zoom
+  useEffect(() => {
+    const ws = workspaceRef.current;
+    if (!ws) return;
+    if (readOnlyLocked) {
+      ws.hideChaff();
+    }
+    applyWorkspaceReadOnlyLock(ws, readOnlyLocked);
+  }, [readOnlyLocked]);
+
   // Apply live execution glow / paused ring directly on Blockly SVG block root
   useEffect(() => {
     const ws = workspaceRef.current;
     if (!ws) return;
-
-    const allBlocks = ws.getAllBlocks(false);
-    for (const block of allBlocks) {
-      const root = (block as Blockly.BlockSvg).getSvgRoot?.();
-      if (!root) continue;
-      root.classList.remove('pb-block-executing', 'pb-block-paused');
-    }
-
-    if (executingBlockId) {
-      const target = ws.getBlockById(executingBlockId) as Blockly.BlockSvg | null;
-      const root = target?.getSvgRoot?.();
-      if (root) {
-        root.classList.add(isPaused ? 'pb-block-paused' : 'pb-block-executing');
-      }
-    }
+    syncExecutionHighlightClasses(ws, executingBlockId, isPaused);
   }, [executingBlockId, isPaused]);
 
   // Render crisp crimson breakpoint dots directly on blocks that have breakpoints
   useEffect(() => {
     const ws = workspaceRef.current;
     if (!ws) return;
-    const bpSet = new Set(breakpoints);
-    const allBlocks = ws.getAllBlocks(false);
-
-    for (const block of allBlocks) {
-      const root = (block as Blockly.BlockSvg).getSvgRoot?.();
-      if (!root) continue;
-      const existing = root.querySelector(':scope > circle.pb-bp-dot');
-      const hasBp = bpSet.has(block.id);
-
-      if (hasBp && !existing) {
-        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        dot.setAttribute('class', 'pb-bp-dot');
-        dot.setAttribute('cx', '1');
-        dot.setAttribute('cy', '15');
-        dot.setAttribute('r', '5.5');
-        root.appendChild(dot);
-      } else if (!hasBp && existing) {
-        existing.remove();
-      }
-    }
+    syncBreakpointDots(ws, breakpoints);
   }, [breakpoints, executingBlockId]);
 
   useImperativeHandle(
@@ -817,12 +907,22 @@ export const BlocklyWorkbench = forwardRef<
           ws.clear();
           Blockly.serialization.workspaces.load(state, ws);
           declutterIfOverlapping(ws);
+          if (readOnlyLockedRef.current) {
+            applyWorkspaceReadOnlyLock(ws, true);
+          }
           ws.clearUndo();
           ws.scroll(0, 0);
         } finally {
           Blockly.Events.enable();
         }
+        syncBreakpointDots(ws, breakpointsRef.current);
+        syncExecutionHighlightClasses(
+          ws,
+          executingBlockIdRef.current,
+          isPausedRef.current,
+        );
         refreshFlyout(activeCatRef.current, searchQueryRef.current);
+        ws.scroll(0, 0);
       },
       saveWorkspaceJson: () => {
         const ws = workspaceRef.current;
@@ -910,6 +1010,7 @@ export const BlocklyWorkbench = forwardRef<
   };
 
   const handleArrangeBlocks = () => {
+    if (readOnlyLocked) return;
     const ws = workspaceRef.current;
     if (!ws) return;
     arrangeTopBlocksCleanly(ws, true);
@@ -925,7 +1026,34 @@ export const BlocklyWorkbench = forwardRef<
   };
 
   const handleUndo = (redo: boolean) => {
+    if (readOnlyLocked) return;
     workspaceRef.current?.undo(redo);
+  };
+
+  const handleCanvasKeyDownCapture = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!readOnlyLocked) return;
+    const k = e.key.toLowerCase();
+    const isMod = e.ctrlKey || e.metaKey;
+    if (
+      k === 'delete' ||
+      k === 'backspace' ||
+      (isMod && (k === 'z' || k === 'y' || k === 'x' || k === 'v' || k === 'd'))
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  const handleMountContextMenuCapture = (
+    e: React.MouseEvent<HTMLDivElement>,
+  ) => {
+    if (!readOnlyLocked) return;
+    const targetEl = e.target instanceof Element ? e.target : null;
+    // Allow right-clicking blocks (to toggle breakpoints), but suppress empty-canvas mutating menu
+    if (!targetEl?.closest('.blocklyDraggable')) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   };
 
   const firstExtIdx = orderedCategories.findIndex(
@@ -934,7 +1062,10 @@ export const BlocklyWorkbench = forwardRef<
 
   return (
     <div className="blockly-area">
-      <nav className="cat-strip" aria-label="积木分类">
+      <nav
+        className={`cat-strip ${readOnlyLocked ? 'readonly-locked' : ''}`}
+        aria-label="积木分类"
+      >
         {orderedCategories.map((cat, idx) => (
           <div key={cat.id} style={{ display: 'contents' }}>
             {firstExtIdx > 0 && idx === firstExtIdx && (
@@ -942,6 +1073,7 @@ export const BlocklyWorkbench = forwardRef<
             )}
             <button
               type="button"
+              disabled={readOnlyLocked}
               className={`cat-btn ${
                 !searchQuery && !flyoutCollapsed && activeCat === cat.id
                   ? 'active'
@@ -958,7 +1090,11 @@ export const BlocklyWorkbench = forwardRef<
                   setFlyoutCollapsed(false);
                 }
               }}
-              title={`${cat.isExtension ? '扩展分类：' : ''}${cat.label}（分类序 #${cat.order} · 再次点击可收起抽屉）`}
+              title={
+                readOnlyLocked
+                  ? '运行中画布已只读锁定（请先停止再拖入积木）'
+                  : `${cat.isExtension ? '扩展分类：' : ''}${cat.label}（分类序 #${cat.order} · 再次点击可收起抽屉）`
+              }
             >
               <span className="cat-dot" />
               <span>{cat.label}</span>
@@ -970,7 +1106,7 @@ export const BlocklyWorkbench = forwardRef<
           type="button"
           className="cat-add-ext"
           onClick={onOpenExtensionsPage}
-          title="管理或导入自定义扩展积木包"
+          title="查看或管理自定义扩展积木包"
         >
           <Puzzle size={13} />
           <span>+扩展</span>
@@ -978,9 +1114,23 @@ export const BlocklyWorkbench = forwardRef<
       </nav>
 
       <div
-        className={`canvas-container ${flyoutCollapsed ? 'flyout-collapsed' : ''}`}
+        className={`canvas-container ${effectiveFlyoutCollapsed ? 'flyout-collapsed' : ''} ${
+          readOnlyLocked ? 'readonly-locked' : ''
+        }`}
+        onKeyDownCapture={handleCanvasKeyDownCapture}
       >
-        {!flyoutCollapsed && (
+        {readOnlyLocked && (
+          <div
+            className="canvas-readonly-badge"
+            role="status"
+            title="运行中画布已只读锁定：禁止拖拽或修改积木；仍可自由切换脚本/句柄、缩放平移、点选代码对行或右键增删断点"
+          >
+            <Lock size={11} style={{ flexShrink: 0 }} />
+            <span>{readOnlyLabel ?? '运行中 · 只读'}</span>
+          </div>
+        )}
+
+        {!effectiveFlyoutCollapsed && (
           <div
             className={`flyout-search-dock ${flyoutWidth < 185 ? 'compact' : ''}`}
             style={{
@@ -991,8 +1141,13 @@ export const BlocklyWorkbench = forwardRef<
             <input
               type="text"
               aria-label="搜索积木"
+              disabled={readOnlyLocked}
               placeholder={
-                flyoutWidth < 185 ? '搜索积木' : '搜索积木 (打印 / 等待 / 循环)'
+                readOnlyLocked
+                  ? '运行中只读'
+                  : flyoutWidth < 185
+                    ? '搜索积木'
+                    : '搜索积木 (打印 / 等待 / 循环)'
               }
               value={searchQuery}
               onChange={(e) => {
@@ -1000,7 +1155,7 @@ export const BlocklyWorkbench = forwardRef<
                 if (flyoutCollapsed) setFlyoutCollapsed(false);
               }}
             />
-            {searchQuery && (
+            {searchQuery && !readOnlyLocked && (
               <button
                 type="button"
                 className="flyout-search-clear"
@@ -1013,14 +1168,19 @@ export const BlocklyWorkbench = forwardRef<
           </div>
         )}
 
-        <div className="blockly-mount" ref={mountRef} />
+        <div
+          className="blockly-mount"
+          ref={mountRef}
+          onContextMenuCapture={handleMountContextMenuCapture}
+        />
 
         <div className="canvas-controls" aria-label="画布视图控制">
           <button
             type="button"
             className="canvas-ctrl-btn"
+            disabled={readOnlyLocked}
             onClick={() => handleUndo(false)}
-            title="撤销 (Ctrl+Z)"
+            title={readOnlyLocked ? '运行中画布只读' : '撤销 (Ctrl+Z)'}
             aria-label="撤销"
           >
             <Undo2 size={13} />
@@ -1028,8 +1188,9 @@ export const BlocklyWorkbench = forwardRef<
           <button
             type="button"
             className="canvas-ctrl-btn"
+            disabled={readOnlyLocked}
             onClick={() => handleUndo(true)}
-            title="重做 (Ctrl+Y)"
+            title={readOnlyLocked ? '运行中画布只读' : '重做 (Ctrl+Y)'}
             aria-label="重做"
           >
             <Redo2 size={13} />
@@ -1067,8 +1228,11 @@ export const BlocklyWorkbench = forwardRef<
           <button
             type="button"
             className="canvas-ctrl-btn"
+            disabled={readOnlyLocked}
             onClick={handleArrangeBlocks}
-            title="自动整理画布积木（消除重叠）"
+            title={
+              readOnlyLocked ? '运行中画布只读' : '自动整理画布积木（消除重叠）'
+            }
           >
             <LayoutGrid size={12} />
             <span>整理</span>

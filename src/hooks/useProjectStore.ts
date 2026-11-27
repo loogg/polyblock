@@ -102,6 +102,7 @@ export interface ProjectStoreExecutionBridge {
   isExecutionActive: () => boolean;
   clearErrorLine: () => void;
   resetExecutionForSwitch: () => void;
+  syncViewSwitchDuringRun: (handleId: string, ws: Blockly.WorkspaceSvg | null) => void;
   deleteProjectSimState: (projectId: string) => void;
   resetAllSimStates: () => void;
   syncActiveBreakpoints: (breakpoints: string[]) => void;
@@ -228,7 +229,10 @@ export function useProjectStore({
   );
 
   const mountScriptIntoCanvas = useCallback(
-    (nextStore: WorkspaceStoreState) => {
+    (
+      nextStore: WorkspaceStoreState,
+      opts?: { preserveExecution?: boolean },
+    ) => {
       const nextProj = getActiveProject(nextStore);
       const nextHandle = getActiveHandle(nextProj);
       const nextScript = getActiveScript(nextHandle);
@@ -262,7 +266,9 @@ export function useProjectStore({
       languageRef.current = nextProj.language;
       breakpointsRef.current = nextScript.breakpoints;
 
-      executionBridgeRef.current.resetExecutionForSwitch();
+      if (!opts?.preserveExecution) {
+        executionBridgeRef.current.resetExecutionForSwitch();
+      }
       setViewingSharedModule(false);
 
       const syncedWorkspace = syncHandleVariablesIntoWorkspaceJson(
@@ -273,6 +279,12 @@ export function useProjectStore({
       const ws = workbenchRef.current?.getWorkspace();
       if (ws) {
         regenerateFromWorkspace(ws, nextProj.language);
+      }
+      if (opts?.preserveExecution) {
+        executionBridgeRef.current.syncViewSwitchDuringRun(
+          nextHandle.id,
+          ws ?? null,
+        );
       }
     },
     [executionBridgeRef, regenerateFromWorkspace, workbenchRef],
@@ -492,6 +504,7 @@ export function useProjectStore({
 
   const handleWorkspaceChange = useCallback(
     (ws: Blockly.WorkspaceSvg) => {
+      if (executionBridgeRef.current.isExecutionActive()) return;
       regenerateFromWorkspace(ws, languageRef.current);
       setIsDirty(true);
 
@@ -548,11 +561,14 @@ export function useProjectStore({
         handleId === activeHandleIdRef.current &&
         targetScriptId === activeScriptIdRef.current
       ) {
+        setViewingSharedModule(false);
         return;
       }
-      executionBridgeRef.current.stopIfRunning();
-      const flushed = flushActiveCanvasIntoStore(storeRef.current);
-      const nextStore = updateProjectById(flushed, curProj.id, (p) => ({
+      const running = executionBridgeRef.current.isExecutionActive();
+      const baseStore = running
+        ? storeRef.current
+        : flushActiveCanvasIntoStore(storeRef.current);
+      const nextStore = updateProjectById(baseStore, curProj.id, (p) => ({
         ...p,
         activeHandleId: handleId,
         handles: p.handles.map((h) =>
@@ -560,7 +576,7 @@ export function useProjectStore({
         ),
       }));
       setStore(nextStore);
-      mountScriptIntoCanvas(nextStore);
+      mountScriptIntoCanvas(nextStore, { preserveExecution: running });
     },
     [executionBridgeRef, flushActiveCanvasIntoStore, mountScriptIntoCanvas],
   );
@@ -837,7 +853,10 @@ export function useProjectStore({
   const handleSelectProject = useCallback(
     (projectId: string) => {
       if (projectId === activeProjectIdRef.current) return;
-      executionBridgeRef.current.stopIfRunning();
+      if (executionBridgeRef.current.isExecutionActive()) {
+        notify('请先停止当前运行再切换项目');
+        return;
+      }
       const flushed = flushActiveCanvasIntoStore(storeRef.current);
       const nextStore: WorkspaceStoreState = {
         ...flushed,
@@ -862,7 +881,10 @@ export function useProjectStore({
 
   const handleCreateFromTemplate = useCallback(
     (templateId: string) => {
-      executionBridgeRef.current.stopIfRunning();
+      if (executionBridgeRef.current.isExecutionActive()) {
+        notify('请先停止当前运行再新建项目');
+        return;
+      }
       const flushed = flushActiveCanvasIntoStore(storeRef.current);
       const created = instantiateProjectFromTemplate(
         templateId,
@@ -1005,7 +1027,10 @@ export function useProjectStore({
 
   const handleImportProject = useCallback(
     (imported: ProjectModel, absorbedPackNames: string[] = []) => {
-      executionBridgeRef.current.stopIfRunning();
+      if (executionBridgeRef.current.isExecutionActive()) {
+        notify('请先停止当前运行再导入项目');
+        return;
+      }
       const flushed = flushActiveCanvasIntoStore(storeRef.current);
       const nextStore: WorkspaceStoreState = {
         version: 3,
@@ -1034,7 +1059,10 @@ export function useProjectStore({
   );
 
   const handleResetWorkspace = useCallback(() => {
-    executionBridgeRef.current.stopIfRunning();
+    if (executionBridgeRef.current.isExecutionActive()) {
+      notify('请先停止当前运行再重置示例');
+      return;
+    }
     localStorage.removeItem(STORAGE_STORE_V9_KEY);
     const freshStore = createDefaultWorkspaceStore();
     setStore(freshStore);

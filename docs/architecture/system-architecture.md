@@ -1,6 +1,6 @@
 # PolyBlock 系统架构与工程方案
 
-> 本文档描述 PolyBlock **当前生效**的系统架构；核心架构不变量与开发红线以根目录 [AGENTS.md](../../AGENTS.md) 为准，各演进阶段的历史验收记录归档于 [docs/acceptance/](../acceptance/)。
+> 本文档描述 PolyBlock **当前生效**的系统架构；核心架构不变量与开发红线以根目录 [AGENTS.md](../../AGENTS.md) 为准，后续架构优化与新增语言演进规划见 [roadmap.md](./roadmap.md)，各演进阶段的历史验收记录归档于 [docs/acceptance/](../acceptance/)。
 
 ## 1. 四层解耦架构总览
 

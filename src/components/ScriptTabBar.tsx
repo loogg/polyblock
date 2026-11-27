@@ -27,6 +27,7 @@ interface ScriptTabBarProps {
   channelPools: ResolvedHandleChannelPoolSpec[];
   showExplorer: boolean;
   disabled?: boolean;
+  runningHandleIds?: string[];
   sharedModuleTab?: {
     fileName: string;
     moduleName?: string;
@@ -58,6 +59,7 @@ export function ScriptTabBar({
   channelPools,
   showExplorer,
   disabled = false,
+  runningHandleIds = [],
   sharedModuleTab = null,
   viewingSharedModule = false,
   onSelectSharedModule,
@@ -172,6 +174,13 @@ export function ScriptTabBar({
             style={{ background: activeHandle.color, flexShrink: 0 }}
           />
           <span className="handle-switcher-name">{activeHandle.name}</span>
+          {runningHandleIds.includes(activeHandle.id) && (
+            <span
+              className="running-handle-dot"
+              title="此句柄正在运行"
+              aria-label="运行中"
+            />
+          )}
           {handles.length > 1 && (
             <span className="count-badge">{handles.length}</span>
           )}
@@ -185,12 +194,12 @@ export function ScriptTabBar({
             </div>
             {handles.map((h) => {
               const hPoolSummary = formatHandleChannelPoolsSummary(h, channelPools);
+              const isHdlRunning = runningHandleIds.includes(h.id);
               return (
                 <button
                   key={h.id}
                   type="button"
                   className={`dropdown-item ${h.id === activeHandle.id ? 'active' : ''}`}
-                  disabled={disabled && h.id !== activeHandle.id}
                   onClick={() => {
                     onSelectHandle(h.id);
                     setShowHandleMenu(false);
@@ -201,6 +210,12 @@ export function ScriptTabBar({
                     style={{ background: h.color, flexShrink: 0 }}
                   />
                   <span className="dropdown-item-label">{h.name}</span>
+                  {isHdlRunning && (
+                    <span
+                      className="running-handle-dot"
+                      title="此句柄正在运行"
+                    />
+                  )}
                   <span className="count-badge">
                     {h.scripts.length} 脚本
                     {hPoolSummary ? ` · ${hPoolSummary}` : ''}
@@ -218,7 +233,6 @@ export function ScriptTabBar({
                 key={s.id}
                 type="button"
                 className={`dropdown-item ${s.id === activeScriptId ? 'active' : ''}`}
-                disabled={disabled && s.id !== activeScriptId}
                 onClick={() => {
                   onSelectScript(s.id);
                   setShowHandleMenu(false);
@@ -315,12 +329,7 @@ export function ScriptTabBar({
                   role="tab"
                   aria-selected={isActive}
                   className="script-tab-trigger"
-                  disabled={disabled && !isActive}
-                  onClick={() => {
-                    if (!disabled || isActive) {
-                      onSelectScript(script.id);
-                    }
-                  }}
+                  onClick={() => onSelectScript(script.id)}
                 >
                   {isEntry && (
                     <Star

@@ -43,6 +43,7 @@ interface CodeInspectorProps {
   isPaused: boolean;
   runnerStatus: RunnerStatus;
   multiHandleRunning: boolean;
+  runningHandleIds?: string[];
   breakpoints: string[];
   variables: Record<string, string>;
   errorLine: number | null;
@@ -83,6 +84,7 @@ export function CodeInspector({
   isPaused,
   runnerStatus,
   multiHandleRunning,
+  runningHandleIds = [],
   breakpoints,
   variables,
   errorLine,
@@ -222,12 +224,18 @@ export function CodeInspector({
 
   // Determine which handles to display in the Runtime Monitor card
   const monitoredHandles = useMemo(() => {
+    if (runningHandleIds.length > 0) {
+      const running = projectHandles.filter((h) =>
+        runningHandleIds.includes(h.id),
+      );
+      if (running.length > 0) return running;
+    }
     if (multiHandleRunning) {
       const running = projectHandles.filter((h) => h.autoStart);
       return running.length > 0 ? running : [activeHandle];
     }
     return [activeHandle];
-  }, [multiHandleRunning, projectHandles, activeHandle]);
+  }, [runningHandleIds, multiHandleRunning, projectHandles, activeHandle]);
 
   return (
     <aside className="inspector-pane" aria-label="实时代码、模拟外设、变量与校验面板">
@@ -396,9 +404,13 @@ export function CodeInspector({
                     }}
                     title={
                       bpBlockId
-                        ? hasBp
-                          ? '点击取消断点'
-                          : '点击设置断点'
+                        ? multiHandleRunning
+                          ? hasBp
+                            ? '点击取消断点（并发模式不触发暂停）'
+                            : '点击保存断点（并发模式不触发暂停，单句柄运行时生效）'
+                          : hasBp
+                            ? '点击取消断点'
+                            : '点击设置断点'
                         : undefined
                     }
                     aria-label={

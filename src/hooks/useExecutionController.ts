@@ -51,9 +51,15 @@ import type {
 import { collectHandleAllBreakpoints } from './useProjectStore';
 
 const SPEED_DELAY_MS: Record<ExecutionSpeedId, number> = {
-  fast: 0,
-  normal: 180,
-  slow: 450,
+  realtime: 0,
+  animate: 60,
+  slow: 250,
+};
+
+const SPEED_LABEL_ZH: Record<ExecutionSpeedId, string> = {
+  realtime: '实时 0ms',
+  animate: '动画 60ms',
+  slow: '慢放 250ms',
 };
 
 export function formatNowTime(): string {
@@ -78,13 +84,13 @@ function workspaceJsonContainsBlockId(node: unknown, targetId: string): boolean 
   return false;
 }
 
-function findScriptNameOwningBlockId(
+function findScriptOwningBlockId(
   handle: RuntimeHandle,
   blockId: string,
-): string | null {
+): ProjectScript | null {
   for (const s of handle.scripts) {
     if (workspaceJsonContainsBlockId(s.workspace, blockId)) {
-      return s.name;
+      return s;
     }
   }
   return null;
@@ -146,6 +152,7 @@ export interface UseExecutionControllerOptions {
     ws: Blockly.WorkspaceSvg,
     lang: ScriptLanguageId,
   ) => GeneratedCodeResult;
+  onFocusScriptForPause: (handleId: string, scriptId: string) => void;
   notify: (msg: string) => void;
 }
 
@@ -170,12 +177,14 @@ export function useExecutionController({
   workbenchRef,
   flushActiveCanvasIntoStore,
   regenerateFromWorkspace,
+  onFocusScriptForPause,
   notify,
 }: UseExecutionControllerOptions) {
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [executingBlockId, setExecutingBlockId] = useState<string | null>(null);
   const [liveVariables, setLiveVariables] = useState<Record<string, string>>({});
   const [errorLine, setErrorLine] = useState<number | null>(null);
+  const [runningHandleIds, setRunningHandleIds] = useState<string[]>([]);
 
   /** Per-project isolated simulator state so switching projects never bleeds simulated hardware state. */
   const [simStatesByProject, setSimStatesByProject] = useState<
@@ -208,11 +217,17 @@ export function useExecutionController({
   const activeSimPacksRef = useRef<PolyExtensionPack[]>(activeSimPacks);
   const runnerStatusRef = useRef<RunnerStatus>(runnerStatus);
   const multiHandleRunningRef = useRef<boolean>(multiHandleRunning);
+  const runningHandleIdRef = useRef<string | null>(null);
+  const lastExecutingRef = useRef<{ handleId: string; blockId: string } | null>(
+    null,
+  );
+  const onFocusScriptForPauseRef = useRef(onFocusScriptForPause);
 
   simStateRef.current = simState;
   activeSimPacksRef.current = activeSimPacks;
   runnerStatusRef.current = runnerStatus;
   multiHandleRunningRef.current = multiHandleRunning;
+  onFocusScriptForPauseRef.current = onFocusScriptForPause;
 
   useEffect(() => {
     return () => {
@@ -276,6 +291,9 @@ export function useExecutionController({
     ) {
       runnerManager.stopActive(true);
       multiHandleOrchestrator.stopAll(true);
+      runningHandleIdRef.current = null;
+      lastExecutingRef.current = null;
+      setRunningHandleIds([]);
       setMultiHandleRunning(false);
       setExecutingBlockId(null);
       setHandleTelemetries({});
@@ -293,6 +311,24 @@ export function useExecutionController({
     setHandleTelemetries({});
     setErrorLine(null);
   }, []);
+
+  const syncViewSwitchDuringRun = useCallback(
+    (viewedHandleId: string, ws: Blockly.WorkspaceSvg | null) => {
+      setSelectedBlockId(null);
+      const last = lastExecutingRef.current;
+      if (
+        last &&
+        last.handleId === viewedHandleId &&
+        ws &&
+        ws.getBlockById(last.blockId)
+      ) {
+        setExecutingBlockId(last.blockId);
+      } else {
+        setExecutingBlockId(null);
+      }
+    },
+    [],
+  );
 
   const deleteProjectSimState = useCallback((projectId: string) => {
     setSimStatesByProject((prev) => {
@@ -370,6 +406,12 @@ export function useExecutionController({
      ======================================================================== */
   const handleToggleBreakpoint = useCallback(
     (blockId: string) => {
+      const isMulti = multiHandleRunningRef.current;
+      const isSingleActive =
+        !isMulti &&
+        (runnerStatusRef.current === 'running' ||
+          runnerStatusRef.current === 'paused');
+
       setStore((prev) => {
         const proj = getActiveProject(prev);
         const hdl = getActiveHandle(proj);
@@ -381,9 +423,11 @@ export function useExecutionController({
         const nextScripts = hdl.scripts.map((s) =>
           s.id === scr.id ? { ...s, breakpoints: nextBps } : s,
         );
-        runnerManager.updateActiveBreakpoints(
-          collectHandleAllBreakpoints({ ...hdl, scripts: nextScripts }),
-        );
+        if (isSingleActive && runningHandleIdRef.current === hdl.id) {
+          runnerManager.updateActiveBreakpoints(
+            collectHandleAllBreakpoints({ ...hdl, scripts: nextScripts }),
+          );
+        }
         return updateProjectById(prev, proj.id, (p) =>
           updateHandleById(p, hdl.id, (h) => ({
             ...h,
@@ -391,20 +435,34 @@ export function useExecutionController({
           })),
         );
       });
+
+      if (isMulti) {
+        notify(
+          '断点已保存；多句柄「并发」模式不触发断点暂停，单句柄「运行 / 单步」时生效',
+        );
+      }
     },
-    [setStore],
+    [notify, setStore],
   );
 
   const handleClearBreakpoints = useCallback(() => {
+    const isMulti = multiHandleRunningRef.current;
+    const isSingleActive =
+      !isMulti &&
+      (runnerStatusRef.current === 'running' ||
+        runnerStatusRef.current === 'paused');
+
     setStore((prev) => {
       const proj = getActiveProject(prev);
       const hdl = getActiveHandle(proj);
       const nextScripts = hdl.scripts.map((s) =>
         s.id === activeScriptIdRef.current ? { ...s, breakpoints: [] } : s,
       );
-      runnerManager.updateActiveBreakpoints(
-        collectHandleAllBreakpoints({ ...hdl, scripts: nextScripts }),
-      );
+      if (isSingleActive && runningHandleIdRef.current === hdl.id) {
+        runnerManager.updateActiveBreakpoints(
+          collectHandleAllBreakpoints({ ...hdl, scripts: nextScripts }),
+        );
+      }
       return updateProjectById(prev, activeProjectIdRef.current, (p) =>
         updateHandleById(p, activeHandleIdRef.current, (h) => ({
           ...h,
@@ -532,6 +590,11 @@ export function useExecutionController({
 
       const allHandleBreakpoints = collectHandleAllBreakpoints(handleForRun);
       const speedDelay = SPEED_DELAY_MS[settings.executionSpeed];
+      const speedLabel = SPEED_LABEL_ZH[settings.executionSpeed];
+      runningHandleIdRef.current = handleForRun.id;
+      lastExecutingRef.current = null;
+      setRunningHandleIds([handleForRun.id]);
+
       const bootLogs: LogEntry[] = [
         {
           id: `start-${Date.now()}`,
@@ -545,7 +608,7 @@ export function useExecutionController({
                 siblingNames.length > 0
                   ? `同句柄模块: ${siblingNames.join(', ')} · `
                   : ''
-              }步进 ${speedDelay}ms${
+              }${speedLabel}${
                 allHandleBreakpoints.length > 0
                   ? ` · ${allHandleBreakpoints.length} 断点`
                   : ''
@@ -592,25 +655,43 @@ export function useExecutionController({
             appendLog(level, message, line, mappedBlock);
           },
           onStep: (blockId, vars) => {
-            const inActiveCanvas = Boolean(
-              workbenchRef.current?.getWorkspace()?.getBlockById(blockId),
-            );
+            lastExecutingRef.current = { handleId: handleForRun.id, blockId };
+            const isViewingRunHandle =
+              activeHandleIdRef.current === handleForRun.id;
+            const inActiveCanvas =
+              isViewingRunHandle &&
+              Boolean(workbenchRef.current?.getWorkspace()?.getBlockById(blockId));
             setExecutingBlockId(inActiveCanvas ? blockId : null);
             setLiveVariables(vars);
           },
           onPaused: (blockId, vars, reason) => {
-            const inActiveCanvas = Boolean(
-              workbenchRef.current?.getWorkspace()?.getBlockById(blockId),
-            );
-            setExecutingBlockId(inActiveCanvas ? blockId : null);
+            lastExecutingRef.current = { handleId: handleForRun.id, blockId };
+            const isViewingRunHandle =
+              activeHandleIdRef.current === handleForRun.id;
+            const inActiveCanvas =
+              isViewingRunHandle &&
+              Boolean(workbenchRef.current?.getWorkspace()?.getBlockById(blockId));
+            const ownerScript = findScriptOwningBlockId(handleForRun, blockId);
             setLiveVariables(vars);
+
+            if (!inActiveCanvas && ownerScript) {
+              // Auto-jump to the paused script so breakpoint / step pause is always visible
+              onFocusScriptForPauseRef.current(handleForRun.id, ownerScript.id);
+              requestAnimationFrame(() => {
+                workbenchRef.current?.focusBlock(blockId);
+              });
+              setExecutingBlockId(blockId);
+            } else {
+              setExecutingBlockId(inActiveCanvas ? blockId : null);
+              if (inActiveCanvas) {
+                workbenchRef.current?.focusBlock(blockId);
+              }
+            }
+
             const range = inActiveCanvas ? latest.sourceMap[blockId] : undefined;
             if (reason === 'breakpoint') {
-              const ownerScriptName = inActiveCanvas
-                ? activeScript.name
-                : findScriptNameOwningBlockId(handleForRun, blockId);
-              const bpFileLabel = ownerScriptName
-                ? `${activeHandle.name}/${ownerScriptName}.${adapter.extension}`
+              const bpFileLabel = ownerScript
+                ? `${handleForRun.name}/${ownerScript.name}.${adapter.extension}`
                 : scriptFileLabel;
               appendLog(
                 'warn',
@@ -618,17 +699,20 @@ export function useExecutionController({
                   range ? `（第 ${range.startLine} 行）` : ''
                 }，可查看变量或点击「继续 / 单步」。`,
                 range?.startLine,
-                inActiveCanvas ? blockId : undefined,
+                blockId,
               );
             }
           },
           onDeviceEvent: handleDeviceEvent,
           onRuntimeTelemetry: (tele) =>
-            setHandleTelemetries({ [activeHandle.id]: tele }),
+            setHandleTelemetries({ [handleForRun.id]: tele }),
           onStatusChange: (status) => setRunnerStatus(status),
         },
       );
 
+      runningHandleIdRef.current = null;
+      lastExecutingRef.current = null;
+      setRunningHandleIds([]);
       setLastDurationMs(result.durationMs);
       setExecutingBlockId(null);
       setHandleTelemetries({});
@@ -754,16 +838,39 @@ export function useExecutionController({
     setExecutingBlockId(null);
     setLiveVariables({});
     setHandleTelemetries({});
+    runningHandleIdRef.current = null;
+    lastExecutingRef.current = null;
+    setRunningHandleIds(runList.map((h) => h.id));
     setMultiHandleRunning(true);
+
+    const totalBreakpoints = runList.reduce(
+      (acc, h) => acc + collectHandleAllBreakpoints(h).length,
+      0,
+    );
+    const speedLabel = SPEED_LABEL_ZH[settings.executionSpeed];
 
     const multiBootLogs: LogEntry[] = [
       {
         id: `mstart-${Date.now()}`,
         timestamp: formatNowTime(),
         level: 'system',
-        message: `启动多句柄并发仿真：${runList.map((h) => h.name).join(' + ')}（共 ${runList.length} 个独立 WASM Worker，定时器与全局变量完全隔离）...`,
+        message: `启动多句柄并发仿真：${runList.map((h) => h.name).join(' + ')}（共 ${runList.length} 个独立 WASM Worker · ${speedLabel} · 定时器与全局变量完全隔离）...`,
+      },
+      {
+        id: `mbp-hint-${Date.now()}`,
+        timestamp: formatNowTime(),
+        level: totalBreakpoints > 0 ? 'warn' : 'info',
+        message:
+          totalBreakpoints > 0
+            ? `检测到当前自启动句柄中存在 ${totalBreakpoints} 个断点：多句柄「并发」模式专注多 VM 实时联动，不触发断点暂停；如需断点/单步调试请使用单句柄「运行」或「单步」。`
+            : '提示：多句柄「并发」模式专注多 VM 实时联动，不触发断点暂停（如需断点/单步调试请对单句柄使用「运行」或「单步」）。',
       },
     ];
+    if (totalBreakpoints > 0) {
+      notify(
+        `并发模式不触发断点暂停（已跳过 ${totalBreakpoints} 个断点）；如需断点调试请用单句柄「运行 / 单步」`,
+      );
+    }
     for (const ov of projectModRes.overrides) {
       multiBootLogs.push({
         id: `mov-${Date.now()}-${ov.moduleName}`,
@@ -809,6 +916,9 @@ export function useExecutionController({
     );
 
     const totalMs = Math.max(1, Math.round(performance.now() - t0));
+    runningHandleIdRef.current = null;
+    lastExecutingRef.current = null;
+    setRunningHandleIds([]);
     setLastDurationMs(totalMs);
     setMultiHandleRunning(false);
     setHandleTelemetries({});
@@ -862,6 +972,7 @@ export function useExecutionController({
     simState,
     runnerStatus,
     multiHandleRunning,
+    runningHandleIds,
     handleTelemetries,
     lastDurationMs,
     logs,
@@ -872,6 +983,7 @@ export function useExecutionController({
     stopIfRunning,
     clearErrorLine,
     resetExecutionForSwitch,
+    syncViewSwitchDuringRun,
     deleteProjectSimState,
     resetAllSimStates,
     syncActiveBreakpoints,

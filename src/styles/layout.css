@@ -1217,6 +1217,20 @@
   font-style: italic;
 }
 
+.running-handle-dot {
+  width: 6.5px;
+  height: 6.5px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 2px var(--success-soft);
+  flex-shrink: 0;
+  animation: poly-pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes poly-pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.82); }
+}
 
 /* Responsive Shell Breakpoints */
 @media (max-width: 1280px) {

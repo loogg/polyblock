@@ -24,6 +24,7 @@ import type { ProjectModel } from '../../types/project';
 interface ProjectsPageProps {
   projects: ProjectModel[];
   activeProjectId: string;
+  editingLocked?: boolean;
   onSelectProject: (projectId: string) => void;
   onCreateBlankProject: () => void;
   onCreateFromTemplate: (templateId: string) => void;
@@ -40,6 +41,7 @@ interface ProjectsPageProps {
 export function ProjectsPage({
   projects,
   activeProjectId,
+  editingLocked = false,
   onSelectProject,
   onCreateBlankProject,
   onCreateFromTemplate,
@@ -107,6 +109,8 @@ export function ProjectsPage({
             <button
               type="button"
               className="btn-primary"
+              disabled={editingLocked}
+              title={editingLocked ? '请先停止当前运行再新建项目' : undefined}
               onClick={onCreateBlankProject}
             >
               <FilePlus2 size={14} />
@@ -115,6 +119,8 @@ export function ProjectsPage({
             <button
               type="button"
               className="btn-outline"
+              disabled={editingLocked}
+              title={editingLocked ? '请先停止当前运行再导入项目' : undefined}
               onClick={() => fileInputRef.current?.click()}
             >
               <Upload size={14} />
@@ -233,7 +239,8 @@ export function ProjectsPage({
                       type="button"
                       className="btn-ghost"
                       style={{ padding: '4px 6px' }}
-                      title="重命名项目"
+                      disabled={editingLocked}
+                      title={editingLocked ? '请先停止当前运行再重命名项目' : '重命名项目'}
                       aria-label={`重命名项目 ${proj.name}`}
                       onClick={() => {
                         setEditingId(proj.id);
@@ -246,7 +253,8 @@ export function ProjectsPage({
                       type="button"
                       className="btn-ghost"
                       style={{ padding: '4px 6px' }}
-                      title="复制项目"
+                      disabled={editingLocked}
+                      title={editingLocked ? '请先停止当前运行再复制项目' : '复制项目'}
                       aria-label={`复制项目 ${proj.name}`}
                       onClick={() => onDuplicateProject(proj.id)}
                     >
@@ -267,7 +275,8 @@ export function ProjectsPage({
                         type="button"
                         className="btn-ghost"
                         style={{ padding: '4px 6px', color: 'var(--danger)' }}
-                        title="删除项目"
+                        disabled={editingLocked}
+                        title={editingLocked ? '请先停止当前运行再删除项目' : '删除项目'}
                         aria-label={`删除项目 ${proj.name}`}
                         onClick={() => onDeleteProject(proj.id)}
                       >
@@ -280,13 +289,25 @@ export function ProjectsPage({
                     type="button"
                     className={isActive ? 'btn-primary' : 'btn-outline'}
                     style={{ padding: '5px 10px', fontSize: 12 }}
+                    disabled={editingLocked && !isActive}
+                    title={
+                      editingLocked && !isActive
+                        ? '请先停止当前运行再切换项目'
+                        : undefined
+                    }
                     onClick={() => {
                       if (!isActive) onSelectProject(proj.id);
                       onReturnToBlocks();
                     }}
                   >
                     <FolderOpen size={13} />
-                    <span>{isActive ? '继续编辑' : '打开项目'}</span>
+                    <span>
+                      {isActive
+                        ? editingLocked
+                          ? '返回运行画布'
+                          : '继续编辑'
+                        : '打开项目'}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -338,6 +359,8 @@ export function ProjectsPage({
                     type="button"
                     className="btn-outline"
                     style={{ flexShrink: 0 }}
+                    disabled={editingLocked}
+                    title={editingLocked ? '请先停止当前运行再新建演示项目' : undefined}
                     onClick={() => {
                       onCreateFromTemplate(demoId);
                       onReturnToBlocks();
