@@ -8,11 +8,15 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { LANGUAGE_DIALECTS } from '../core/backends/types';
 import {
   validateSharedVariableName,
   type VariableScopeKind,
 } from '../core/projects/handleVariables';
-import type { VariableInitialValue } from '../types/project';
+import type {
+  ScriptLanguageId,
+  VariableInitialValue,
+} from '../types/project';
 
 export type BlocklyDialogRequest =
   | {
@@ -52,6 +56,7 @@ export type BlocklyDialogRequest =
 
 interface BlocklyDialogModalProps {
   request: BlocklyDialogRequest;
+  language?: ScriptLanguageId;
   handleName: string;
   handleColor: string;
   activeScriptLabel: string;
@@ -78,6 +83,7 @@ const INIT_KIND_BUTTONS: Array<{
 
 export function BlocklyDialogModal({
   request,
+  language = 'lua',
   handleName,
   handleColor,
   activeScriptLabel,
@@ -89,6 +95,8 @@ export function BlocklyDialogModal({
   allHandleFunctions = [],
   onClose,
 }: BlocklyDialogModalProps) {
+  const dialect = LANGUAGE_DIALECTS[language];
+  const sharedFileName = `shared.${dialect.extension}`;
   const [draft, setDraft] = useState(
     request.kind === 'prompt' ? request.defaultValue : '',
   );
@@ -572,7 +580,7 @@ export function BlocklyDialogModal({
                         className={`var-init-kind-btn ${!initBool ? 'active' : ''}`}
                         onClick={() => setInitBool(false)}
                       >
-                        false / False
+                        {dialect.boolFalse}
                       </button>
                       <button
                         type="button"
@@ -581,7 +589,7 @@ export function BlocklyDialogModal({
                         className={`var-init-kind-btn ${initBool ? 'active' : ''}`}
                         onClick={() => setInitBool(true)}
                       >
-                        true / True
+                        {dialect.boolTrue}
                       </button>
                     </div>
                   )}
@@ -622,15 +630,12 @@ export function BlocklyDialogModal({
                   {effectiveScope === 'shared' ? (
                     <>
                       函数积木保存在当前脚本「{activeScriptLabel}」便于编辑，导出时自动归入同句柄只读{' '}
-                      <code>shared</code> 模块（<code>shared.lua</code> /{' '}
-                      <code>shared.py</code>），所有脚本统一通过{' '}
+                      <code>{sharedFileName}</code> 模块，所有脚本统一通过{' '}
                       <code>shared.函数名()</code> 调用；跨文件函数不可引用单文件私有变量。
                     </>
                   ) : (
                     <>
-                      仅在当前脚本「{activeScriptLabel}」内部定义和调用：Lua 导出{' '}
-                      <code>local function</code>，Python 导出本文件 <code>def</code>
-                      ，不污染其他脚本。右键函数定义块可随时在私有/公共间切换。
+                      仅在当前脚本「{activeScriptLabel}」内部定义和调用，按当前目标语言导出为本文件作用域的私有函数，不污染同句柄其他脚本。右键函数定义块可随时在私有/公共间切换。
                     </>
                   )}
                 </p>
@@ -638,15 +643,13 @@ export function BlocklyDialogModal({
                 <p className="settings-hint" style={{ margin: 0 }}>
                   {effectiveScope === 'shared' ? (
                     <>
-                      将在句柄「{handleName}」内所有脚本间共享：Lua 自动归入只读{' '}
-                      <code>shared.lua</code>，Python 自动归入只读{' '}
-                      <code>shared.py</code>，统一以 <code>shared.变量名</code> 访问。
+                      将在句柄「{handleName}」内所有脚本间共享：自动归入当前句柄只读{' '}
+                      <code>{sharedFileName}</code> 模块，各脚本统一以{' '}
+                      <code>shared.变量名</code> 访问。
                     </>
                   ) : (
                     <>
-                      仅在当前脚本「{activeScriptLabel}」内所有回调共享、与其他脚本严格隔离：Lua 生成文件顶层{' '}
-                      <code>local</code>，Python 生成模块级变量（写入时自动加{' '}
-                      <code>global</code>）。
+                      仅在当前脚本「{activeScriptLabel}」内的顶层与各回调之间共享，与同句柄其他脚本严格隔离，导出为单文件作用域变量。
                     </>
                   )}
                 </p>

@@ -42,18 +42,6 @@ interface SharedVarsViewProps {
   onBackToCanvas: () => void;
 }
 
-const INIT_KIND_OPTIONS: Array<{
-  kind: VariableInitialValue['kind'];
-  label: string;
-}> = [
-  { kind: 'null', label: '空值 (nil/None)' },
-  { kind: 'number', label: '数字' },
-  { kind: 'boolean', label: '布尔' },
-  { kind: 'string', label: '文本' },
-  { kind: 'list', label: '空列表 []' },
-  { kind: 'dict', label: '空字典 {}' },
-];
-
 export function SharedVarsView({
   handleName,
   handleColor,
@@ -74,6 +62,17 @@ export function SharedVarsView({
   const lines = source.replace(/\n$/, '').split('\n');
   const dialect = LANGUAGE_DIALECTS[language];
   const ext = dialect.extension;
+  const initKindOptions: Array<{
+    kind: VariableInitialValue['kind'];
+    label: string;
+  }> = [
+    { kind: 'null', label: `空值 (${dialect.nullLiteral})` },
+    { kind: 'number', label: '数字' },
+    { kind: 'boolean', label: '布尔' },
+    { kind: 'string', label: '文本' },
+    { kind: 'list', label: `空列表 ${dialect.listLiteral}` },
+    { kind: 'dict', label: `空字典 ${dialect.dictLiteral}` },
+  ];
 
   const handleInitKindChange = (
     varName: string,
@@ -162,8 +161,8 @@ export function SharedVarsView({
         <div className="shared-vars-banner">
           该模块由 PolyBlock 根据当前句柄「{handleName}」的
           <strong>跨文件全局变量</strong>与<strong>跨文件公共函数</strong>
-          自动生成（Style A1 统一只读模块，Lua 导出 <code>shared.lua</code>、Python 导出{' '}
-          <code>shared.py</code>）；任意引用它的脚本顶部会自动引入，导出目标运行包（
+          自动生成（Style A1 统一只读模块，当前目标语言 {dialect.displayName} 导出为{' '}
+          <code>{fileName}</code>）；任意引用它的脚本顶部会自动引入，导出目标运行包（
           <code>.zip</code>）时一并打包。
         </div>
 
@@ -206,7 +205,7 @@ export function SharedVarsView({
                           )
                         }
                       >
-                        {INIT_KIND_OPTIONS.map((opt) => (
+                        {initKindOptions.map((opt) => (
                           <option key={opt.kind} value={opt.kind}>
                             {opt.label}
                           </option>
@@ -244,8 +243,8 @@ export function SharedVarsView({
                             })
                           }
                         >
-                          <option value="false">false</option>
-                          <option value="true">true</option>
+                          <option value="false">{dialect.boolFalse}</option>
+                          <option value="true">{dialect.boolTrue}</option>
                         </select>
                       )}
 

@@ -1,8 +1,17 @@
 import { ArrowLeft, Cpu, Globe, Terminal } from 'lucide-react';
+import { LANGUAGE_DIALECTS } from '../../core/backends/types';
 import {
   PLANNED_RUNNER_SLOTS,
   runnerManager,
 } from '../../core/runners/manager';
+import type { ScriptLanguageId } from '../../types/project';
+
+const RUNNER_LANG_GRADIENTS: Partial<Record<ScriptLanguageId, string>> = {
+  lua: 'linear-gradient(135deg, #2563eb, #4f46e5)',
+  python: 'linear-gradient(135deg, #0d9488, #10b981)',
+};
+
+const DEFAULT_RUNNER_GRADIENT = 'linear-gradient(135deg, #475569, #334155)';
 
 interface DevicesPageProps {
   onReturnToBlocks: () => void;
@@ -30,45 +39,61 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
 
         <h2 className="section-heading">当前可用执行器（Phase 1 内置 · 零后端）</h2>
         <div className="card-grid">
-          {builtinRunners.map((runner) => (
-            <div key={runner.id} className="ui-card">
-              <div className="card-top">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div
-                    className="card-icon"
-                    style={{
-                      background: runner.supportedLanguages.includes('lua')
-                        ? 'linear-gradient(135deg, #2563eb, #4f46e5)'
-                        : 'linear-gradient(135deg, #0d9488, #10b981)',
-                    }}
-                  >
-                    WASM
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 700 }}>{runner.name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      Web Worker 沙箱 · 兼容 GitHub Pages
+          {builtinRunners.map((runner) => {
+            const primaryLang = runner.supportedLanguages[0];
+            const iconBackground =
+              (primaryLang ? RUNNER_LANG_GRADIENTS[primaryLang] : undefined) ??
+              DEFAULT_RUNNER_GRADIENT;
+            return (
+              <div key={runner.id} className="ui-card">
+                <div className="card-top">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div
+                      className="card-icon"
+                      style={{ background: iconBackground }}
+                    >
+                      WASM
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 700 }}>{runner.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        Web Worker 沙箱 · 兼容 GitHub Pages
+                      </div>
                     </div>
                   </div>
+                  <span className="status-pill ok">已就绪</span>
                 </div>
-                <span className="status-pill ok">已就绪</span>
+                <p className="card-desc">{runner.description}</p>
+                <div className="card-footer">
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      fontSize: 11.5,
+                      color: 'var(--text-muted)',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <span>支持：</span>
+                    {runner.supportedLanguages.map((lang) => (
+                      <span key={lang} className="count-badge">
+                        {LANGUAGE_DIALECTS[lang]?.shortLabel ?? lang}
+                      </span>
+                    ))}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    onClick={onReturnToBlocks}
+                  >
+                    <Terminal size={13} />
+                    <span>前往试跑</span>
+                  </button>
+                </div>
               </div>
-              <p className="card-desc">{runner.description}</p>
-              <div className="card-footer">
-                <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                  支持：{runner.supportedLanguages.join(' / ').toUpperCase()}
-                </span>
-                <button
-                  type="button"
-                  className="btn-outline"
-                  onClick={onReturnToBlocks}
-                >
-                  <Terminal size={13} />
-                  <span>前往试跑</span>
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <h2 className="section-heading">预留扩展槽位（Phase 2 按需接入）</h2>

@@ -29,6 +29,7 @@ interface ScriptTabBarProps {
   disabled?: boolean;
   sharedModuleTab?: {
     fileName: string;
+    moduleName?: string;
     itemCount: number;
     varCount: number;
     fnCount: number;
@@ -366,24 +367,32 @@ export function ScriptTabBar({
         </button>
       </div>
 
-      {/* Pinned Far-Right Read-Only `shared.lua` / `shared.py` Tab (Style A1) */}
-      {sharedModuleTab && onSelectSharedModule && (
-        <button
-          type="button"
-          role="tab"
-          aria-selected={viewingSharedModule}
-          className={`script-tab-pinned ${viewingSharedModule ? 'active' : ''}`}
-          onClick={onSelectSharedModule}
-          title={`自动生成的同句柄跨文件共享模块 ${sharedModuleTab.fileName}（${sharedModuleTab.varCount} 变量 · ${sharedModuleTab.fnCount} 公共函数 · 只读，随目标运行包一起导出）`}
-        >
-          <Lock size={11} className="script-tab-lock" />
-          <span className="script-tab-name">
-            {sharedModuleTab.fileName.replace(/\.(lua|py)$/, '')}
-            <span className="script-tab-ext">.{extension}</span>
-          </span>
-          <span className="count-badge">{sharedModuleTab.itemCount}</span>
-        </button>
-      )}
+      {/* Pinned Far-Right Read-Only `shared.<ext>` Tab (Style A1) */}
+      {sharedModuleTab && onSelectSharedModule && (() => {
+        const extSuffix = `.${extension}`;
+        const sharedBaseName =
+          sharedModuleTab.moduleName ??
+          (sharedModuleTab.fileName.endsWith(extSuffix)
+            ? sharedModuleTab.fileName.slice(0, -extSuffix.length)
+            : sharedModuleTab.fileName.replace(/\.[^.]+$/, ''));
+        return (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewingSharedModule}
+            className={`script-tab-pinned ${viewingSharedModule ? 'active' : ''}`}
+            onClick={onSelectSharedModule}
+            title={`自动生成的同句柄跨文件共享模块 ${sharedModuleTab.fileName}（${sharedModuleTab.varCount} 变量 · ${sharedModuleTab.fnCount} 公共函数 · 只读，随目标运行包一起导出）`}
+          >
+            <Lock size={11} className="script-tab-lock" />
+            <span className="script-tab-name">
+              {sharedBaseName}
+              <span className="script-tab-ext">.{extension}</span>
+            </span>
+            <span className="count-badge">{sharedModuleTab.itemCount}</span>
+          </button>
+        );
+      })()}
 
       {/* Unclipped Tab Context Menu */}
       {menuState && menuScript && (
