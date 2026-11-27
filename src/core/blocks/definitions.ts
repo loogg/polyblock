@@ -472,6 +472,35 @@ export function registerPolyBlocks(): void {
     }
   }
 
+  // Extend native Blockly `controls_flow_statements` (break/continue) so its
+  // `getSurroundLoop()` validator recognizes our custom `poly_repeat_times` and `poly_for_range` loops.
+  const POLY_LOOP_TYPES = new Set([
+    'poly_repeat_times',
+    'poly_for_range',
+    'controls_repeat',
+    'controls_repeat_ext',
+    'controls_forEach',
+    'controls_for',
+    'controls_whileUntil',
+  ]);
+  const flowDef = Blockly.Blocks['controls_flow_statements'];
+  if (flowDef && typeof flowDef.init === 'function') {
+    const origFlowInit = flowDef.init;
+    flowDef.init = function patchedFlowInit(
+      this: Blockly.Block & { getSurroundLoop?: () => Blockly.Block | null },
+    ) {
+      origFlowInit.call(this);
+      this.getSurroundLoop = function (this: Blockly.Block) {
+        let cur: Blockly.Block | null = this;
+        do {
+          if (POLY_LOOP_TYPES.has(cur.type)) return cur;
+          cur = cur.getSurroundParent();
+        } while (cur);
+        return null;
+      };
+    };
+  }
+
   // Register all built-in declarative extension packs (rt, virtual-board, clock-timer) & custom packs
   extensionRegistry.ensureInitialized();
 

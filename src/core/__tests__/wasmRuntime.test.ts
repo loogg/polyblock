@@ -2089,4 +2089,151 @@ sys.modules["board"] = _m
     expect(pyLogs).toContain('HAS2 = False');
     expect(pyLogs).toContain('REP = hi Poly');
   });
+
+  it('supports native Blockly controls_flow_statements (continue & break) inside poly_for_range and poly_repeat_times in Wasmoon Lua 5.4 & MicroPython', async () => {
+    // for i = 1..6: if i == 2 -> continue; if i == 5 -> break; print(i) => outputs 1, 3, 4
+    // plus repeat 3 times with continue -> verifies ::continue:: label on poly_repeat_times too!
+    const wsJson = {
+      blocks: {
+        languageVersion: 0,
+        blocks: [
+          {
+            type: 'poly_on_start',
+            id: 'cf_start',
+            inputs: {
+              BODY: {
+                block: {
+                  type: 'poly_for_range',
+                  id: 'cf_for',
+                  fields: { VAR: { id: 'v_i' } },
+                  inputs: {
+                    FROM: { block: { type: 'math_number', id: 'cf_f', fields: { NUM: 1 } } },
+                    TO: { block: { type: 'math_number', id: 'cf_t', fields: { NUM: 6 } } },
+                    BY: { block: { type: 'math_number', id: 'cf_b', fields: { NUM: 1 } } },
+                    DO: {
+                      block: {
+                        type: 'controls_if',
+                        id: 'cf_if2',
+                        inputs: {
+                          IF0: {
+                            block: {
+                              type: 'logic_compare',
+                              id: 'cf_cmp2',
+                              fields: { OP: 'EQ' },
+                              inputs: {
+                                A: { block: { type: 'variables_get', id: 'cf_gi1', fields: { VAR: { id: 'v_i' } } } },
+                                B: { block: { type: 'math_number', id: 'cf_n2', fields: { NUM: 2 } } },
+                              },
+                            },
+                          },
+                          DO0: {
+                            block: {
+                              type: 'controls_flow_statements',
+                              id: 'cf_cont',
+                              fields: { FLOW: 'CONTINUE' },
+                            },
+                          },
+                        },
+                        next: {
+                          block: {
+                            type: 'controls_if',
+                            id: 'cf_if5',
+                            inputs: {
+                              IF0: {
+                                block: {
+                                  type: 'logic_compare',
+                                  id: 'cf_cmp5',
+                                  fields: { OP: 'EQ' },
+                                  inputs: {
+                                    A: { block: { type: 'variables_get', id: 'cf_gi2', fields: { VAR: { id: 'v_i' } } } },
+                                    B: { block: { type: 'math_number', id: 'cf_n5', fields: { NUM: 5 } } },
+                                  },
+                                },
+                              },
+                              DO0: {
+                                block: {
+                                  type: 'controls_flow_statements',
+                                  id: 'cf_brk',
+                                  fields: { FLOW: 'BREAK' },
+                                },
+                              },
+                            },
+                            next: {
+                              block: {
+                                type: 'poly_print_kv',
+                                id: 'cf_pr',
+                                fields: { LABEL: 'I' },
+                                inputs: {
+                                  VALUE: { block: { type: 'variables_get', id: 'cf_gi3', fields: { VAR: { id: 'v_i' } } } },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                  next: {
+                    block: {
+                      type: 'poly_repeat_times',
+                      id: 'cf_rep',
+                      inputs: {
+                        TIMES: { block: { type: 'math_number', id: 'cf_rn', fields: { NUM: 2 } } },
+                        DO: {
+                          block: {
+                            type: 'controls_flow_statements',
+                            id: 'cf_rep_cont',
+                            fields: { FLOW: 'CONTINUE' },
+                          },
+                        },
+                      },
+                      next: {
+                        block: {
+                          type: 'poly_print',
+                          id: 'cf_done',
+                          inputs: { VALUE: { block: { type: 'text', id: 'cf_dt', fields: { TEXT: 'LOOP_OK' } } } },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+      variables: [{ name: 'i', id: 'v_i' }],
+    };
+
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(wsJson, ws);
+
+    // Verify Blockly's native validator recognizes `poly_for_range` & `poly_repeat_times` as loops!
+    const contBlk = ws.getBlockById('cf_cont') as Blockly.Block & {
+      getSurroundLoop?: () => Blockly.Block | null;
+    };
+    const repContBlk = ws.getBlockById('cf_rep_cont') as Blockly.Block & {
+      getSurroundLoop?: () => Blockly.Block | null;
+    };
+    expect(contBlk.getSurroundLoop?.()?.id).toBe('cf_for');
+    expect(repContBlk.getSurroundLoop?.()?.id).toBe('cf_rep');
+
+    const luaRes = backendRegistry.get('lua').generate(ws);
+    const pyRes = backendRegistry.get('python').generate(ws);
+    ws.dispose();
+
+    expect(luaRes.diagnostics).toHaveLength(0);
+    expect(pyRes.diagnostics).toHaveLength(0);
+    expect(luaRes.code).toContain('goto continue');
+    expect(luaRes.code).toContain('::continue::');
+    expect(luaRes.code).toContain('break');
+    expect(pyRes.code).toContain('continue');
+    expect(pyRes.code).toContain('break');
+
+    const { logs: luaLogs } = await runLuaDebugInWasmoon(luaRes.debugCode);
+    expect(luaLogs).toEqual(['I = 1', 'I = 3', 'I = 4', 'LOOP_OK']);
+
+    const { logs: pyLogs } = await runPyDebugInMicroPython(pyRes.debugCode);
+    expect(pyLogs).toEqual(['I = 1', 'I = 3', 'I = 4', 'LOOP_OK']);
+  });
 });

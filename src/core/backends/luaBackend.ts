@@ -119,11 +119,32 @@ export function registerLuaBlockGenerators(): void {
     return `print(${label} .. " = " .. tostring(${value}))\n`;
   };
 
+  const loopNeedsLuaContinueLabel = (loopBlock: Blockly.Block): boolean => {
+    for (const desc of loopBlock.getDescendants(false)) {
+      if (desc.isShadow() || !desc.isEnabled() || desc === loopBlock) continue;
+      if (
+        desc.type === 'controls_flow_statements' &&
+        desc.getFieldValue('FLOW') === 'CONTINUE'
+      ) {
+        const flowBlk = desc as Blockly.Block & {
+          getSurroundLoop?: () => Blockly.Block | null;
+        };
+        if (flowBlk.getSurroundLoop?.() === loopBlock) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
   luaGenerator.forBlock['poly_repeat_times'] = (block, generator) => {
     const times = generator.valueToCode(block, 'TIMES', Order.NONE) || '0';
     let branch = generator.statementToCode(block, 'DO');
     if (codegenContext.debugPass && !branch.trim()) {
       branch = '  __poly_yield_check()\n';
+    }
+    if (loopNeedsLuaContinueLabel(block)) {
+      branch += '  ::continue::\n';
     }
     return `for _count = 1, ${times} do\n${branch}end\n`;
   };
@@ -136,6 +157,9 @@ export function registerLuaBlockGenerators(): void {
     let branch = generator.statementToCode(block, 'DO');
     if (codegenContext.debugPass && !branch.trim()) {
       branch = '  __poly_yield_check()\n';
+    }
+    if (loopNeedsLuaContinueLabel(block)) {
+      branch += '  ::continue::\n';
     }
     const stepPart = by.trim() === '1' ? '' : `, ${by}`;
     return `for ${variableName} = ${from}, ${to}${stepPart} do\n${branch}end\n`;

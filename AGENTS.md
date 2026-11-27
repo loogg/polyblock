@@ -25,10 +25,14 @@
 - 所有顶层帽块（含核心 `on_start`）统一由 `hat.mode`（`'singleton'` | `'dispatch'`）元数据驱动，禁止按块名写特例。
 - 句柄唯一主入口（`entry`）自动限制 `singleton` 帽块仅主入口可用，并自动聚合本句柄全文件的 `dispatch` 分发路由；当某类分发回调全被删除时，主入口对应分发路由必须自动删除。
 
-## 4. 新增语言后端的 Blockly 防坑清单
-- **必须覆写 Blockly 默认生成器**：`variables_get/set`、`math_change`、`text_append`、循环变量及 `procedures_*` 必须接管，以严格对齐 3 级变量与 2 级函数作用域（避免默认 `global` 散弹声明或未用变量污染顶层）。
+## 4. 原生 Blockly 积木准入与后端防坑清单
+- **原生 Blockly 积木准入审查（硬门禁）**：每次把新的原生 Blockly 积木加入工具箱前，必须实测其全部目标语言默认生成器与交互校验源码，逐项核查（不满足即覆写生成器、打补丁或改用 `poly_*` 块）：
+  1. **作用域合规**：凡读写变量、循环变量或定义/调用函数，必须严格对齐 3 级变量与 2 级函数模型（覆写 `variables_get/set`、`math_change`、`text_append`、循环变量及 `procedures_*`，禁止默认 `global` 散弹声明或未用变量污染顶层）。
+  2. **零隐藏魔术代码**：禁止默认生成器通过 `provideFunction_` 注入隐藏函数或隐式类型兜底。
+  3. **语言语义与校验协同**：核查跨语言差异与 Blockly 内置校验（如 Lua `goto continue` 需循环块配套 `::continue::` 且 `controls_flow_statements.getSurroundLoop` 须识别自定义 `poly_*` 循环；列表 1-based/0-based 与标准库导入）。
+  4. **调试/协程兼容**：核查 `debugPass` 下与哨兵行号（`STATEMENT_PREFIX`）、空循环防卡死让出点是否冲突。
+  5. **链式优先级**：容器取键/取值与字面量须设准 `Order`（例如 Lua 索引返回 `Order.ATOMIC`、`{}` 返回 `Order.HIGH`），避免生成前导括号 `(a['b'])['val'] = 0` 触发语法歧义。
 - **禁止跨文件幽灵函数**：跨文件函数调用使用独立块（`poly_call_shared_*`），防止 Blockly 内置 `procedures_call*` 在调用方画布自动生成幽灵 `procedures_def*`。
-- **检查链式索引优先级**：容器取键/取值与字面量须设准 `Order`（例如 Lua 索引返回 `Order.ATOMIC`、`{}` 返回 `Order.HIGH`），避免生成前导括号 `(a['b'])['val'] = 0` 触发语法歧义。
 
 ## 5. 验证与发布红线
 - 每次架构/UI 改动须过 `npx tsc -b` + `npm test`（含真 WASM 运行）+ 真实浏览器 E2E 视觉核查。
