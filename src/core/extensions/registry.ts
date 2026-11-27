@@ -318,9 +318,48 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
   return badges;
 }
 
+/** Tracks the last registered Blockly visual definition fingerprint per block type to avoid redundant overwrites. */
+const registeredBlockVisualFingerprints = new Map<string, string>();
+
+function buildBlockVisualFingerprint(
+  b: ExtensionBlockDef,
+  section: ResolvedPackSection,
+  fullTooltip: string,
+  hasChannelField: boolean,
+): string {
+  const pool = section.channelPool;
+  return JSON.stringify({
+    type: b.type,
+    kind: b.kind,
+    message0: b.message0,
+    args0: b.args0 ?? [],
+    inputsInline: b.inputsInline ?? true,
+    outputType: b.outputType ?? null,
+    blockStyle: b.blockStyle ?? null,
+    color: section.color,
+    tooltip: fullTooltip,
+    hasChannelField,
+    ...(hasChannelField
+      ? {
+          pool: pool
+            ? {
+                configKey: pool.configKey,
+                prefix: pool.prefix,
+                label: pool.label,
+                defaultCount: pool.defaultCount,
+                max: pool.max,
+              }
+            : null,
+        }
+      : {}),
+  });
+}
+
 /**
  * Registers a single declarative block (including dynamic `field_channel_id` dropdowns
  * and top-level `hat` event callbacks) into Blockly's visual block registry.
+ * Skips identical re-registrations and cleanly replaces modified definitions without
+ * triggering Blockly's spurious overwrite console warnings.
  */
 function registerSingleBlockInBlockly(
   pack: PolyExtensionPack,
@@ -337,6 +376,22 @@ function registerSingleBlockInBlockly(
   const hasChannelField = (b.args0 ?? []).some(
     (arg) => arg.type === 'field_channel_id',
   );
+
+  const fingerprint = buildBlockVisualFingerprint(
+    b,
+    section,
+    fullTooltip,
+    hasChannelField,
+  );
+  if (
+    Blockly.Blocks[b.type] &&
+    registeredBlockVisualFingerprints.get(b.type) === fingerprint
+  ) {
+    return;
+  }
+  if (Blockly.Blocks[b.type]) {
+    delete Blockly.Blocks[b.type];
+  }
 
   if (!hasChannelField) {
     const jsonDef: Record<string, unknown> = {
@@ -364,6 +419,7 @@ function registerSingleBlockInBlockly(
     }
 
     Blockly.defineBlocksWithJsonArray([jsonDef]);
+    registeredBlockVisualFingerprints.set(b.type, fingerprint);
     return;
   }
 
@@ -454,6 +510,7 @@ function registerSingleBlockInBlockly(
       this.setTooltip(fullTooltip);
     },
   };
+  registeredBlockVisualFingerprints.set(b.type, fingerprint);
 }
 
 function shouldExtractDispatchBranchesForEvent(
@@ -613,9 +670,11 @@ class ExtensionRegistry {
   setActiveProjectLocalPacks(localPacks: PolyExtensionPack[] = []): void {
     this.ensureInitialized();
     const prevOverriddenIds = Array.from(this.activeLocalPacks.keys());
+    const nextLocalIds = new Set(localPacks.map((p) => p.id));
     this.activeLocalPacks.clear();
 
     for (const oldId of prevOverriddenIds) {
+      if (nextLocalIds.has(oldId)) continue;
       const globalPack = this.packs.get(oldId);
       if (globalPack) {
         registerPackIntoBlocklyAndGenerators(
