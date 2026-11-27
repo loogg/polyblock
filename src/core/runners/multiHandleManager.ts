@@ -6,7 +6,7 @@ import type {
   RuntimeTelemetry,
   ScriptLanguageId,
 } from '../../types/project';
-import { LANGUAGE_DIALECTS } from '../backends/types';
+import { backendRegistry } from '../backends/registry';
 import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { buildHandleSharedModule } from '../backends/sharedModule';
 import {
@@ -150,7 +150,8 @@ export class MultiHandleRunnerOrchestrator {
 
     if (!runnerManager.findForLanguage(project.language)) {
       const langLabel =
-        LANGUAGE_DIALECTS[project.language]?.displayName ?? project.language;
+        backendRegistry.tryGetDialect(project.language)?.displayName ??
+        project.language;
       const errorMessage = `当前目标语言（${langLabel}）未注册浏览器沙箱 Runner（仅支持代码导出），无法启动多句柄模拟运行。`;
       for (const handle of handlesToRun) {
         callbacks.onHandleLog(handle, 'error', errorMessage);

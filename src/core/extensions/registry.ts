@@ -1,10 +1,11 @@
 import * as Blockly from 'blockly';
 import type { ScriptLanguageId } from '../../types/project';
 import {
-  LANGUAGE_DIALECTS,
-  SUPPORTED_LANGUAGE_IDS,
-  type ScriptBackendAdapter,
-} from '../backends/types';
+  backendRegistry,
+  getLanguageDialect,
+  getSupportedLanguageIds,
+} from '../backends/registry';
+import type { ScriptBackendAdapter } from '../backends/types';
 import type { BlockCategorySpec, ToolboxBlockSpec } from '../blocks/catalog';
 import { createChannelIdField } from '../blocks/channelField';
 import {
@@ -13,7 +14,7 @@ import {
   getActiveHandleScripts,
   isCurrentHandleScriptEntry,
 } from '../blocks/workspaceContextBridge';
-import { hasCapability } from '../capabilities/registry';
+import { hasCapability } from '../capabilities/matching';
 import { BUILTIN_EXTENSION_PACKS } from './builtinPacks';
 import {
   DEFAULT_PACK_TOOLBOX_ORDER,
@@ -196,17 +197,18 @@ export function getPackSupportedLanguages(pack: PolyExtensionPack): {
   supported: ScriptLanguageId[];
   label: string;
 } {
+  const supportedIds = getSupportedLanguageIds();
   const nonHatBlocks = getAllPackBlocks(pack).filter((b) => b.kind !== 'hat');
   const supported: ScriptLanguageId[] =
     nonHatBlocks.length === 0
-      ? [...SUPPORTED_LANGUAGE_IDS]
-      : SUPPORTED_LANGUAGE_IDS.filter((lang) =>
+      ? [...supportedIds]
+      : supportedIds.filter((lang) =>
           nonHatBlocks.some((b) => Boolean(b.code?.[lang]?.template)),
         );
   const label =
     supported.length === 1
-      ? `仅 ${LANGUAGE_DIALECTS[supported[0]].displayName}`
-      : supported.map((lang) => LANGUAGE_DIALECTS[lang].displayName).join(' / ');
+      ? `仅 ${getLanguageDialect(supported[0]).displayName}`
+      : supported.map((lang) => getLanguageDialect(lang).displayName).join(' / ');
   return {
     supported,
     label,
@@ -268,7 +270,7 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
   if (langs.supported.length === 1) {
     badges.push({
       id: 'lang-only',
-      label: `仅 ${LANGUAGE_DIALECTS[langs.supported[0]].shortLabel}`,
+      label: `仅 ${getLanguageDialect(langs.supported[0]).shortLabel}`,
       tone: 'tag',
     });
   }
@@ -856,12 +858,13 @@ class ExtensionRegistry {
     const found = this.getHatBlockDef(block.type);
     if (!found) return null;
     const { pack, section, block: def, hat } = found;
+    const defaultLang = backendRegistry.getDefaultId();
     const label = hat.scopeLabelTemplate
       ? renderExtensionTemplate(
           hat.scopeLabelTemplate,
           def,
           block,
-          SUPPORTED_LANGUAGE_IDS[0],
+          defaultLang,
           {},
           pack,
           section,
@@ -872,7 +875,7 @@ class ExtensionRegistry {
           hat.scopeShortTemplate,
           def,
           block,
-          SUPPORTED_LANGUAGE_IDS[0],
+          defaultLang,
           {},
           pack,
           section,
@@ -894,7 +897,7 @@ class ExtensionRegistry {
       found.hat.duplicateKeyTemplate,
       found.block,
       block,
-      SUPPORTED_LANGUAGE_IDS[0],
+      backendRegistry.getDefaultId(),
       {},
       found.pack,
       found.section,
@@ -934,17 +937,17 @@ class ExtensionRegistry {
           hat.duplicateKeyTemplate,
           fields,
           section,
-          SUPPORTED_LANGUAGE_IDS[0],
+          backendRegistry.getDefaultId(),
         )
       : String(fallbackIndex);
     const safeSuffix = rawKey.replace(/[^A-Za-z0-9_]+/g, '_') || String(fallbackIndex);
     const condition: Partial<Record<ScriptLanguageId, string>> = {};
     const comment: Partial<Record<ScriptLanguageId, string>> = {};
-    for (const lang of SUPPORTED_LANGUAGE_IDS) {
+    for (const lang of getSupportedLanguageIds()) {
       const condTpl = hat.condition?.[lang];
       condition[lang] = condTpl
         ? renderTemplateFromRawFields(condTpl, fields, section, lang)
-        : LANGUAGE_DIALECTS[lang].boolTrue;
+        : getLanguageDialect(lang).boolTrue;
       const cmtTpl = hat.branchComment?.[lang];
       comment[lang] = cmtTpl
         ? renderTemplateFromRawFields(cmtTpl, fields, section, lang)

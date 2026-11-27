@@ -9,9 +9,9 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  LANGUAGE_DIALECTS,
-  SUPPORTED_LANGUAGE_IDS,
-} from '../core/backends/types';
+  backendRegistry,
+  getLanguageDialect,
+} from '../core/backends/registry';
 import {
   validateSharedVariableName,
   type VariableScopeKind,
@@ -87,7 +87,7 @@ const INIT_KIND_BUTTONS: Array<{
 
 export function BlocklyDialogModal({
   request,
-  language = SUPPORTED_LANGUAGE_IDS[0],
+  language = backendRegistry.getDefaultId(),
   handleName,
   handleColor,
   activeScriptLabel,
@@ -99,7 +99,7 @@ export function BlocklyDialogModal({
   allHandleFunctions = [],
   onClose,
 }: BlocklyDialogModalProps) {
-  const dialect = LANGUAGE_DIALECTS[language];
+  const dialect = getLanguageDialect(language);
   const sharedFileName = `shared.${dialect.extension}`;
   const [draft, setDraft] = useState(
     request.kind === 'prompt' ? request.defaultValue : '',

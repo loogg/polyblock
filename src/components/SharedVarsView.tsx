@@ -13,8 +13,8 @@ import type {
 } from '../core/backends/sharedModule';
 import {
   formatInitialValueForLanguage,
-  LANGUAGE_DIALECTS,
-} from '../core/backends/types';
+  getLanguageDialect,
+} from '../core/backends/registry';
 import { highlightCodeLine } from '../core/highlight';
 import type {
   ScriptLanguageId,
@@ -61,7 +61,7 @@ export function SharedVarsView({
   onBackToCanvas,
 }: SharedVarsViewProps) {
   const lines = source.replace(/\n$/, '').split('\n');
-  const dialect = LANGUAGE_DIALECTS[language];
+  const dialect = getLanguageDialect(language);
   const ext = dialect.extension;
   const initKindOptions: Array<{
     kind: VariableInitialValue['kind'];

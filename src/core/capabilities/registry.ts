@@ -5,7 +5,7 @@ import {
   applyAssetManifest,
   type AssetManifest,
 } from '../assets/manifestLoader';
-import { normalizeLanguageId } from '../backends/types';
+import { normalizeLanguageId } from '../backends/registry';
 
 /** Built-in capability ID constants (referenced by tests & board specs; UI uses declarative metadata). */
 export const CAP_RT = 'rt';
@@ -170,21 +170,4 @@ class TargetProfileRegistry {
 
 export const targetProfileRegistry = new TargetProfileRegistry();
 
-/**
- * Checks whether a pack (`"rt"`) or specific section (`"rt.timers"`) is enabled in `enabledCapabilities`:
- * - For a section ID `"packId.sectionId"`: enabled if `"packId.sectionId"` OR whole-pack `"packId"` is present.
- * - For a pack ID `"packId"`: enabled if `"packId"` OR any `"packId.*"` section is present.
- */
-export function hasCapability(
-  enabledCapabilities: string[],
-  capabilityId: string,
-): boolean {
-  if (enabledCapabilities.includes(capabilityId)) return true;
-  const dotIdx = capabilityId.indexOf('.');
-  if (dotIdx > 0) {
-    const parentPackId = capabilityId.slice(0, dotIdx);
-    return enabledCapabilities.includes(parentPackId);
-  }
-  const prefix = `${capabilityId}.`;
-  return enabledCapabilities.some((c) => c.startsWith(prefix));
-}
+export { hasCapability } from './matching';

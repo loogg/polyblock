@@ -15,11 +15,11 @@ import {
   getActiveProjectCapabilities,
   isCurrentHandleScriptEntry,
 } from '../blocks/workspaceContextBridge';
-import { hasCapability } from '../capabilities/registry';
+import { hasCapability } from '../capabilities/matching';
 import { extensionRegistry } from '../extensions/registry';
 import { computeAsyncFunctionNames } from './codegenContext';
 import { getUnifiedHatSpec, isValidTopHatType } from './eventMode';
-import { LANGUAGE_DIALECTS } from './types';
+import { getLanguageDialect } from './registry';
 
 export const SENTINEL_START_PREFIX = '__PB_S:';
 export const SENTINEL_END_PREFIX = '__PB_E:';
@@ -289,7 +289,7 @@ export function analyzeWorkspaceDiagnostics(
     // Single-language extension block compatibility check (universal across all registered languages)
     if (owner && targetLanguage && owner.block.kind !== 'hat') {
       if (!owner.block.code?.[targetLanguage]?.template) {
-        const targetLabel = LANGUAGE_DIALECTS[targetLanguage].displayName;
+        const targetLabel = getLanguageDialect(targetLanguage).displayName;
         diagnostics.push({
           id: `lang-unsupported-${targetLanguage}-${blk.id}`,
           severity: 'error',

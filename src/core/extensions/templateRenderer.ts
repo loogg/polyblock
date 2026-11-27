@@ -1,6 +1,6 @@
 import type * as Blockly from 'blockly';
 import type { ScriptLanguageId } from '../../types/project';
-import { LANGUAGE_DIALECTS } from '../backends/types';
+import { getLanguageDialect } from '../backends/registry';
 import {
   DEFAULT_CHANNEL_COUNT,
   formatChannelLabel,
@@ -128,13 +128,13 @@ export function formatTemplateModifier(
     return String(Number.isFinite(n) ? Math.trunc(n) : 0);
   }
   if (mod === 'bool') {
-    const dialect = LANGUAGE_DIALECTS[lang];
+    const dialect = getLanguageDialect(lang);
     return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'
       ? dialect.boolTrue
       : dialect.boolFalse;
   }
   if (mod === 'edge') {
-    const dialect = LANGUAGE_DIALECTS[lang];
+    const dialect = getLanguageDialect(lang);
     const param = modParam || 'pressed';
     return rawValue === 'press' || rawValue === 'true' || rawValue === '1'
       ? param
@@ -146,7 +146,7 @@ export function formatTemplateModifier(
       : '释放';
   }
   if (mod === 'channel_comment') {
-    const dialect = LANGUAGE_DIALECTS[lang];
+    const dialect = getLanguageDialect(lang);
     const tid = Math.trunc(Number(rawValue || 0));
     const alias = getActiveChannelPoolConfig(poolKey, poolDefault).aliases[
       String(tid)

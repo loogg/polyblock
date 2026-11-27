@@ -1,6 +1,6 @@
 import type { ScriptLanguageId } from '../../types/project';
-import { SUPPORTED_LANGUAGE_IDS } from '../backends/types';
-import { hasCapability } from '../capabilities/registry';
+import { backendRegistry } from '../backends/registry';
+import { hasCapability } from '../capabilities/matching';
 import { extensionRegistry } from './registry';
 import type { ExtensionModuleSource, PolyExtensionPack } from './types';
 
@@ -107,29 +107,16 @@ export interface ResolveProjectModulesInput {
   }>;
 }
 
-const IMPORT_MODULE_NAME_EXTRACTORS: Record<
-  ScriptLanguageId,
-  (line: string) => string | null
-> = {
-  lua: (line) => {
-    const m = /require\s*\(\s*["']([^"']+)["']\s*\)/.exec(line);
-    return m?.[1]?.trim() || null;
-  },
-  python: (line) => {
-    const m = /^\s*(?:import|from)\s+([A-Za-z_][A-Za-z0-9_.]*)/.exec(line);
-    return m?.[1]?.trim() || null;
-  },
-};
-
 /**
  * Extracts all module names referenced in `pack.imports` across all registered script languages
- * so editors/validators can verify hand-written JSON matches attached `libs[]` / `sandboxMock`.
+ * using each backend's declared `libBinding.extractImportedModuleName` parser.
  */
 export function extractImportedModuleNames(pack: PolyExtensionPack): string[] {
   const names = new Set<string>();
-  for (const lang of SUPPORTED_LANGUAGE_IDS) {
-    const lines = pack.imports?.[lang] ?? [];
-    const extract = IMPORT_MODULE_NAME_EXTRACTORS[lang];
+  for (const dialect of backendRegistry.listDialects()) {
+    const extract = dialect.libBinding?.extractImportedModuleName;
+    if (!extract) continue;
+    const lines = pack.imports?.[dialect.id as ScriptLanguageId] ?? [];
     for (const line of lines) {
       const modName = extract(line);
       if (modName) names.add(modName);

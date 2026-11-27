@@ -23,7 +23,6 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
-import { LANGUAGE_DIALECTS } from '../core/backends/types';
 import { countProjectScripts } from '../core/projects/store';
 import { runnerManager } from '../core/runners/manager';
 import type { RunnerStatus } from '../core/runners/types';
@@ -226,7 +225,7 @@ export function TopBar({
                       </span>
                       <span className="dropdown-item-label">{p.name}</span>
                       <span className="count-badge">
-                        {LANGUAGE_DIALECTS[p.language].compactLabel} · {p.handles.length}句柄
+                        {backendRegistry.getDialect(p.language).compactLabel} · {p.handles.length}句柄
                       </span>
                     </button>
                   );

@@ -1,5 +1,6 @@
 import type { ScriptLanguageId } from '../types/project';
-import { LANGUAGE_DIALECTS } from './backends/types';
+import { backendRegistry } from './backends/registry';
+import type { LanguageDialect } from './backends/types';
 
 function escapeHtml(text: string): string {
   return text
@@ -8,32 +9,40 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;');
 }
 
-const KEYWORD_SETS = new Map<ScriptLanguageId, Set<string>>();
+const DIALECT_TOKEN_CACHE = new WeakMap<
+  LanguageDialect,
+  { keywords: Set<string>; builtins: Set<string> }
+>();
 
-function getKeywordSet(lang: ScriptLanguageId): Set<string> {
-  let set = KEYWORD_SETS.get(lang);
-  if (!set) {
-    set = new Set(LANGUAGE_DIALECTS[lang]?.keywords ?? []);
-    KEYWORD_SETS.set(lang, set);
+const EMPTY_SET = new Set<string>();
+
+function getDialectTokenSets(dialect: LanguageDialect | undefined): {
+  keywords: Set<string>;
+  builtins: Set<string>;
+} {
+  if (!dialect) {
+    return { keywords: EMPTY_SET, builtins: EMPTY_SET };
   }
-  return set;
+  let cached = DIALECT_TOKEN_CACHE.get(dialect);
+  if (!cached) {
+    cached = {
+      keywords: new Set(dialect.keywords),
+      builtins: new Set(dialect.builtinFuncs ?? []),
+    };
+    DIALECT_TOKEN_CACHE.set(dialect, cached);
+  }
+  return cached;
 }
 
-const BUILTIN_FUNCS = new Set([
-  'print', 'tostring', 'tonumber', 'pairs', 'ipairs', 'len', 'str', 'int',
-  'float', 'range', 'list', 'dict', 'abs', 'round', 'min', 'max', 'sum',
-  'table', 'math', 'random',
-]);
-
 /**
- * Lightweight, dependency-free syntax highlighter driven by LANGUAGE_DIALECTS.
+ * Lightweight, dependency-free syntax highlighter driven solely by registered `LanguageDialect`s.
  */
 export function highlightCodeLine(line: string, lang: ScriptLanguageId): string {
   if (!line) return '&nbsp;';
 
-  const dialect = LANGUAGE_DIALECTS[lang];
+  const dialect = backendRegistry.tryGetDialect(lang);
   const commentPrefix = dialect?.commentToken ?? '//';
-  const keywords = getKeywordSet(lang);
+  const { keywords, builtins } = getDialectTokenSets(dialect);
 
   const tokens: string[] = [];
   let i = 0;
@@ -76,7 +85,7 @@ export function highlightCodeLine(line: string, lang: ScriptLanguageId): string 
       const nextChar = line[j];
       if (keywords.has(word)) {
         tokens.push(`<span class="syn-kw">${escapeHtml(word)}</span>`);
-      } else if (BUILTIN_FUNCS.has(word) || nextChar === '(') {
+      } else if (builtins.has(word) || nextChar === '(') {
         tokens.push(`<span class="syn-fn">${escapeHtml(word)}</span>`);
       } else {
         tokens.push(escapeHtml(word));

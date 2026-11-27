@@ -1,6 +1,7 @@
 import { Check, Copy, Download, FileCode2, FileJson, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LANGUAGE_DIALECTS } from '../core/backends/types';
+import { backendRegistry } from '../core/backends/registry';
+import type { LanguageDialect } from '../core/backends/types';
 import { getAllPackBlocks } from '../core/extensions/registry';
 import type { PolyExtensionPack } from '../core/extensions/types';
 import { triggerFileDownload } from '../hooks/fileDownload';
@@ -23,19 +24,22 @@ interface SourceTabItem {
   content: string;
 }
 
-const KEYWORD_REGEX_CACHE = new Map<ScriptLanguageId, RegExp>();
+const KEYWORD_REGEX_CACHE = new WeakMap<LanguageDialect, RegExp | null>();
 
-function getKeywordRegex(lang: ScriptLanguageId): RegExp {
-  let re = KEYWORD_REGEX_CACHE.get(lang);
-  if (!re) {
-    const kws = LANGUAGE_DIALECTS[lang]?.keywords ?? [];
-    re = new RegExp(`\\b(${kws.join('|')})\\b`, 'g');
-    KEYWORD_REGEX_CACHE.set(lang, re);
+function getKeywordRegex(dialect: LanguageDialect | undefined): RegExp | null {
+  if (!dialect) return null;
+  let re = KEYWORD_REGEX_CACHE.get(dialect);
+  if (re === undefined) {
+    re =
+      dialect.keywords.length > 0
+        ? new RegExp(`\\b(${dialect.keywords.join('|')})\\b`, 'g')
+        : null;
+    KEYWORD_REGEX_CACHE.set(dialect, re);
   }
-  return new RegExp(re.source, 'g');
+  return re ? new RegExp(re.source, 'g') : null;
 }
 
-/** Lightweight syntax highlighter reusing PolyBlock's existing token palette via LANGUAGE_DIALECTS. */
+/** Lightweight syntax highlighter reusing PolyBlock's existing token palette via backendRegistry dialects. */
 function renderHighlightedLine(line: string, kind: 'json' | ScriptLanguageId) {
   if (kind === 'json') {
     const parts: Array<{ text: string; cls?: string }> = [];
@@ -69,13 +73,16 @@ function renderHighlightedLine(line: string, kind: 'json' | ScriptLanguageId) {
     );
   }
 
-  const dialect = LANGUAGE_DIALECTS[kind];
+  const dialect = backendRegistry.tryGetDialect(kind);
   const trimmed = line.trimStart();
   if (dialect && trimmed.startsWith(dialect.commentToken)) {
     return <span className="syn-cmt">{line}</span>;
   }
 
-  const kwRe = getKeywordRegex(kind);
+  const kwRe = getKeywordRegex(dialect);
+  if (!kwRe) {
+    return line;
+  }
 
   const parts: Array<{ text: string; cls?: string }> = [];
   let last = 0;
@@ -134,7 +141,7 @@ export function ExtensionSourceModal({
       for (const [langKey, src] of Object.entries(pack.sandboxMock.sources)) {
         if (!src) continue;
         const lang = langKey as ScriptLanguageId;
-        const dialect = LANGUAGE_DIALECTS[lang];
+        const dialect = backendRegistry.tryGetDialect(lang);
         const ext = dialect?.extension ?? langKey;
         const displayName = dialect?.displayName ?? langKey;
         list.push({
@@ -153,7 +160,7 @@ export function ExtensionSourceModal({
       for (const [langKey, src] of Object.entries(lib.sources)) {
         if (!src) continue;
         const lang = langKey as ScriptLanguageId;
-        const dialect = LANGUAGE_DIALECTS[lang];
+        const dialect = backendRegistry.tryGetDialect(lang);
         const ext = dialect?.extension ?? langKey;
         const displayName = dialect?.displayName ?? langKey;
         list.push({

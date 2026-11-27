@@ -19,124 +19,90 @@ import type {
 
 export type { CompileContext };
 
-/** Complete syntax, display, and highlighting dialect metadata for a target script language. */
-export interface LanguageDialect {
-  id: ScriptLanguageId;
-  displayName: string;
-  shortLabel: string;
-  compactLabel: string;
-  extension: string;
-  accentGradient: string;
-  boolTrue: string;
-  boolFalse: string;
-  nullLiteral: string;
-  listLiteral: string;
-  dictLiteral: string;
-  notOp: string;
-  commentToken: string;
-  lineCommentPrefix: string;
-  keywords: readonly string[];
+/** Raw function signature extracted by a backend's optional native script-library scanner. */
+export interface ScannedLibFunctionMeta {
+  funcName: string;
+  params: string[];
+  inferredKind: 'statement' | 'value';
+}
+
+/** Language-owned script library import/call syntax & optional static function scanner. */
+export interface ScriptLibBindingSpec {
+  formatImport: (moduleName: string) => string;
+  formatCall: (
+    moduleName: string,
+    fnName: string,
+    argPlaceholders: string[],
+  ) => string;
+  /** Extracts the imported module name from a single top-level import statement line. */
+  extractImportedModuleName?: (line: string) => string | null;
+  scanFunctions?: (source: string) => ScannedLibFunctionMeta[];
+}
+
+/** Optional target toolchain metadata for compiled / export-only languages without a browser sandbox. */
+export interface ExportToolchainMeta {
+  /** Human-readable target IDE or compiler toolchain label (e.g. 'Arduino IDE / PlatformIO'). */
+  readonly label: string;
+  /** Optional guidance surfaced in UI/export READMEs when no browser WASM sandbox exists. */
+  readonly notes?: string;
+}
+
+/**
+ * Complete syntax, highlighting, library-binding, and export metadata owned by a single target backend.
+ * Every registered `ScriptBackendAdapter` provides its own `LanguageDialect` as the single source of truth.
+ */
+export interface LanguageDialect<TId extends string = string> {
+  readonly id: TId;
+  readonly displayName: string;
+  readonly shortLabel: string;
+  readonly compactLabel: string;
+  readonly extension: string;
+  readonly accentGradient: string;
+  readonly boolTrue: string;
+  readonly boolFalse: string;
+  readonly nullLiteral: string;
+  readonly listLiteral: string;
+  readonly dictLiteral: string;
+  readonly notOp: string;
+  readonly commentToken: string;
+  readonly lineCommentPrefix: string;
+  readonly keywords: readonly string[];
+  /** Built-in global/standard function identifiers highlighted by the code viewer. */
+  readonly builtinFuncs?: readonly string[];
   /** True when the language uses explicit async/await syntax for `on_start` coroutine sleep_ms. */
-  explicitAsyncCoroutine?: boolean;
+  readonly explicitAsyncCoroutine?: boolean;
+  /** Optional library import/call formatter and function scanner for native script-library import. */
+  readonly libBinding?: ScriptLibBindingSpec;
+  /** Optional parser extracting a 1-based line number from runtime stderr/exception messages. */
+  readonly extractErrorLine?: (message: string) => number | undefined;
+  /** Optional toolchain hint for compiled or export-only target languages. */
+  readonly exportToolchain?: ExportToolchainMeta;
 }
 
-/** Single source of truth for registered target script languages & their syntax dialects. */
-export const LANGUAGE_DIALECTS: Record<ScriptLanguageId, LanguageDialect> = {
-  lua: {
-    id: 'lua',
-    displayName: 'Lua 5.4',
-    shortLabel: 'Lua',
-    compactLabel: 'Lua',
-    extension: 'lua',
-    accentGradient: 'linear-gradient(135deg, #2563eb, #4f46e5)',
-    boolTrue: 'true',
-    boolFalse: 'false',
-    nullLiteral: 'nil',
-    listLiteral: '{}',
-    dictLiteral: '{}',
-    notOp: 'not ',
-    commentToken: '--',
-    lineCommentPrefix: ' -- ',
-    keywords: [
-      'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
-      'goto', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return',
-      'then', 'true', 'until', 'while',
-    ],
-    explicitAsyncCoroutine: false,
-  },
-  python: {
-    id: 'python',
-    displayName: 'Python 3',
-    shortLabel: 'Python',
-    compactLabel: 'Py',
-    extension: 'py',
-    accentGradient: 'linear-gradient(135deg, #0d9488, #10b981)',
-    boolTrue: 'True',
-    boolFalse: 'False',
-    nullLiteral: 'None',
-    listLiteral: '[]',
-    dictLiteral: '{}',
-    notOp: 'not ',
-    commentToken: '#',
-    lineCommentPrefix: '  # ',
-    keywords: [
-      'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break',
-      'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally',
-      'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal',
-      'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield',
-    ],
-    explicitAsyncCoroutine: true,
-  },
-};
-
-export const SUPPORTED_LANGUAGE_IDS: readonly ScriptLanguageId[] = Object.keys(
-  LANGUAGE_DIALECTS,
-) as ScriptLanguageId[];
-
-export function isSupportedLanguageId(raw: unknown): raw is ScriptLanguageId {
-  return (
-    typeof raw === 'string' &&
-    Object.prototype.hasOwnProperty.call(LANGUAGE_DIALECTS, raw)
-  );
+/** Shared helper for backend library scanners to parse comma-separated parameter lists cleanly. */
+export function splitLibParamList(rawParams: string): string[] {
+  const cleaned = rawParams
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0 && p !== '...' && p !== '*args' && p !== '**kwargs');
+  const out: string[] = [];
+  for (const part of cleaned) {
+    const name = part.split('=')[0].split(':')[0].trim().replace(/^\*+/, '');
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && name !== 'self' && name !== 'cls') {
+      out.push(name);
+    }
+  }
+  return out;
 }
 
-export function normalizeLanguageId(
-  raw: unknown,
-  fallback: ScriptLanguageId = 'lua',
-): ScriptLanguageId {
-  return isSupportedLanguageId(raw) ? raw : fallback;
-}
-
-/** Returns comma-separated `.ext` list for `<input accept>` from `LANGUAGE_DIALECTS` (e.g. `'.lua,.py'`). */
-export function getSupportedScriptAcceptAttr(): string {
-  return SUPPORTED_LANGUAGE_IDS.map(
-    (lang) => `.${LANGUAGE_DIALECTS[lang].extension}`,
-  ).join(',');
-}
-
-/** Returns human-readable supported extensions label from `LANGUAGE_DIALECTS` (e.g. `'.lua / .py'`). */
-export function formatSupportedExtensionsLabel(): string {
-  return SUPPORTED_LANGUAGE_IDS.map(
-    (lang) => `.${LANGUAGE_DIALECTS[lang].extension}`,
-  ).join(' / ');
-}
-
-/** Dynamically strips a trailing `.ext` matching any registered script language in `LANGUAGE_DIALECTS`. */
-export function stripScriptExtension(name: string): string {
-  const escapedExts = SUPPORTED_LANGUAGE_IDS.map((lang) =>
-    LANGUAGE_DIALECTS[lang].extension.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-  ).sort((a, b) => b.length - a.length);
-  if (escapedExts.length === 0) return name;
-  const extRe = new RegExp(`\\.(?:${escapedExts.join('|')})$`, 'i');
-  return name.replace(extRe, '');
-}
-
-/** Formats a VariableInitialValue into the exact target language literal via LANGUAGE_DIALECTS. */
-export function formatInitialValueForLanguage(
+/** Pure stateless formatter converting a VariableInitialValue into a target dialect literal. */
+export function formatInitialValueForDialect(
   init: VariableInitialValue | null | undefined,
-  lang: ScriptLanguageId,
+  dialect: Pick<
+    LanguageDialect,
+    'boolTrue' | 'boolFalse' | 'nullLiteral' | 'listLiteral' | 'dictLiteral'
+  >,
 ): string {
-  const dialect = LANGUAGE_DIALECTS[lang];
   if (!init || typeof init !== 'object') return dialect.nullLiteral;
   switch (init.kind) {
     case 'number':
@@ -226,10 +192,11 @@ export interface GeneratedCodeResult {
 }
 
 /**
- * Complete plugin contract for any target script backend (Lua, Python, future C/JS/DSL...).
- * Implementing and registering this adapter lets PolyBlock compile workspaces, register
- * declarative `.polyext.json` blocks/hats, format entry dispatch routers, and build Style A1
- * read-only `shared` modules with ZERO edits to extension registry, sharedModule, or UI code.
+ * Complete plugin contract for any target script backend (Lua, Python, future JS/Arduino/DSL...).
+ * Implementing and registering this adapter in `backendRegistry` lets PolyBlock compile workspaces,
+ * derive dialect & file-extension metadata, highlight syntax, scan native libraries, register
+ * `.polyext.json` blocks/hats, format entry dispatch routers, and build Style A1 read-only
+ * `shared` modules with ZERO edits to extension registry, sharedModule, or UI code.
  */
 export interface ScriptBackendAdapter {
   readonly id: ScriptLanguageId;

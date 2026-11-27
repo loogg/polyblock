@@ -9,7 +9,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { LANGUAGE_DIALECTS } from '../../core/backends/types';
+import { getLanguageDialect } from '../../core/backends/registry';
 import { targetProfileRegistry } from '../../core/capabilities/registry';
 import { extensionRegistry } from '../../core/extensions/registry';
 import {
@@ -187,7 +187,7 @@ export function ProjectsPage({
                   <span className={`status-pill ${isActive ? 'ok' : 'idle'}`}>
                     {isActive
                       ? '当前打开'
-                      : LANGUAGE_DIALECTS[proj.language].displayName}
+                      : getLanguageDialect(proj.language).displayName}
                   </span>
                 </div>
 
@@ -196,7 +196,7 @@ export function ProjectsPage({
                 )}
 
                 <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                  {profile.name} · {LANGUAGE_DIALECTS[proj.language].displayName} ·{' '}
+                  {profile.name} · {getLanguageDialect(proj.language).displayName} ·{' '}
                   {proj.handles.length} 句柄 · {totalScripts} 脚本 ·{' '}
                   {proj.enabledCapabilities.length} 能力
                   {(proj.localExtensions?.length ?? 0) > 0
@@ -337,7 +337,7 @@ export function ProjectsPage({
                   <div style={{ fontWeight: 700, fontSize: 13.5 }}>{demo.name}</div>
                   <span className="status-pill accent" style={{ flexShrink: 0 }}>
                     {demo.handles.length} 句柄 · {scriptTotal} 脚本 ·{' '}
-                    {LANGUAGE_DIALECTS[demo.language].shortLabel}
+                    {getLanguageDialect(demo.language).shortLabel}
                   </span>
                 </div>
                 {demo.description && (

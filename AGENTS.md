@@ -7,6 +7,7 @@
 - **全资产成品 JSON 化与宿主内置判定**：所有内置扩展包（`src/packs/*.polyext.json`）、板型预设（`src/boards/*.polyboard.json`）、演示工程（`src/demos/*.polyblock.json`）及示例模板（`src/templates/`）统一使用与用户导出 100% 同构的成品 JSON + `manifest.json` 顺序清单加载；便携 JSON 协议及 Schema 严禁包含 `builtin` 字段，内置身份由注册表宿主集合（`isBuiltin(id)`）独占判定，彻底杜绝导入伪造。
 - **Layer 0 核心**：所有零外部模块依赖的纯语言原语（`on_start`、`require`/`import`、控制/运算/逻辑/文本含 `str_replace`、列表、字典 5 块、变量、函数）必须留在核心，不放进扩展包。
 - **扩展包（`.polyext.json`）**：仅承载带真实外部模块接口（`imports` + `libs` 或 `sandboxMock`）的运行时/外设/库能力（如 `rt`、`virtual-board`、`clock-timer`）；多语言声明按语言 ID 映射（`Record<ScriptLanguageId, ...>`），不写死二元语言字段。
+- **多语言后端单一入口**：每个目标语言后端（`src/core/backends/*Backend.ts`）独占声明自身完整 `LanguageDialect`（含语法字面量、关键字、`builtinFuncs`、`libBinding`、`extractErrorLine` 及可选 `exportToolchain`），统一经 `src/core/backends/registry.ts` 的 `BUILTIN_BACKEND_ENTRIES` 单一入口自动派生 `ScriptLanguageId` 与全部核心/UI 辅助函数；**严禁**在 `backends/types.ts`、`highlight.ts`、`scriptLibScanner.ts`、`moduleResolver.ts`、`logParser.ts` 等语言无关核心模块中维护硬编码的语言表。
 - **纯值槽原则**：列表、字典等容器操作积木统一用 `input_value` 接收容器表达式，作用域自然随拖入的变量走；**禁止**用 `field_variable` 扫描推断作用域，**禁止**通过 Blockly `provideFunction_` 向导出代码注入隐藏辅助函数。
 
 ## 2. 句柄、并发与作用域模型（新增语言后端必守）

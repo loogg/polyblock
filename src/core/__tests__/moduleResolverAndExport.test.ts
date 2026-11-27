@@ -35,8 +35,7 @@ import { backendRegistry } from '../backends/registry';
 import {
   buildExtensionPackFromScriptLibs,
   mergeAttachedLibFiles,
-  scanLuaLibraryFunctions,
-  scanPythonLibraryFunctions,
+  scanLibraryFunctionsForLanguage,
   scanScriptLibraryFile,
 } from '../extensions/scriptLibScanner';
 import type { PolyExtensionPack } from '../extensions/types';
@@ -432,7 +431,7 @@ end
 return M
 `;
 
-    const scannedFns = scanLuaLibraryFunctions('crc16', crcEntryLua);
+    const scannedFns = scanLibraryFunctionsForLanguage('lua', 'crc16', crcEntryLua);
     expect(scannedFns.map((f) => `${f.funcName}:${f.inferredKind}`)).toEqual([
       'calc:value',
       'reset_stats:statement',
@@ -441,7 +440,8 @@ return M
     expect(scannedFns.some((f) => f.funcName.includes('private'))).toBe(false);
 
     // Python scanner check
-    const pyFns = scanPythonLibraryFunctions(
+    const pyFns = scanLibraryFunctionsForLanguage(
+      'python',
       'crc16',
       `
 def _helper(x):

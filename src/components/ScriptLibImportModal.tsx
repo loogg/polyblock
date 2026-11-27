@@ -10,9 +10,9 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   formatSupportedExtensionsLabel,
+  getLanguageDialect,
   getSupportedScriptAcceptAttr,
-  LANGUAGE_DIALECTS,
-} from '../core/backends/types';
+} from '../core/backends/registry';
 import {
   buildExtensionPackFromScriptLibs,
   scanScriptLibraryFile,
@@ -349,7 +349,7 @@ export function ScriptLibImportModal({
                   {files.map((f) => (
                     <div key={f.fileName} className="lib-file-row">
                       <span className="count-badge">
-                        {LANGUAGE_DIALECTS[f.language].shortLabel}
+                        {getLanguageDialect(f.language).shortLabel}
                       </span>
                       <span className="lib-file-name" title={f.fileName}>
                         {f.fileName}

@@ -1,6 +1,7 @@
+import type { RegisteredLanguageId } from '../core/backends/registry';
 import type { PolyExtensionPack } from '../core/extensions/types';
 
-export type ScriptLanguageId = 'lua' | 'python';
+export type ScriptLanguageId = RegisteredLanguageId;
 
 export type PageId = 'blocks' | 'projects' | 'devices' | 'extensions' | 'settings';
 

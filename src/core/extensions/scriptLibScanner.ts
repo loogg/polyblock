@@ -1,9 +1,8 @@
 import type { ScriptLanguageId } from '../../types/project';
 import {
-  LANGUAGE_DIALECTS,
+  backendRegistry,
   stripScriptExtension,
-  SUPPORTED_LANGUAGE_IDS,
-} from '../backends/types';
+} from '../backends/registry';
 import type {
   ExtensionBlockDef,
   ExtensionModuleSource,
@@ -40,263 +39,46 @@ export function deriveModuleNameFromFileName(fileName: string): string {
   return base || 'custom_lib';
 }
 
-function splitParamList(rawParams: string): string[] {
-  const cleaned = rawParams
-    .split(',')
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0 && p !== '...' && p !== '*args' && p !== '**kwargs');
-  const out: string[] = [];
-  for (const part of cleaned) {
-    // Strip Python default values & type annotations (e.g. `init: int = 0xFFFF` -> `init`)
-    const name = part.split('=')[0].split(':')[0].trim().replace(/^\*+/, '');
-    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && name !== 'self' && name !== 'cls') {
-      out.push(name);
-    }
-  }
-  return out;
-}
-
-function hasNonEmptyLuaReturn(body: string): boolean {
-  // Strip single-line comments first
-  const noComments = body.replace(/--[^\n]*/g, '');
-  // Match `return <something>` where <something> is not end/else/elseif/until/empty
-  return /\breturn\s+(?!\s*(?:$|\n|end\b|else\b|elseif\b|until\b|;))[^\s;]/m.test(
-    noComments,
-  );
-}
-
-function extractLuaBody(source: string, startOffset: number): string {
-  // Strip comments and string literals lightly while tracking Lua block nesting depth
-  // so the body stops strictly at the matching `end` and NEVER swallows trailing `return M`!
-  const slice = source.slice(startOffset, startOffset + 8000);
-  const lines = slice.split('\n');
-  let depth = 1;
-  const bodyLines: string[] = [];
-
-  for (const rawLine of lines) {
-    // Remove single-line comments and quoted strings before counting keywords
-    const stripped = rawLine
-      .replace(/--.*$/, '')
-      .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '""');
-
-    const tokens = stripped.match(/\b(?:function|if|for|while|repeat|do|end|until)\b/g) ?? [];
-    let closedAtThisLine = false;
-    for (let i = 0; i < tokens.length; i++) {
-      const tok = tokens[i];
-      if (tok === 'function' || tok === 'if' || tok === 'repeat') {
-        depth += 1;
-      } else if (tok === 'for' || tok === 'while') {
-        // `for ... do` / `while ... do` pairs with one `end`; skip the matching `do`
-        depth += 1;
-      } else if (tok === 'do') {
-        // Only standalone `do ... end` adds depth (not `for/while ... do`)
-        const prev = i > 0 ? tokens[i - 1] : '';
-        if (prev !== 'for' && prev !== 'while') {
-          depth += 1;
-        }
-      } else if (tok === 'end' || tok === 'until') {
-        depth -= 1;
-        if (depth <= 0) {
-          closedAtThisLine = true;
-          break;
-        }
-      }
-    }
-
-    if (closedAtThisLine) {
-      // Include anything before the closing `end` on the same line (e.g. `return x end`)
-      const beforeEnd = rawLine.replace(/\bend\b[\s\S]*$/, '');
-      if (beforeEnd.trim()) bodyLines.push(beforeEnd);
-      break;
-    }
-    bodyLines.push(rawLine);
-  }
-
-  return bodyLines.join('\n');
-}
-
 /**
- * Statically scans a Lua 5.4 library file for exported module functions:
- * - `function M.foo(a, b)` / `function mod.foo(a, b)`
- * - `M.foo = function(a, b)`
- * - `return { foo = local_fn, bar = function(x) ... end }`
- * Private `local function` definitions NOT exposed via module table or return table are skipped.
+ * Statically scans a script library source using the target language backend's
+ * declared `dialect.libBinding.scanFunctions` hook (zero per-language hardcoding).
  */
-export function scanLuaLibraryFunctions(
+export function scanLibraryFunctionsForLanguage(
+  language: ScriptLanguageId,
   moduleName: string,
   source: string,
 ): ScannedLibFunction[] {
-  const normalized = source.replace(/\r\n/g, '\n');
-  const results: ScannedLibFunction[] = [];
-  const seen = new Set<string>();
-
-  // Index local functions so `return { calc = calc }` can recover params + return inference
-  const localFnMeta = new Map<
-    string,
-    { params: string[]; inferredKind: 'statement' | 'value' }
-  >();
-  const localFnRe =
-    /^\s*local\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/gm;
-  let lm: RegExpExecArray | null;
-  while ((lm = localFnRe.exec(normalized)) !== null) {
-    const fnName = lm[1];
-    const params = splitParamList(lm[2]);
-    const body = extractLuaBody(normalized, lm.index + lm[0].length);
-    localFnMeta.set(fnName, {
-      params,
-      inferredKind: hasNonEmptyLuaReturn(body) ? 'value' : 'statement',
-    });
-  }
-
-  const pushCandidate = (
-    funcName: string,
-    params: string[],
-    inferredKind: 'statement' | 'value',
-  ) => {
-    if (funcName.startsWith('_') || seen.has(funcName)) return;
-    seen.add(funcName);
-    results.push({
-      id: `${moduleName}.${funcName}`,
-      moduleName,
-      funcName,
-      params,
-      inferredKind,
-      selected: true,
-      kind: inferredKind,
-      label: `${moduleName}.${funcName}`,
-    });
-  };
-
-  // Pattern 1: `function M.foo(a, b)` (dotted export on any table identifier)
-  const dotFnRe =
-    /^\s*function\s+[A-Za-z_][A-Za-z0-9_]*\.([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/gm;
-  let m: RegExpExecArray | null;
-  while ((m = dotFnRe.exec(normalized)) !== null) {
-    const body = extractLuaBody(normalized, m.index + m[0].length);
-    pushCandidate(
-      m[1],
-      splitParamList(m[2]),
-      hasNonEmptyLuaReturn(body) ? 'value' : 'statement',
-    );
-  }
-
-  // Pattern 2: `M.foo = function(a, b)`
-  const assignFnRe =
-    /^\s*[A-Za-z_][A-Za-z0-9_]*\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*function\s*\(([^)]*)\)/gm;
-  while ((m = assignFnRe.exec(normalized)) !== null) {
-    const body = extractLuaBody(normalized, m.index + m[0].length);
-    pushCandidate(
-      m[1],
-      splitParamList(m[2]),
-      hasNonEmptyLuaReturn(body) ? 'value' : 'statement',
-    );
-  }
-
-  // Pattern 3: `return { calc = calc, reset = function() ... end }`
-  const returnTableRe = /return\s*\{([\s\S]*?)\}\s*$/;
-  const rtMatch = returnTableRe.exec(normalized.trim());
-  if (rtMatch?.[1]) {
-    const tableContent = rtMatch[1];
-    // Inline anonymous function entries
-    const inlineEntryRe =
-      /([A-Za-z_][A-Za-z0-9_]*)\s*=\s*function\s*\(([^)]*)\)([\s\S]*?)\bend\b/g;
-    let im: RegExpExecArray | null;
-    while ((im = inlineEntryRe.exec(tableContent)) !== null) {
-      pushCandidate(
-        im[1],
-        splitParamList(im[2]),
-        hasNonEmptyLuaReturn(im[3]) ? 'value' : 'statement',
-      );
-    }
-    // Identifier reference entries (`calc = calc` or `calc = _calc_impl`)
-    const refEntryRe =
-      /([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,|$)/gm;
-    let rm: RegExpExecArray | null;
-    while ((rm = refEntryRe.exec(tableContent)) !== null) {
-      const exportKey = rm[1];
-      const targetIdent = rm[2];
-      const meta = localFnMeta.get(targetIdent);
-      if (meta) {
-        pushCandidate(exportKey, meta.params, meta.inferredKind);
-      }
-    }
-  }
-
-  return results;
+  const scanner = backendRegistry.tryGetDialect(language)?.libBinding?.scanFunctions;
+  if (!scanner) return [];
+  return scanner(source).map((meta) => ({
+    id: `${moduleName}.${meta.funcName}`,
+    moduleName,
+    funcName: meta.funcName,
+    params: meta.params,
+    inferredKind: meta.inferredKind,
+    selected: true,
+    kind: meta.inferredKind,
+    label: `${moduleName}.${meta.funcName}`,
+  }));
 }
-
-/**
- * Statically scans a Python 3 / MicroPython library file for top-level public `def` functions.
- * Strictly skips `_private` / `__dunder__` functions and indented class methods.
- */
-export function scanPythonLibraryFunctions(
-  moduleName: string,
-  source: string,
-): ScannedLibFunction[] {
-  const lines = source.replace(/\r\n/g, '\n').split('\n');
-  const results: ScannedLibFunction[] = [];
-  const seen = new Set<string>();
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const m = /^def\s+([A-Za-z][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?:->[^:]+)?\s*:/.exec(
-      line,
-    );
-    if (!m) continue;
-    const funcName = m[1];
-    if (funcName.startsWith('_') || seen.has(funcName)) continue;
-    seen.add(funcName);
-
-    const params = splitParamList(m[2]);
-    // Collect indented body lines
-    const bodyLines: string[] = [];
-    for (let j = i + 1; j < lines.length; j++) {
-      const bl = lines[j];
-      if (bl.trim() === '' || /^\s+#/.test(bl)) continue;
-      if (!/^\s+/.test(bl)) break;
-      bodyLines.push(bl);
-    }
-    const bodyStr = bodyLines.join('\n').replace(/#[^\n]*/g, '');
-    const hasValReturn = /\breturn\s+(?!\s*(?:$|\n|None\b))[^\s#]/m.test(bodyStr);
-    const inferredKind: 'statement' | 'value' = hasValReturn
-      ? 'value'
-      : 'statement';
-
-    results.push({
-      id: `${moduleName}.${funcName}`,
-      moduleName,
-      funcName,
-      params,
-      inferredKind,
-      selected: true,
-      kind: inferredKind,
-      label: `${moduleName}.${funcName}`,
-    });
-  }
-
-  return results;
-}
-
-const LIB_FUNCTION_SCANNERS: Record<
-  ScriptLanguageId,
-  (moduleName: string, source: string) => ScannedLibFunction[]
-> = {
-  lua: scanLuaLibraryFunctions,
-  python: scanPythonLibraryFunctions,
-};
 
 export function scanScriptLibraryFile(
   fileName: string,
   source: string,
-  fallbackLang: ScriptLanguageId = 'lua',
+  fallbackLang: ScriptLanguageId = backendRegistry.getDefaultId(),
 ): UploadedScriptLibFile {
   const lower = fileName.toLowerCase();
-  const matchedLang = SUPPORTED_LANGUAGE_IDS.find((langId) =>
-    lower.endsWith(`.${LANGUAGE_DIALECTS[langId].extension}`),
-  );
-  const language: ScriptLanguageId = matchedLang ?? fallbackLang;
+  const matchedDialect = backendRegistry
+    .listDialects()
+    .find((d) => lower.endsWith(`.${d.extension.toLowerCase()}`));
+  const language: ScriptLanguageId =
+    (matchedDialect?.id as ScriptLanguageId | undefined) ?? fallbackLang;
   const moduleName = deriveModuleNameFromFileName(fileName);
-  const scannedFunctions = LIB_FUNCTION_SCANNERS[language](moduleName, source);
+  const scannedFunctions = scanLibraryFunctionsForLanguage(
+    language,
+    moduleName,
+    source,
+  );
 
   return {
     fileName,
@@ -319,28 +101,9 @@ export interface BuildPackFromLibsOptions {
   functions: ScannedLibFunction[];
 }
 
-const LIB_LANGUAGE_BINDINGS: Record<
-  ScriptLanguageId,
-  {
-    formatImport: (mod: string) => string;
-    formatCall: (mod: string, fn: string, args: string[]) => string;
-  }
-> = {
-  lua: {
-    formatImport: (mod) =>
-      `local ${mod.replace(/[^A-Za-z0-9_]/g, '_')} = require("${mod}")`,
-    formatCall: (mod, fn, args) =>
-      `${mod.replace(/[^A-Za-z0-9_]/g, '_')}.${fn}(${args.join(', ')})`,
-  },
-  python: {
-    formatImport: (mod) => `import ${mod}`,
-    formatCall: (mod, fn, args) => `${mod}.${fn}(${args.join(', ')})`,
-  },
-};
-
 /**
  * Generates a clean, valid single-track `.polyext.json` (`PolyExtensionPack`) from uploaded
- * script library files and user-reviewed candidate functions across all supported languages.
+ * script library files and user-reviewed candidate functions across all registered languages.
  */
 export function buildExtensionPackFromScriptLibs(
   opts: BuildPackFromLibsOptions,
@@ -377,16 +140,18 @@ export function buildExtensionPackFromScriptLibs(
   }
   const libs = Array.from(libMap.values());
 
+  const supportedIds = backendRegistry.listIds();
+
   // Determine which modules & languages are actually provided by uploaded files
   const usedModuleNames = Array.from(new Set(selectedFns.map((f) => f.moduleName)));
   const importsMap: ExtensionPackImports = {};
   let hasAnyImports = false;
-  for (const lang of SUPPORTED_LANGUAGE_IDS) {
-    const binding = LIB_LANGUAGE_BINDINGS[lang];
+  for (const lang of supportedIds) {
+    const binding = backendRegistry.getDialect(lang).libBinding;
     const langModules = usedModuleNames.filter((mn) =>
       Boolean(libMap.get(mn)?.sources[lang]),
     );
-    if (langModules.length > 0) {
+    if (langModules.length > 0 && binding) {
       importsMap[lang] = langModules.map((mn) => binding.formatImport(mn));
       hasAnyImports = true;
     }
@@ -395,7 +160,10 @@ export function buildExtensionPackFromScriptLibs(
   const blocks: ExtensionBlockDef[] = selectedFns.map((fn) => {
     const blockType = `ext_${safeId.replace(/-/g, '_')}_${fn.moduleName.replace(/[^A-Za-z0-9_]/g, '_')}_${fn.funcName}`;
     const args0: Array<Record<string, unknown>> = [];
-    const shadows: Record<string, { type: 'math_number' | 'text'; value: number | string }> = {};
+    const shadows: Record<
+      string,
+      { type: 'math_number' | 'text'; value: number | string }
+    > = {};
     const paramParts: string[] = [];
     const callPlaceholders: string[] = [];
 
@@ -412,10 +180,11 @@ export function buildExtensionPackFromScriptLibs(
       paramParts.length > 0 ? `${msgBase} ${paramParts.join(' ')}` : msgBase;
     const modEntry = libMap.get(fn.moduleName);
     const code: NonNullable<ExtensionBlockDef['code']> = {};
-    for (const lang of SUPPORTED_LANGUAGE_IDS) {
-      if (modEntry?.sources[lang]) {
+    for (const lang of supportedIds) {
+      const binding = backendRegistry.getDialect(lang).libBinding;
+      if (modEntry?.sources[lang] && binding) {
         code[lang] = {
-          template: LIB_LANGUAGE_BINDINGS[lang].formatCall(
+          template: binding.formatCall(
             fn.moduleName,
             fn.funcName,
             callPlaceholders,
@@ -449,13 +218,14 @@ export function buildExtensionPackFromScriptLibs(
     id: safeId,
     name: opts.packName.trim() || safeId,
     packVersion: '1.0.0',
-    iconLabel: (opts.iconLabel.trim() || safeId).slice(0, 4),
-    color: opts.color.startsWith('#') ? opts.color : '#10b981',
+    iconLabel: (opts.iconLabel.trim() || '库').slice(0, 4),
+    color: opts.color || '#0ea5e9',
     description:
       opts.description?.trim() ||
-      `由原生脚本库自动生成的扩展包（含 ${libs.length} 个源码模块，沙箱与真机导出共用）。`,
+      `由原生脚本库（${usedModuleNames.join(', ')}）自动扫描生成的积木扩展包，支持浏览器 WASM 沙箱运行与真机 .zip 随行导出。`,
     tags: ['脚本库'],
     ...(importsObj ? { imports: importsObj } : {}),
+    libs,
     sections: [
       {
         id: 'main',
@@ -464,12 +234,11 @@ export function buildExtensionPackFromScriptLibs(
         blocks,
       },
     ],
-    libs,
   };
 }
 
 /**
- * Merges newly attached `.lua`/`.py` files into an existing pack's `libs[]` array by `moduleName`.
+ * Merges newly attached script library files into an existing pack's `libs[]` array by `moduleName`.
  * Existing modules with the same `moduleName` get their language source updated in place.
  */
 export function mergeAttachedLibFiles(

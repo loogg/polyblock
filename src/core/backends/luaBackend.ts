@@ -26,13 +26,196 @@ import {
   SENTINEL_START_PREFIX,
 } from './sourceMap';
 import {
-  formatInitialValueForLanguage,
-  LANGUAGE_DIALECTS,
+  formatInitialValueForDialect,
+  splitLibParamList,
   type EntryDispatchBranchSpec,
   type ExtensionHatRegisterContext,
+  type LanguageDialect,
+  type ScannedLibFunctionMeta,
   type SharedModuleDocumentInput,
   type SharedProcCompileInput,
 } from './types';
+
+function hasNonEmptyLuaReturn(body: string): boolean {
+  const noComments = body.replace(/--[^\n]*/g, '');
+  return /\breturn\s+(?!\s*(?:$|\n|end\b|else\b|elseif\b|until\b|;))[^\s;]/m.test(
+    noComments,
+  );
+}
+
+function extractLuaBody(source: string, startOffset: number): string {
+  const slice = source.slice(startOffset, startOffset + 8000);
+  const lines = slice.split('\n');
+  let depth = 1;
+  const bodyLines: string[] = [];
+
+  for (const rawLine of lines) {
+    const stripped = rawLine
+      .replace(/--.*$/, '')
+      .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '""');
+
+    const tokens =
+      stripped.match(/\b(?:function|if|for|while|repeat|do|end|until)\b/g) ?? [];
+    let closedAtThisLine = false;
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      if (tok === 'function' || tok === 'if' || tok === 'repeat') {
+        depth += 1;
+      } else if (tok === 'for' || tok === 'while') {
+        depth += 1;
+      } else if (tok === 'do') {
+        const prev = i > 0 ? tokens[i - 1] : '';
+        if (prev !== 'for' && prev !== 'while') {
+          depth += 1;
+        }
+      } else if (tok === 'end' || tok === 'until') {
+        depth -= 1;
+        if (depth <= 0) {
+          closedAtThisLine = true;
+          break;
+        }
+      }
+    }
+
+    if (closedAtThisLine) {
+      const beforeEnd = rawLine.replace(/\bend\b[\s\S]*$/, '');
+      if (beforeEnd.trim()) bodyLines.push(beforeEnd);
+      break;
+    }
+    bodyLines.push(rawLine);
+  }
+
+  return bodyLines.join('\n');
+}
+
+function scanLuaLibraryFunctionMetas(source: string): ScannedLibFunctionMeta[] {
+  const normalized = source.replace(/\r\n/g, '\n');
+  const results: ScannedLibFunctionMeta[] = [];
+  const seen = new Set<string>();
+
+  const localFnMeta = new Map<
+    string,
+    { params: string[]; inferredKind: 'statement' | 'value' }
+  >();
+  const localFnRe =
+    /^\s*local\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/gm;
+  let lm: RegExpExecArray | null;
+  while ((lm = localFnRe.exec(normalized)) !== null) {
+    const fnName = lm[1];
+    const params = splitLibParamList(lm[2]);
+    const body = extractLuaBody(normalized, lm.index + lm[0].length);
+    localFnMeta.set(fnName, {
+      params,
+      inferredKind: hasNonEmptyLuaReturn(body) ? 'value' : 'statement',
+    });
+  }
+
+  const pushCandidate = (
+    funcName: string,
+    params: string[],
+    inferredKind: 'statement' | 'value',
+  ) => {
+    if (funcName.startsWith('_') || seen.has(funcName)) return;
+    seen.add(funcName);
+    results.push({ funcName, params, inferredKind });
+  };
+
+  const dotFnRe =
+    /^\s*function\s+[A-Za-z_][A-Za-z0-9_]*\.([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/gm;
+  let m: RegExpExecArray | null;
+  while ((m = dotFnRe.exec(normalized)) !== null) {
+    const body = extractLuaBody(normalized, m.index + m[0].length);
+    pushCandidate(
+      m[1],
+      splitLibParamList(m[2]),
+      hasNonEmptyLuaReturn(body) ? 'value' : 'statement',
+    );
+  }
+
+  const assignFnRe =
+    /^\s*[A-Za-z_][A-Za-z0-9_]*\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*function\s*\(([^)]*)\)/gm;
+  while ((m = assignFnRe.exec(normalized)) !== null) {
+    const body = extractLuaBody(normalized, m.index + m[0].length);
+    pushCandidate(
+      m[1],
+      splitLibParamList(m[2]),
+      hasNonEmptyLuaReturn(body) ? 'value' : 'statement',
+    );
+  }
+
+  const returnTableRe = /return\s*\{([\s\S]*?)\}\s*$/;
+  const rtMatch = returnTableRe.exec(normalized.trim());
+  if (rtMatch?.[1]) {
+    const tableContent = rtMatch[1];
+    const inlineEntryRe =
+      /([A-Za-z_][A-Za-z0-9_]*)\s*=\s*function\s*\(([^)]*)\)([\s\S]*?)\bend\b/g;
+    let im: RegExpExecArray | null;
+    while ((im = inlineEntryRe.exec(tableContent)) !== null) {
+      pushCandidate(
+        im[1],
+        splitLibParamList(im[2]),
+        hasNonEmptyLuaReturn(im[3]) ? 'value' : 'statement',
+      );
+    }
+    const refEntryRe =
+      /([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,|$)/gm;
+    let rm: RegExpExecArray | null;
+    while ((rm = refEntryRe.exec(tableContent)) !== null) {
+      const exportKey = rm[1];
+      const targetIdent = rm[2];
+      const meta = localFnMeta.get(targetIdent);
+      if (meta) {
+        pushCandidate(exportKey, meta.params, meta.inferredKind);
+      }
+    }
+  }
+
+  return results;
+}
+
+/** Single-source-of-truth dialect metadata owned by the Lua 5.4 backend. */
+export const LUA_DIALECT = {
+  id: 'lua',
+  displayName: 'Lua 5.4',
+  shortLabel: 'Lua',
+  compactLabel: 'Lua',
+  extension: 'lua',
+  accentGradient: 'linear-gradient(135deg, #2563eb, #4f46e5)',
+  boolTrue: 'true',
+  boolFalse: 'false',
+  nullLiteral: 'nil',
+  listLiteral: '{}',
+  dictLiteral: '{}',
+  notOp: 'not ',
+  commentToken: '--',
+  lineCommentPrefix: ' -- ',
+  keywords: [
+    'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
+    'goto', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return',
+    'then', 'true', 'until', 'while',
+  ],
+  builtinFuncs: [
+    'print', 'tostring', 'tonumber', 'pairs', 'ipairs', 'table', 'math',
+    'string', 'require', 'type',
+  ],
+  explicitAsyncCoroutine: false,
+  libBinding: {
+    formatImport: (mod: string) =>
+      `local ${mod.replace(/[^A-Za-z0-9_]/g, '_')} = require("${mod}")`,
+    formatCall: (mod: string, fn: string, args: string[]) =>
+      `${mod.replace(/[^A-Za-z0-9_]/g, '_')}.${fn}(${args.join(', ')})`,
+    extractImportedModuleName: (line: string) => {
+      const m = /require\s*\(\s*["']([^"']+)["']\s*\)/.exec(line);
+      return m?.[1]?.trim() || null;
+    },
+    scanFunctions: scanLuaLibraryFunctionMetas,
+  },
+  extractErrorLine: (message: string) => {
+    // e.g. [string "..."]:7: attempt to perform arithmetic...
+    const m = /\[string[^\]]*\]:(\d+):/.exec(message) ?? /:(\d+):/.exec(message);
+    return m ? Number(m[1]) : undefined;
+  },
+} as const satisfies LanguageDialect<'lua'>;
 
 let luaGeneratorsRegistered = false;
 let luaDeclaredLocalsByRoot = new Map<string, Set<string>>();
@@ -680,15 +863,15 @@ interface LuaDebugMeta {
 }
 
 export class LuaBackendAdapter extends BaseScriptBackend<LuaDebugMeta> {
-  readonly id = 'lua' as const;
+  readonly id = LUA_DIALECT.id;
   readonly name = 'Lua';
   readonly version = '5.4';
-  readonly extension = 'lua';
-  readonly fileName = 'main.lua';
+  readonly extension = LUA_DIALECT.extension;
+  readonly fileName = `main.${LUA_DIALECT.extension}`;
   readonly accentColor = '#3b82f6';
   readonly description =
     '标准 Lua 5.4 脚本生成器，支持 Style A1 只读 shared 模块、单线程协程事件 ABI 与伴生脚本断点调试。';
-  readonly dialect = LANGUAGE_DIALECTS.lua;
+  readonly dialect = LUA_DIALECT;
 
   protected readonly bareAttrInSharedModule = false;
   protected readonly orderNone = Order.NONE;
@@ -767,7 +950,7 @@ export class LuaBackendAdapter extends BaseScriptBackend<LuaDebugMeta> {
       analysis.sharedFnSet,
     ).map(
       ({ name, ident }) =>
-        `local ${ident} = ${formatInitialValueForLanguage(scriptInitials[name], 'lua')}`,
+        `local ${ident} = ${formatInitialValueForDialect(scriptInitials[name], LUA_DIALECT)}`,
     );
     return injectLuaFileLocalDecls(body, fileLocalDecls);
   }
@@ -971,7 +1154,7 @@ export class LuaBackendAdapter extends BaseScriptBackend<LuaDebugMeta> {
   } {
     const varLines = input.variables.map(
       (v) =>
-        `${input.moduleName}.${v.attr} = ${formatInitialValueForLanguage(v.initialValue, 'lua')}`,
+        `${input.moduleName}.${v.attr} = ${formatInitialValueForDialect(v.initialValue, LUA_DIALECT)}`,
     );
     const buildLuaDoc = (fnBodies: string[]) => {
       const parts: string[] = [

@@ -1,5 +1,4 @@
 import type { ScriptLanguageId } from '../../types/project';
-import { SUPPORTED_LANGUAGE_IDS } from '../backends/types';
 import type {
   CategoryTargetSpec,
   CoreCategoryTarget,
@@ -199,14 +198,14 @@ function validateImports(raw: unknown): ExtensionPackImports | undefined {
   const obj = raw as Record<string, unknown>;
   const out: ExtensionPackImports = {};
   let count = 0;
-  for (const lang of SUPPORTED_LANGUAGE_IDS) {
-    const arr = obj[lang];
+  for (const [langKey, arr] of Object.entries(obj)) {
+    if (!/^[a-z][a-z0-9_-]{0,23}$/i.test(langKey)) continue;
     if (Array.isArray(arr)) {
       const cleaned = arr.filter(
         (s): s is string => typeof s === 'string' && s.trim().length > 0,
       );
       if (cleaned.length > 0) {
-        out[lang] = cleaned;
+        out[langKey as ScriptLanguageId] = cleaned;
         count += 1;
       }
     }

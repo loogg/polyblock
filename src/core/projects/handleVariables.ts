@@ -2,7 +2,7 @@ import type {
   RuntimeHandle,
   VariableInitialValue,
 } from '../../types/project';
-import { LANGUAGE_DIALECTS } from '../backends/types';
+import { backendRegistry } from '../backends/registry';
 
 export type VariableScopeKind = 'shared' | 'file';
 
@@ -69,13 +69,20 @@ interface SerializedVarEntry {
   type?: string;
 }
 
-const RESERVED_VAR_NAMES = new Set([
-  ...Object.values(LANGUAGE_DIALECTS).flatMap((d) => d.keywords),
+const RESERVED_RUNTIME_MODULES = new Set([
   // PolyBlock runtime modules
   'shared',
   'rt',
   'sys',
 ]);
+
+function isReservedVarName(name: string): boolean {
+  if (RESERVED_RUNTIME_MODULES.has(name)) return true;
+  for (const dialect of backendRegistry.listDialects()) {
+    if (dialect.keywords.includes(name)) return true;
+  }
+  return false;
+}
 
 export function validateSharedVariableName(
   rawName: string,
@@ -99,7 +106,7 @@ export function validateSharedVariableName(
       error: '仅支持中文、英文字母、数字和下划线（不能包含空格或标点符号）',
     };
   }
-  if (RESERVED_VAR_NAMES.has(trimmed)) {
+  if (isReservedVarName(trimmed)) {
     return {
       valid: false,
       error: `「${trimmed}」是语言关键字或保留模块名，请换一个名称`,

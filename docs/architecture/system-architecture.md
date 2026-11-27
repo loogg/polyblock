@@ -33,7 +33,7 @@
                                         v
 +------------------------------------------------------------------------------+
 |                  多语言后端插件层 (src/core/backends)                         |
-|  BackendRegistry + LANGUAGE_DIALECTS (统一 ScriptBackendAdapter 契约)         |
+|  BackendRegistry 单一入口 (统一 ScriptBackendAdapter + 自带 LanguageDialect)    |
 |    ├── LuaBackendAdapter    (Lua 5.4 双产线生成 + SourceMap + 静态诊断)       |
 |    └── PythonBackendAdapter (Python 3 双产线生成 + async/await 传递传染)      |
 +---------------------------------------+--------------------------------------+
@@ -78,7 +78,7 @@
 
 ## 4. 多语言插件边界与运行器
 
-- **`ScriptBackendAdapter` + `LANGUAGE_DIALECTS`**：语言方言、后缀、关键字、注释前缀、布尔/空值字面量、代码生成、扩展积木/帽块注册与 `shared` 模块格式化全部收敛于后端适配器契约，新增目标语言（如 C / JS / DSL）无需改写扩展注册表或 UI 核心逻辑。
+- **`BackendRegistry` 单一入口 + 自带 `LanguageDialect`**：语言方言、后缀、关键字、内建函数、注释前缀、布尔/空值字面量、脚本库绑定/扫描器、错误行解析、可选导出工具链元信息、代码生成、扩展积木/帽块注册与 `shared` 模块格式化全部收拢于各后端适配器自身；`ScriptLanguageId` 与所有工具函数由 `src/core/backends/registry.ts` 自动派生，新增目标语言只需新增 1 个后端文件并在 `BUILTIN_BACKEND_ENTRIES` 追加 1 行。
 - **`ScriptRunner` + `RunnerManager`**：内置 `WasmoonLuaRunner` 与 `MicroPythonWasmRunner`（复用统一 `WorkerWasmRunner` 通信基类），预留网络（WebSocket/HTTP）、本地桥接与串口硬件 Runner 扩展位；仅导出型语言可无沙箱运行器优雅降级。
 
 ## 5. 静态部署约束（GitHub Pages）

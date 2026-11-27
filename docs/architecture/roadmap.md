@@ -4,18 +4,15 @@
 
 ---
 
-## 1. 多语言后端注册“单一入口”化（新增语言前优先项）
+## 1. 多语言后端注册“单一入口”化（已完成 ✅）
 
-### 当前现状
-新增一门目标语言时，需要同步修改 4 处：
-1. `ScriptLanguageId` 联合类型（[src/types/project.ts](../../src/types/project.ts)）
-2. `LANGUAGE_DIALECTS` 方言元数据表（[src/core/backends/types.ts](../../src/core/backends/types.ts)）
-3. 新建后端适配器类（继承 [BaseScriptBackend](../../src/core/backends/baseBackend.ts)）
-4. 注册表装配（[src/core/backends/registry.ts](../../src/core/backends/registry.ts)）
-
-### 优化方向
-- 让每个 `ScriptBackendAdapter` 自身携带完整 `dialect` 元数据作为唯一真相源，`LANGUAGE_DIALECTS`、`SUPPORTED_LANGUAGE_IDS` 及工具函数统一由 `backendRegistry` 自动派生。
-- 针对编译型/仅导出型语言（如嵌入式 C，浏览器无 WASM 沙箱运行器），保持当前 `runnerManager.hasRunnerForLanguage()` 优雅降级机制，并允许板型/语言声明导出工具链元信息（如头文件、CMake/Makefile 片段或固件接口约定）。
+### 实现结果
+- **单一真相源**：每个具体后端适配器（如 [luaBackend.ts](../../src/core/backends/luaBackend.ts)、[pythonBackend.ts](../../src/core/backends/pythonBackend.ts)）自身完整声明并导出其 `LanguageDialect`（含语法字面量、关键字、`builtinFuncs`、`libBinding` 脚本库导入/调用/扫描/提取器、`extractErrorLine` 运行期错误行解析与可选 `exportToolchain` 工具链元信息）。
+- **单一注册入口**：[src/core/backends/registry.ts](../../src/core/backends/registry.ts) 的 `BUILTIN_BACKEND_ENTRIES` 是全工程唯一内置语言清单；`RegisteredLanguageId`（[src/types/project.ts](../../src/types/project.ts) 中的 `ScriptLanguageId`）、方言查询、扩展名识别、语法高亮、保留关键字校验、脚本库扫描、导入模块解析与 UI 语言选项全部自动由 `backendRegistry` 动态派生。
+- **零旧表残留**：彻底移除 `types.ts` 中硬编码的 `LANGUAGE_DIALECTS` / `SUPPORTED_LANGUAGE_IDS` 以及 `scriptLibScanner.ts` / `moduleResolver.ts` / `logParser.ts` / `highlight.ts` 中的二元语言分支表（由单元测试持续守门）。
+- **新增第 3 种目标语言的标准 2 步配方**：
+  1. 新建 `src/core/backends/<lang>Backend.ts`（导出 `<LANG>_DIALECT` + 继承 [BaseScriptBackend](../../src/core/backends/baseBackend.ts) 的适配器类；编译型/仅导出型语言可声明 `exportToolchain` 并无需注册 WASM Runner）。
+  2. 在 [src/core/backends/registry.ts](../../src/core/backends/registry.ts) 的 `BUILTIN_BACKEND_ENTRIES` 追加 1 行条目（如需浏览器沙箱仿真，再按需在 `runnerManager` 注册对应 Runner）。
 
 ---
 

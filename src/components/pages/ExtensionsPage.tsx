@@ -13,11 +13,11 @@ import {
   Upload,
 } from 'lucide-react';
 import { useRef, useState, type CSSProperties } from 'react';
-import { backendRegistry } from '../../core/backends/registry';
 import {
+  backendRegistry,
   formatSupportedExtensionsLabel,
   getSupportedScriptAcceptAttr,
-} from '../../core/backends/types';
+} from '../../core/backends/registry';
 import {
   CORE_TOOLBOX_ORDERS,
   DEFAULT_EXTENSION_TOOLBOX_ORDER,
@@ -697,6 +697,9 @@ export function ExtensionsPage({
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                       默认导出：{b.fileName}
+                      {b.dialect.exportToolchain
+                        ? ` · 工具链：${b.dialect.exportToolchain.label}`
+                        : ''}
                     </div>
                   </div>
                 </div>

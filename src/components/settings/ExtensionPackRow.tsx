@@ -9,7 +9,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { CSSProperties } from 'react';
-import { formatSupportedExtensionsLabel } from '../../core/backends/types';
+import { formatSupportedExtensionsLabel } from '../../core/backends/registry';
 import { hasCapability } from '../../core/capabilities/registry';
 import { inspectPackImportSourceMatch } from '../../core/extensions/moduleResolver';
 import {

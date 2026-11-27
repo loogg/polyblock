@@ -1,7 +1,7 @@
 import {
-  LANGUAGE_DIALECTS,
   normalizeLanguageId,
-} from '../backends/types';
+  stripScriptExtension,
+} from '../backends/registry';
 import {
   DEFAULT_CHANNEL_COUNT,
   MAX_CHANNEL_COUNT,
@@ -72,17 +72,11 @@ export function createBlankModuleWorkspace(): Record<string, unknown> {
   };
 }
 
-const SCRIPT_EXT_STRIP_RE = new RegExp(
-  `\\.(${Object.values(LANGUAGE_DIALECTS)
-    .map((d) => d.extension)
-    .join('|')}|polyblock\\.json|json)$`,
-  'i',
-);
-
 export function sanitizeScriptName(raw: string): string {
-  const cleaned = raw
-    .trim()
-    .replace(SCRIPT_EXT_STRIP_RE, '')
+  const withoutExt = stripScriptExtension(
+    raw.trim().replace(/\.(?:polyblock\.json|json)$/i, ''),
+  );
+  const cleaned = withoutExt
     .replace(/[\\/:*?"<>|\s]+/g, '_')
     .replace(/^_+|_+$/g, '');
   return cleaned || 'script';

@@ -28,12 +28,95 @@ import {
   SENTINEL_START_PREFIX,
 } from './sourceMap';
 import {
-  formatInitialValueForLanguage,
-  LANGUAGE_DIALECTS,
+  formatInitialValueForDialect,
+  splitLibParamList,
   type EntryDispatchBranchSpec,
   type ExtensionHatRegisterContext,
+  type LanguageDialect,
+  type ScannedLibFunctionMeta,
   type SharedModuleDocumentInput,
 } from './types';
+
+function scanPythonLibraryFunctionMetas(source: string): ScannedLibFunctionMeta[] {
+  const lines = source.replace(/\r\n/g, '\n').split('\n');
+  const results: ScannedLibFunctionMeta[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const m = /^def\s+([A-Za-z][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?:->[^:]+)?\s*:/.exec(
+      line,
+    );
+    if (!m) continue;
+    const funcName = m[1];
+    if (funcName.startsWith('_') || seen.has(funcName)) continue;
+    seen.add(funcName);
+
+    const params = splitLibParamList(m[2]);
+    const bodyLines: string[] = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      const bl = lines[j];
+      if (bl.trim() === '' || /^\s+#/.test(bl)) continue;
+      if (!/^\s+/.test(bl)) break;
+      bodyLines.push(bl);
+    }
+    const bodyStr = bodyLines.join('\n').replace(/#[^\n]*/g, '');
+    const hasValReturn = /\breturn\s+(?!\s*(?:$|\n|None\b))[^\s#]/m.test(bodyStr);
+    results.push({
+      funcName,
+      params,
+      inferredKind: hasValReturn ? 'value' : 'statement',
+    });
+  }
+
+  return results;
+}
+
+/** Single-source-of-truth dialect metadata owned by the Python 3 backend. */
+export const PYTHON_DIALECT = {
+  id: 'python',
+  displayName: 'Python 3',
+  shortLabel: 'Python',
+  compactLabel: 'Py',
+  extension: 'py',
+  accentGradient: 'linear-gradient(135deg, #0d9488, #10b981)',
+  boolTrue: 'True',
+  boolFalse: 'False',
+  nullLiteral: 'None',
+  listLiteral: '[]',
+  dictLiteral: '{}',
+  notOp: 'not ',
+  commentToken: '#',
+  lineCommentPrefix: '  # ',
+  keywords: [
+    'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break',
+    'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally',
+    'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal',
+    'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield',
+  ],
+  builtinFuncs: [
+    'print', 'len', 'str', 'int', 'float', 'range', 'list', 'dict', 'abs',
+    'round', 'min', 'max', 'sum', 'math', 'random',
+  ],
+  explicitAsyncCoroutine: true,
+  libBinding: {
+    formatImport: (mod: string) => `import ${mod}`,
+    formatCall: (mod: string, fn: string, args: string[]) =>
+      `${mod}.${fn}(${args.join(', ')})`,
+    extractImportedModuleName: (line: string) => {
+      const m = /^\s*(?:import|from)\s+([A-Za-z_][A-Za-z0-9_.]*)/.exec(line);
+      return m?.[1]?.trim() || null;
+    },
+    scanFunctions: scanPythonLibraryFunctionMetas,
+  },
+  extractErrorLine: (message: string) => {
+    // Python traceback: File "<string>", line 7, in <module>
+    const matches = Array.from(message.matchAll(/line\s+(\d+)/gi));
+    return matches.length > 0
+      ? Number(matches[matches.length - 1][1])
+      : undefined;
+  },
+} as const satisfies LanguageDialect<'python'>;
 
 let pythonGeneratorsRegistered = false;
 
@@ -162,7 +245,7 @@ export function registerPythonBlockGenerators(): void {
         if (usedIdents !== null && !usedIdents.has(ident)) continue;
         const varName = identToVarName.get(ident) ?? ident;
         kept.push(
-          `${ident} = ${formatInitialValueForLanguage(scriptInitials[varName], 'python')}`,
+          `${ident} = ${formatInitialValueForDialect(scriptInitials[varName], PYTHON_DIALECT)}`,
         );
       }
       if (kept.length > 0) {
@@ -704,15 +787,15 @@ const PY_DEBUG_STATEMENT_PREFIX =
   `await _poly_tick(%1, _poly_snap(locals(), globals()))\n`;
 
 export class PythonBackendAdapter extends BaseScriptBackend<void> {
-  readonly id = 'python' as const;
+  readonly id = PYTHON_DIALECT.id;
   readonly name = 'Python';
   readonly version = '3';
-  readonly extension = 'py';
-  readonly fileName = 'main.py';
+  readonly extension = PYTHON_DIALECT.extension;
+  readonly fileName = `main.${PYTHON_DIALECT.extension}`;
   readonly accentColor = '#f59e0b';
   readonly description =
     '标准 Python 3 脚本生成器，支持 Style A1 只读 shared 模块、单线程 async 协程 ABI 与伴生脚本断点调试。';
-  readonly dialect = LANGUAGE_DIALECTS.python;
+  readonly dialect = PYTHON_DIALECT;
 
   protected readonly bareAttrInSharedModule = true;
   protected readonly orderNone = Order.NONE;
@@ -1142,7 +1225,7 @@ export class PythonBackendAdapter extends BaseScriptBackend<void> {
   } {
     const varLines = input.variables.map(
       (v) =>
-        `${v.attr} = ${formatInitialValueForLanguage(v.initialValue, 'python')}`,
+        `${v.attr} = ${formatInitialValueForDialect(v.initialValue, PYTHON_DIALECT)}`,
     );
     const cleanParts: string[] = [
       `# 由 PolyBlock 自动生成的同句柄跨文件共享模块（只读）`,

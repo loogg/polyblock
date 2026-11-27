@@ -1,6 +1,6 @@
 import { BookOpen, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { formatSupportedExtensionsLabel } from '../core/backends/types';
+import { formatSupportedExtensionsLabel } from '../core/backends/registry';
 import { CORE_TOOLBOX_ORDERS } from '../core/blocks/catalog';
 import { useModalFocusTrap } from '../hooks/useModalFocusTrap';
 

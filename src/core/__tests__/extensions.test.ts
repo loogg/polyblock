@@ -1732,5 +1732,25 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       ),
     ).toBe(true);
     orphanWs.dispose();
+
+    // 8. Single-entry multi-language backend guardrail: zero hardcoded language tables outside concrete backend adapters
+    const languageAgnosticCoreFiles = [
+      'src/core/backends/types.ts',
+      'src/core/highlight.ts',
+      'src/core/extensions/scriptLibScanner.ts',
+      'src/core/extensions/moduleResolver.ts',
+      'src/core/runners/logParser.ts',
+    ];
+    for (const relPath of languageAgnosticCoreFiles) {
+      const src = fs.readFileSync(path.join(repoRoot, relPath), 'utf8');
+      expect(
+        src,
+        `${relPath} must derive language dialects/scanners/extractors from backendRegistry instead of hardcoding lua/python`,
+      ).not.toMatch(/\b(LANGUAGE_DIALECTS|SUPPORTED_LANGUAGE_IDS|ERROR_LINE_EXTRACTORS|IMPORT_MODULE_NAME_EXTRACTORS|LIB_LANGUAGE_BINDINGS|LIB_FUNCTION_SCANNERS)\b/);
+      expect(
+        src,
+        `${relPath} must not contain hardcoded 'lua' or 'python' map keys`,
+      ).not.toMatch(/^\s*(?:lua|python)\s*:/m);
+    }
   });
 });

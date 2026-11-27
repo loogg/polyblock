@@ -1,5 +1,5 @@
 import { ArrowLeft, Cpu, Globe, Terminal } from 'lucide-react';
-import { LANGUAGE_DIALECTS } from '../../core/backends/types';
+import { backendRegistry } from '../../core/backends/registry';
 import {
   PLANNED_RUNNER_SLOTS,
   runnerManager,
@@ -37,7 +37,7 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
             const primaryLang = runner.supportedLanguages[0];
             const iconBackground =
               (primaryLang
-                ? LANGUAGE_DIALECTS[primaryLang]?.accentGradient
+                ? backendRegistry.tryGetDialect(primaryLang)?.accentGradient
                 : undefined) ?? DEFAULT_RUNNER_GRADIENT;
             return (
               <div key={runner.id} className="ui-card">
@@ -73,7 +73,7 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
                     <span>支持：</span>
                     {runner.supportedLanguages.map((lang) => (
                       <span key={lang} className="count-badge">
-                        {LANGUAGE_DIALECTS[lang]?.shortLabel ?? lang}
+                        {backendRegistry.tryGetDialect(lang)?.shortLabel ?? lang}
                       </span>
                     ))}
                   </span>

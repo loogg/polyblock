@@ -1,5 +1,5 @@
 import type { RuntimeTelemetry, ScriptLanguageId } from '../../types/project';
-import { LANGUAGE_DIALECTS } from '../backends/types';
+import { getLanguageDialect } from '../backends/registry';
 import { extractErrorLine, parseStdoutLine } from './logParser';
 import type { RunCallbacks, RunRequest, RunResult, ScriptRunner } from './types';
 
@@ -82,7 +82,7 @@ export class WorkerWasmRunner implements ScriptRunner {
   }
 
   private get langLabel(): string {
-    return LANGUAGE_DIALECTS[this.language].shortLabel;
+    return getLanguageDialect(this.language).shortLabel;
   }
 
   private resolveWasmUrl(): string {

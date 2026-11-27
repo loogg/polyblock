@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import {
   formatSupportedExtensionsLabel,
   getSupportedScriptAcceptAttr,
-} from '../../core/backends/types';
+} from '../../core/backends/registry';
 import {
   CORE_TOOLBOX_ORDERS,
   DEFAULT_EXTENSION_TOOLBOX_ORDER,

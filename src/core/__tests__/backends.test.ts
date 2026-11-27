@@ -1,18 +1,25 @@
 import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { backendRegistry } from '../backends/registry';
+import {
+  backendRegistry,
+  formatInitialValueForLanguage,
+  formatSupportedExtensionsLabel,
+  getLanguageDialect,
+  getSupportedLanguageIds,
+  getSupportedScriptAcceptAttr,
+  isSupportedLanguageId,
+  normalizeLanguageId,
+  stripScriptExtension,
+} from '../backends/registry';
 import { BaseScriptBackend } from '../backends/baseBackend';
 import {
   formatSharedVarRef,
   resetCodegenPassContext,
 } from '../backends/codegenContext';
-import {
-  formatSupportedExtensionsLabel,
-  getSupportedScriptAcceptAttr,
-  LANGUAGE_DIALECTS,
-  stripScriptExtension,
-  SUPPORTED_LANGUAGE_IDS,
-} from '../backends/types';
+import type { LanguageDialect, ScriptBackendAdapter } from '../backends/types';
+import { extractImportedModuleNames } from '../extensions/moduleResolver';
+import { scanScriptLibraryFile } from '../extensions/scriptLibScanner';
+import { validateSharedVariableName } from '../projects/handleVariables';
 import { registerPolyBlocks } from '../blocks/definitions';
 import { getDemoProjectById } from '../projects/builtinDemos';
 import { instantiateProjectFromTemplate } from '../projects/store';
@@ -421,9 +428,10 @@ describe('Log parser & syntax highlighter', () => {
 });
 
 describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocolHost', () => {
-  it('exposes accentGradient and dynamic script extension helpers from LANGUAGE_DIALECTS', () => {
-    for (const lang of SUPPORTED_LANGUAGE_IDS) {
-      expect(LANGUAGE_DIALECTS[lang].accentGradient).toMatch(/^linear-gradient\(/);
+  it('derives accentGradient and script extension helpers dynamically from backendRegistry', () => {
+    const supportedIds = getSupportedLanguageIds();
+    for (const lang of supportedIds) {
+      expect(getLanguageDialect(lang).accentGradient).toMatch(/^linear-gradient\(/);
     }
     expect(getSupportedScriptAcceptAttr()).toBe('.lua,.py');
     expect(formatSupportedExtensionsLabel()).toBe('.lua / .py');
@@ -431,6 +439,163 @@ describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocol
     expect(stripScriptExtension('helpers.PY')).toBe('helpers');
     expect(stripScriptExtension('utils.crc16.lua')).toBe('utils.crc16');
     expect(stripScriptExtension('readme.md')).toBe('readme.md');
+  });
+
+  it('propagates a dynamically registered 3rd backend across all derived dialect helpers, highlighter, scanner, and validators', () => {
+    const mockDialect: LanguageDialect<'js'> = {
+      id: 'js',
+      displayName: 'JavaScript (ES2023)',
+      shortLabel: 'JS',
+      compactLabel: 'JS',
+      extension: 'js',
+      accentGradient: 'linear-gradient(135deg, #f59e0b, #d97706)',
+      boolTrue: 'true',
+      boolFalse: 'false',
+      nullLiteral: 'null',
+      listLiteral: '[]',
+      dictLiteral: '{}',
+      notOp: '!',
+      commentToken: '//',
+      lineCommentPrefix: ' // ',
+      keywords: ['const', 'let', 'function', 'return', 'await', 'async', 'export'],
+      builtinFuncs: ['console', 'Math'],
+      explicitAsyncCoroutine: true,
+      libBinding: {
+        formatImport: (mod) => `import * as ${mod} from "./${mod}.js";`,
+        formatCall: (mod, fn, args) => `${mod}.${fn}(${args.join(', ')})`,
+        extractImportedModuleName: (line) => {
+          const m = /from\s+["']\.\/([^"'.]+)(?:\.js)?["']/.exec(line);
+          return m?.[1]?.trim() || null;
+        },
+        scanFunctions: (source) => {
+          const out: Array<{
+            funcName: string;
+            params: string[];
+            inferredKind: 'statement' | 'value';
+          }> = [];
+          const re = /export\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*\{([^}]*)\}/g;
+          let m: RegExpExecArray | null;
+          while ((m = re.exec(source)) !== null) {
+            out.push({
+              funcName: m[1],
+              params: m[2]
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean),
+              inferredKind: /\breturn\s+\S/.test(m[3]) ? 'value' : 'statement',
+            });
+          }
+          return out;
+        },
+      },
+      extractErrorLine: (msg) => {
+        const m = /\.js:(\d+):/.exec(msg);
+        return m ? Number(m[1]) : undefined;
+      },
+      exportToolchain: {
+        label: 'QuickJS / Node.js',
+        notes: '可直接在嵌入式 QuickJS 或 Node.js 运行导出脚本。',
+      },
+    };
+
+    const jsLang = 'js' as ScriptLanguageId;
+    const mockAdapter: ScriptBackendAdapter = {
+      id: jsLang,
+      name: 'JavaScript',
+      version: 'ES2023',
+      extension: 'js',
+      fileName: 'main.js',
+      accentColor: '#f59e0b',
+      description: 'Mock 3rd-language backend for single-entry verification',
+      dialect: mockDialect,
+      generate: () => ({
+        language: jsLang,
+        code: '',
+        debugCode: '',
+        moduleDebugCode: '',
+        sourceMap: {},
+        lineToBlock: {},
+        diagnostics: [],
+        blockCount: 0,
+        variableNames: [],
+        variableScopes: [],
+      }),
+      formatDispatchRouter: () => ({ autoImports: [], code: '' }),
+      registerExtensionBlock: () => {},
+      registerExtensionHat: () => {},
+      compileSharedProcedure: () => ({
+        ident: '',
+        imports: [],
+        cleanFnCode: '',
+        debugFnCode: '',
+      }),
+      formatSharedModuleDocument: () => ({ source: '', debugSource: '' }),
+    };
+
+    backendRegistry.register(mockAdapter);
+    try {
+      expect(getSupportedLanguageIds()).toContain(jsLang);
+      expect(isSupportedLanguageId('js')).toBe(true);
+      expect(normalizeLanguageId('js')).toBe(jsLang);
+      expect(getLanguageDialect(jsLang).exportToolchain?.label).toBe(
+        'QuickJS / Node.js',
+      );
+      expect(getSupportedScriptAcceptAttr()).toBe('.lua,.py,.js');
+      expect(formatSupportedExtensionsLabel()).toBe('.lua / .py / .js');
+      expect(stripScriptExtension('driver.JS')).toBe('driver');
+      expect(formatInitialValueForLanguage({ kind: 'null' }, jsLang)).toBe('null');
+
+      const highlighted = highlightCodeLine('const v = console.log(42) // ok', jsLang);
+      expect(highlighted).toContain('<span class="syn-kw">const</span>');
+      expect(highlighted).toContain('<span class="syn-fn">console</span>');
+      expect(highlighted).toContain('<span class="syn-num">42</span>');
+      expect(highlighted).toContain('<span class="syn-cmt">// ok</span>');
+
+      // Newly registered language keywords are automatically reserved by variable validator
+      const kwCheck = validateSharedVariableName('const', []);
+      expect(kwCheck.valid).toBe(false);
+
+      // Error line parser delegates to dialect.extractErrorLine
+      expect(extractErrorLine('ReferenceError at main.js:42:5', jsLang)).toBe(42);
+
+      // Native script library scanner auto-detects `.js` & scans functions via dialect.libBinding
+      const scanned = scanScriptLibraryFile(
+        'sensor_drv.js',
+        'export function readTemp(ch) { return ch * 2; }\nexport function reset() { }',
+      );
+      expect(scanned.language).toBe(jsLang);
+      expect(scanned.moduleName).toBe('sensor_drv');
+      expect(
+        scanned.scannedFunctions.map(
+          (f) => `${f.funcName}:${f.inferredKind}:${f.params.join(',')}`,
+        ),
+      ).toEqual(['readTemp:value:ch', 'reset:statement:']);
+
+      // Module import extractor delegates to dialect.libBinding.extractImportedModuleName
+      expect(
+        extractImportedModuleNames({
+          format: 'polyblock-extension',
+          version: 1,
+          id: 'mock-js-pack',
+          name: 'Mock JS Pack',
+          packVersion: '1.0.0',
+          iconLabel: 'JS',
+          color: '#f59e0b',
+          description: '',
+          imports: {
+            [jsLang]: ['import * as sensor_drv from "./sensor_drv.js";'],
+          },
+          sections: [],
+        }),
+      ).toEqual(['sensor_drv']);
+    } finally {
+      backendRegistry.unregister(jsLang);
+    }
+
+    // Cleanly reverted after unregister
+    expect(isSupportedLanguageId('js')).toBe(false);
+    expect(getSupportedScriptAcceptAttr()).toBe('.lua,.py');
+    expect(formatSupportedExtensionsLabel()).toBe('.lua / .py');
   });
 
   it('implements Lua and Python backends via BaseScriptBackend and unifies formatSharedVarRef', () => {
@@ -486,7 +651,7 @@ describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocol
     );
 
     for (const slot of PLANNED_RUNNER_SLOTS) {
-      expect(slot.supportedLanguages).toEqual([...SUPPORTED_LANGUAGE_IDS]);
+      expect(slot.supportedLanguages).toEqual(getSupportedLanguageIds());
     }
 
     // Verify MultiHandleRunnerOrchestrator returns a structured error instead of throwing
