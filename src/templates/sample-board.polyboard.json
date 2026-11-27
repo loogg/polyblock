@@ -1,0 +1,16 @@
+{
+  "$schema": "../../schemas/polyboard.schema.json",
+  "format": "polyblock-board",
+  "version": 1,
+  "id": "my-industrial-controller",
+  "name": "自定义工业控制板（示例模板）",
+  "description": "演示如何通过纯 JSON 定义目标设备规格：Lua 5.4、最多 8 个隔离句柄、启用 rt（也可按 rt.lifecycle / rt.timers / rt.tick 细粒度裁剪）。",
+  "defaultLanguage": "lua",
+  "maxHandles": 8,
+  "defaultChannelCounts": {
+    "rt.timers": 16
+  },
+  "capabilities": [
+    "rt"
+  ]
+}

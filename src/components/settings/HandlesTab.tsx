@@ -9,6 +9,7 @@ import type {
   ProjectModel,
   RuntimeHandle,
 } from '../../types/project';
+import { PolySelect } from '../PolySelect';
 
 interface HandlesTabProps {
   project: ProjectModel;
@@ -319,7 +320,7 @@ export function HandlesTab({
                         <input
                           type="number"
                           aria-label={`句柄自定义${pool.label}数`}
-                          className="template-select"
+                          className="compact-num-input"
                           style={{ width: 58, height: 26, textAlign: 'center' }}
                           min={pool.min}
                           max={pool.max}
@@ -345,24 +346,23 @@ export function HandlesTab({
                         flexWrap: 'wrap',
                       }}
                     >
-                      <select
-                        aria-label={`选择${pool.label}`}
-                        className="template-select"
+                      <PolySelect
+                        size="sm"
+                        ariaLabel={`选择${pool.label}`}
                         value={curSlotId}
-                        onChange={(e) =>
+                        minPopoverWidth={140}
+                        options={Array.from({ length: poolCfg.count }, (_, idx) => ({
+                          value: String(idx),
+                          label: `${pool.prefix}${idx} (ID ${idx})`,
+                          badge: poolCfg.aliases[String(idx)] || undefined,
+                        }))}
+                        onChange={(val) =>
                           setAliasSlotsByPool((prev) => ({
                             ...prev,
-                            [pool.configKey]: e.target.value,
+                            [pool.configKey]: val,
                           }))
                         }
-                      >
-                        {Array.from({ length: poolCfg.count }, (_, idx) => (
-                          <option key={idx} value={String(idx)}>
-                            {pool.prefix}
-                            {idx} (ID {idx})
-                          </option>
-                        ))}
-                      </select>
+                      />
                       <input
                         type="text"
                         aria-label={`${pool.label}别名输入框`}

@@ -1,0 +1,9 @@
+{
+  "order": [
+    "starter_suite",
+    "virtual_board_demo",
+    "event_timer_demo",
+    "multi_handle_robot"
+  ],
+  "exclude": []
+}

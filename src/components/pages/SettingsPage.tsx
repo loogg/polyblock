@@ -1,5 +1,6 @@
 import { ArrowLeft, RotateCcw } from 'lucide-react';
-import type { AppSettings } from '../../types/project';
+import type { AppSettings, ExecutionSpeedId } from '../../types/project';
+import { PolySelect } from '../PolySelect';
 
 interface SettingsPageProps {
   settings: AppSettings;
@@ -62,20 +63,18 @@ export function SettingsPage({
               控制沙箱逐块联动高亮的节奏（选择「极速」时不额外停顿，但仍会在断点处暂停）
             </div>
           </div>
-          <select
-            className="template-select"
-            aria-label="默认执行高亮速度"
+          <PolySelect<ExecutionSpeedId>
+            size="md"
+            ariaLabel="默认执行高亮速度"
             value={settings.executionSpeed}
-            onChange={(e) =>
-              onUpdateSettings({
-                executionSpeed: e.target.value as AppSettings['executionSpeed'],
-              })
-            }
-          >
-            <option value="normal">正常（每步 180ms）</option>
-            <option value="slow">慢放（每步 450ms）</option>
-            <option value="fast">极速（0ms 无停顿）</option>
-          </select>
+            minPopoverWidth={190}
+            options={[
+              { value: 'normal', label: '正常（每步 180ms）' },
+              { value: 'slow', label: '慢放（每步 450ms）' },
+              { value: 'fast', label: '极速（0ms 无停顿）' },
+            ]}
+            onChange={(val) => onUpdateSettings({ executionSpeed: val })}
+          />
         </div>
 
         <div className="setting-row">
@@ -87,19 +86,19 @@ export function SettingsPage({
               当 <code>on_start</code> 内存在死循环或长计算且未调用 <code>sleep_ms</code> 时，每连续运行满该时间片即自动让出给事件调度器（防止阻塞事件响应）
             </div>
           </div>
-          <select
-            className="template-select"
-            aria-label="on_start 协程时间片"
-            value={settings.timeSliceMs}
-            onChange={(e) =>
-              onUpdateSettings({ timeSliceMs: Number(e.target.value) })
-            }
-          >
-            <option value={10}>10 ms（高频响应）</option>
-            <option value={20}>20 ms（推荐默认）</option>
-            <option value={50}>50 ms</option>
-            <option value={100}>100 ms（长计算优先）</option>
-          </select>
+          <PolySelect
+            size="md"
+            ariaLabel="on_start 协程时间片"
+            value={String(settings.timeSliceMs)}
+            minPopoverWidth={186}
+            options={[
+              { value: '10', label: '10 ms（高频响应）' },
+              { value: '20', label: '20 ms（推荐默认）' },
+              { value: '50', label: '50 ms' },
+              { value: '100', label: '100 ms（长计算优先）' },
+            ]}
+            onChange={(val) => onUpdateSettings({ timeSliceMs: Number(val) })}
+          />
         </div>
 
         <div className="setting-row">
@@ -109,19 +108,19 @@ export function SettingsPage({
               仅限制单次事件回调（<code>on_run</code> / <code>on_timer</code> / <code>on_button</code>）或纯同步计算的连续耗时，不影响常驻事件循环与 <code>on_start</code> 协程的长期运行
             </div>
           </div>
-          <select
-            className="template-select"
-            aria-label="单次事件回调超时保护"
-            value={settings.timeoutMs}
-            onChange={(e) =>
-              onUpdateSettings({ timeoutMs: Number(e.target.value) })
-            }
-          >
-            <option value={2000}>2 秒（快速保护）</option>
-            <option value={5000}>5 秒（推荐默认）</option>
-            <option value={10000}>10 秒</option>
-            <option value={30000}>30 秒</option>
-          </select>
+          <PolySelect
+            size="md"
+            ariaLabel="单次事件回调超时保护"
+            value={String(settings.timeoutMs)}
+            minPopoverWidth={180}
+            options={[
+              { value: '2000', label: '2 秒（快速保护）' },
+              { value: '5000', label: '5 秒（推荐默认）' },
+              { value: '10000', label: '10 秒' },
+              { value: '30000', label: '30 秒' },
+            ]}
+            onChange={(val) => onUpdateSettings({ timeoutMs: Number(val) })}
+          />
         </div>
 
         <div className="setting-row">
@@ -147,7 +146,7 @@ export function SettingsPage({
           <div>
             <div style={{ fontWeight: 600, marginBottom: 2 }}>重置默认示例画布</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              清除本地缓存并恢复内置的 4 个渐进式演示项目（L1 入门 ~ L4 旗舰）
+              清除本地缓存并恢复全部内置成品演示项目
             </div>
           </div>
           <button

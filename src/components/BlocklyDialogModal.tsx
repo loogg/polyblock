@@ -8,7 +8,10 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LANGUAGE_DIALECTS } from '../core/backends/types';
+import {
+  LANGUAGE_DIALECTS,
+  SUPPORTED_LANGUAGE_IDS,
+} from '../core/backends/types';
 import {
   validateSharedVariableName,
   type VariableScopeKind,
@@ -84,7 +87,7 @@ const INIT_KIND_BUTTONS: Array<{
 
 export function BlocklyDialogModal({
   request,
-  language = 'lua',
+  language = SUPPORTED_LANGUAGE_IDS[0],
   handleName,
   handleColor,
   activeScriptLabel,

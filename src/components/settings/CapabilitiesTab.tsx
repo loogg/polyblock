@@ -9,6 +9,7 @@ import {
   DEFAULT_EXTENSION_TOOLBOX_ORDER,
 } from '../../core/blocks/catalog';
 import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../../core/extensions/builtinPacks';
+import { extensionRegistry } from '../../core/extensions/registry';
 import {
   scanScriptLibraryFile,
   type UploadedScriptLibFile,
@@ -59,8 +60,12 @@ export function CapabilitiesTab({
 
   const localPacks = project.localExtensions ?? [];
   const localPackIds = new Set(localPacks.map((p) => p.id));
-  const builtinPacks = allExtensionPacks.filter((p) => Boolean(p.builtin));
-  const customGlobalPacks = allExtensionPacks.filter((p) => !p.builtin);
+  const builtinPacks = allExtensionPacks.filter((p) =>
+    extensionRegistry.isBuiltin(p.id),
+  );
+  const customGlobalPacks = allExtensionPacks.filter(
+    (p) => !extensionRegistry.isBuiltin(p.id),
+  );
   const globalPackIds = new Set(allExtensionPacks.map((p) => p.id));
 
   const supportedExtAccept = getSupportedScriptAcceptAttr();

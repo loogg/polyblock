@@ -27,6 +27,7 @@ export type WorkerControlMessage =
       stepDelayMs: number;
       startInStepMode?: boolean;
       channelCounts?: Record<string, number>;
+      timerPoolKey?: string;
       timeSliceMs?: number;
       callbackTimeoutMs?: number;
       mockModules?: WorkerMockModule[];

@@ -274,6 +274,7 @@ export class WorkerWasmRunner implements ScriptRunner {
         stepDelayMs: request.stepDelayMs ?? 0,
         startInStepMode: request.startInStepMode ?? false,
         channelCounts: request.channelCounts ?? {},
+        timerPoolKey: request.timerPoolKey,
         timeSliceMs: request.timeSliceMs ?? 20,
         callbackTimeoutMs: request.timeoutMs,
         mockModules: request.mockModules ?? [],

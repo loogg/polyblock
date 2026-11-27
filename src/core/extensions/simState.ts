@@ -141,6 +141,34 @@ function findMaxLines(fullOrRawKey: string, packs: PolyExtensionPack[]): number 
 }
 
 /**
+ * Applies a single `:clear` / `:append` / set mutation on a simulator state key
+ * and returns the normalized target key and next value (shared by both UI and Workers).
+ */
+export function resolveScopedSimStateMutation(
+  prevState: Record<string, unknown>,
+  qualifiedKind: string,
+  value: unknown,
+  maxLines = 8,
+): { targetKey: string; nextVal: unknown } {
+  if (qualifiedKind.endsWith(':clear')) {
+    return { targetKey: qualifiedKind.slice(0, -6), nextVal: [] };
+  }
+  if (qualifiedKind.endsWith(':append')) {
+    const targetKey = qualifiedKind.slice(0, -7);
+    const curArr = Array.isArray(prevState[targetKey])
+      ? (prevState[targetKey] as string[])
+      : typeof prevState[targetKey] === 'string' && prevState[targetKey]
+        ? [String(prevState[targetKey])]
+        : [];
+    return {
+      targetKey,
+      nextVal: [...curArr, String(value)].slice(-maxLines),
+    };
+  }
+  return { targetKey: qualifiedKind, nextVal: value };
+}
+
+/**
  * Applies a worker DEVICE_EVENT (`__poly_sim_set`) into the shared simulator state map
  * and returns both the next map and the exact key patch to broadcast to concurrent Workers.
  */
@@ -150,31 +178,18 @@ export function applySimDeviceEvent(
   value: unknown,
   packs: PolyExtensionPack[],
 ): { next: SimStateMap; broadcastPatch: Record<string, unknown> } {
-  let targetKey = kind;
-  let mode: 'set' | 'append' | 'clear' = 'set';
-
-  if (kind.endsWith(':clear')) {
-    targetKey = kind.slice(0, -6);
-    mode = 'clear';
-  } else if (kind.endsWith(':append')) {
-    targetKey = kind.slice(0, -7);
-    mode = 'append';
-  }
-
-  let nextVal: unknown;
-  if (mode === 'clear') {
-    nextVal = [];
-  } else if (mode === 'append') {
-    const maxLines = findMaxLines(targetKey, packs);
-    const curArr = Array.isArray(prev[targetKey])
-      ? (prev[targetKey] as string[])
-      : typeof prev[targetKey] === 'string' && prev[targetKey]
-        ? [String(prev[targetKey])]
-        : [];
-    nextVal = [...curArr, String(value)].slice(-maxLines);
-  } else {
-    nextVal = value;
-  }
+  const baseKey = kind.endsWith(':append')
+    ? kind.slice(0, -7)
+    : kind.endsWith(':clear')
+      ? kind.slice(0, -6)
+      : kind;
+  const maxLines = findMaxLines(baseKey, packs);
+  const { targetKey, nextVal } = resolveScopedSimStateMutation(
+    prev,
+    kind,
+    value,
+    maxLines,
+  );
 
   const next: SimStateMap = { ...prev, [targetKey]: nextVal };
   return {

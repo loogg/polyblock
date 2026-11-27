@@ -454,7 +454,6 @@ export function buildExtensionPackFromScriptLibs(
     description:
       opts.description?.trim() ||
       `由原生脚本库自动生成的扩展包（含 ${libs.length} 个源码模块，沙箱与真机导出共用）。`,
-    builtin: false,
     tags: ['脚本库'],
     ...(importsObj ? { imports: importsObj } : {}),
     sections: [

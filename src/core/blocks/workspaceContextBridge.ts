@@ -312,7 +312,7 @@ export function getSiblingScriptDropdownOptions(
     options.push([`${fb} (未找到)`, fb]);
   }
   if (options.length === 0) {
-    options.push(['timers', 'timers']);
+    options.push(['（无其他脚本）', '']);
   }
   return options;
 }

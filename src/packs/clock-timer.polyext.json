@@ -1,0 +1,69 @@
+{
+  "$schema": "../../schemas/polyext.schema.json",
+  "format": "polyblock-extension",
+  "version": 1,
+  "id": "clock-timer",
+  "name": "秒表与计时器包",
+  "packVersion": "1.0.0",
+  "iconLabel": "计时",
+  "color": "#a855f7",
+  "description": "提供高精度毫秒秒表积木，便于测量循环耗时、定时轮询与节拍控制。",
+  "tags": [
+    "计时工具"
+  ],
+  "imports": {
+    "lua": [
+      "local poly_clock = require(\"poly_clock\")"
+    ],
+    "python": [
+      "import poly_clock"
+    ]
+  },
+  "sections": [
+    {
+      "id": "main",
+      "label": "计时",
+      "toolboxOrder": 120,
+      "blocks": [
+        {
+          "type": "ext_clock_millis",
+          "kind": "value",
+          "outputType": "Number",
+          "message0": "已运行毫秒数 (ms)",
+          "tooltip": "返回从脚本启动或上次重置秒表以来经过的毫秒数。",
+          "keywords": "时间 计时器 毫秒 millis timer clock elapsed",
+          "code": {
+            "lua": {
+              "template": "poly_clock.millis()"
+            },
+            "python": {
+              "template": "poly_clock.millis()"
+            }
+          }
+        },
+        {
+          "type": "ext_clock_reset",
+          "kind": "statement",
+          "message0": "重置秒表计时器",
+          "tooltip": "将当前秒表起点重置为 0ms。",
+          "keywords": "重置 计时器 秒表 reset timer clock",
+          "code": {
+            "lua": {
+              "template": "poly_clock.reset()"
+            },
+            "python": {
+              "template": "poly_clock.reset()"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "sandboxMock": {
+    "moduleName": "poly_clock",
+    "sources": {
+      "lua": "\nlocal M = {}\nlocal base_ms = __poly_now_ms()\nfunction M.millis()\n  return math.floor(__poly_now_ms() - base_ms)\nend\nfunction M.reset()\n  base_ms = __poly_now_ms()\nend\nreturn M\n",
+      "python": "\nimport _poly\n_base_ms = _poly.now_ms()\ndef millis():\n    return int(_poly.now_ms() - _base_ms)\ndef reset():\n    global _base_ms\n    _base_ms = _poly.now_ms()\n"
+    }
+  }
+}

@@ -451,6 +451,47 @@ export function getOrderedToolboxCategories(
   return combined.map((entry) => entry.cat);
 }
 
+let cachedCoreBlockTypes: Set<string> | null = null;
+
+/**
+ * Authoritative Layer 0 core block-type allowlist (built from `BLOCK_CATEGORIES` plus
+ * dynamic variable, procedure, shared-call, loop, and literal primitives).
+ * Allows diagnostics to detect ANY missing extension block regardless of prefix naming.
+ */
+export function isCoreBlockType(blockType: string): boolean {
+  if (!cachedCoreBlockTypes) {
+    const set = new Set<string>([
+      'variables_get',
+      'variables_set',
+      'math_change',
+      'text_append',
+      'procedures_defnoreturn',
+      'procedures_defreturn',
+      'procedures_defreturn_return',
+      'procedures_callnoreturn',
+      'procedures_callreturn',
+      'procedures_ifreturn',
+      'poly_call_shared_noreturn',
+      'poly_call_shared_return',
+      'controls_for',
+      'controls_forEach',
+      'controls_repeat',
+      'controls_repeat_ext',
+      'math_number',
+      'text',
+      'logic_boolean',
+      'logic_null',
+    ]);
+    for (const cat of BLOCK_CATEGORIES) {
+      for (const blk of cat.blocks) {
+        set.add(blk.type);
+      }
+    }
+    cachedCoreBlockTypes = set;
+  }
+  return cachedCoreBlockTypes.has(blockType);
+}
+
 /**
  * Builds a Blockly flyoutToolbox JSON definition for either:
  * - A search query across all currently enabled categories, or

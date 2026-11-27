@@ -20,7 +20,8 @@
                                         |
                                         v
 +------------------------------------------------------------------------------+
-|       Layer 1~3 · 声明式板型与单轨扩展体系 (capabilities + extensions)         |
+|       Layer 1~3 · 声明式板型与单轨扩展体系 (src/{packs,boards,demos,templates})|
+|  - 全成品 JSON 资产 + manifest.json 顺序清单（随构建内置，便携 JSON 无 builtin 字段）|
 |  - TargetProfile (.polyboard.json): 目标语言 / 最大句柄数 / 默认能力裁剪       |
 |  - PolyExtensionPack (.polyext.json): 单轨 sections[] + 多语言 code/sources   |
 |    · 预装平级包: rt (lifecycle/timers/tick) / virtual-board / clock-timer     |

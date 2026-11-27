@@ -1,0 +1,216 @@
+{
+  "$schema": "./schemas/polyext.schema.json",
+  "format": "polyblock-extension",
+  "version": 1,
+  "id": "my-robot-api",
+  "name": "自定义机器人控制包（示例模板）",
+  "packVersion": "1.0.0",
+  "iconLabel": "机器人",
+  "color": "#ec4899",
+  "tags": [
+    "机器人",
+    "运动控制"
+  ],
+  "description": "演示单轨声明式 .polyext.json 规范：包级默认 imports + sections[] 内嵌积木 + 事件回调帽块 (hat) + 积木级 simWidgetKeys 关联 + 多语言沙箱模拟桩。",
+  "imports": {
+    "lua": [
+      "local robot = require(\"robot\")"
+    ],
+    "python": [
+      "import robot"
+    ]
+  },
+  "sections": [
+    {
+      "id": "main",
+      "label": "机器人",
+      "toolboxOrder": 100,
+      "blocks": [
+        {
+          "type": "ext_robot_move",
+          "kind": "statement",
+          "message0": "机器人 %1 速度 %2",
+          "args0": [
+            {
+              "type": "field_dropdown",
+              "name": "DIR",
+              "options": [
+                [
+                  "前进",
+                  "forward"
+                ],
+                [
+                  "后退",
+                  "backward"
+                ],
+                [
+                  "左转",
+                  "left"
+                ],
+                [
+                  "右转",
+                  "right"
+                ]
+              ]
+            },
+            {
+              "type": "input_value",
+              "name": "SPEED",
+              "check": "Number"
+            }
+          ],
+          "inputsInline": true,
+          "tooltip": "控制机器人沿指定方向以给定速度移动。",
+          "keywords": "机器人 移动 速度 robot move",
+          "shadows": {
+            "SPEED": {
+              "type": "math_number",
+              "value": 60
+            }
+          },
+          "simWidgetKeys": [
+            "moving",
+            "speed",
+            "log"
+          ],
+          "code": {
+            "lua": {
+              "template": "robot.move({{DIR:json}}, {{SPEED}})"
+            },
+            "python": {
+              "template": "robot.move({{DIR:json}}, {{SPEED}})"
+            }
+          }
+        },
+        {
+          "type": "ext_robot_battery",
+          "kind": "value",
+          "outputType": "Number",
+          "message0": "读取机器人电量 (%)",
+          "tooltip": "获取机器人当前剩余电量百分比。",
+          "keywords": "机器人 电量 电池 battery",
+          "simWidgetKeys": [
+            "battery"
+          ],
+          "code": {
+            "lua": {
+              "template": "robot.battery()"
+            },
+            "python": {
+              "template": "robot.battery()"
+            }
+          }
+        },
+        {
+          "type": "ext_robot_on_estop",
+          "kind": "hat",
+          "message0": "当机器人急停 %1 时",
+          "args0": [
+            {
+              "type": "field_dropdown",
+              "name": "STATE",
+              "options": [
+                [
+                  "触发",
+                  "press"
+                ],
+                [
+                  "解除",
+                  "release"
+                ]
+              ]
+            }
+          ],
+          "inputsInline": true,
+          "tooltip": "自定义硬件中断回调示例：聚合成顶层 on_robot_estop(active) 函数。",
+          "keywords": "机器人 急停 回调 estop hat 事件",
+          "simWidgetKeys": [
+            "estop"
+          ],
+          "hat": {
+            "eventName": "on_robot_estop",
+            "params": [
+              "active"
+            ],
+            "mode": "dispatch",
+            "condition": {
+              "lua": "{{STATE:edge:active}}",
+              "python": "{{STATE:edge:active}}"
+            },
+            "duplicateKeyTemplate": "{{STATE}}",
+            "scopeLabelTemplate": "on_robot_estop · {{STATE:edge_zh}}",
+            "scopeShortTemplate": "急停",
+            "scopeCategory": "event",
+            "keepsAlive": true
+          }
+        }
+      ]
+    }
+  ],
+  "sandboxMock": {
+    "moduleName": "robot",
+    "sources": {
+      "lua": "\nlocal M = {}\nfunction M.move(dir, speed)\n  if __poly_sim_get(\"estop\") == true then\n    __poly_sim_set(\"moving\", false)\n    __poly_sim_set(\"speed\", 0)\n    __poly_sim_set(\"log:append\", \"[ESTOP] 急停已触发，忽略移动指令\")\n    print(\"[WARN] [Mock Robot] E-Stop active, move ignored\")\n    return\n  end\n  local spd = tonumber(speed) or 0\n  __poly_sim_set(\"moving\", spd > 0)\n  __poly_sim_set(\"speed\", spd)\n  __poly_sim_set(\"log:append\", \"move(\" .. tostring(dir) .. \", \" .. tostring(spd) .. \"%)\")\n  print(\"[INFO] [Mock Robot] move(\" .. tostring(dir) .. \", speed=\" .. tostring(spd) .. \")\")\nend\nfunction M.battery()\n  local v = tonumber(__poly_sim_get(\"battery\"))\n  return v or 88\nend\nreturn M\n",
+      "python": "\nimport _poly\ndef move(dir_name, speed):\n    if _poly.sim_get(\"estop\") is True:\n        _poly.sim_set(\"moving\", False)\n        _poly.sim_set(\"speed\", 0)\n        _poly.sim_set(\"log:append\", \"[ESTOP] 急停已触发，忽略移动指令\")\n        print(\"[WARN] [Mock Robot] E-Stop active, move ignored\")\n        return\n    spd = float(speed)\n    _poly.sim_set(\"moving\", spd > 0)\n    _poly.sim_set(\"speed\", spd)\n    _poly.sim_set(\"log:append\", f\"move({dir_name}, {int(spd)}%)\")\n    print(\"[INFO] [Mock Robot] move(\" + str(dir_name) + \", speed=\" + str(speed) + \")\")\ndef battery():\n    v = _poly.sim_get(\"battery\")\n    return int(v) if v is not None else 88\n"
+    }
+  },
+  "simWidgets": [
+    {
+      "kind": "led",
+      "key": "moving",
+      "label": "运动状态",
+      "color": "#10b981",
+      "default": false
+    },
+    {
+      "kind": "bar",
+      "key": "speed",
+      "label": "当前车速",
+      "hint": "robot.move",
+      "min": 0,
+      "max": 100,
+      "unit": "%",
+      "color": "#ec4899",
+      "default": 0
+    },
+    {
+      "kind": "screen",
+      "key": "log",
+      "label": "机器人指令终端",
+      "maxLines": 3,
+      "default": [
+        "[Robot Ready] 等待指令..."
+      ]
+    },
+    {
+      "kind": "slider",
+      "key": "battery",
+      "label": "模拟电池电量",
+      "hint": "robot.battery",
+      "min": 0,
+      "max": 100,
+      "step": 1,
+      "unit": "%",
+      "default": 88,
+      "marks": [
+        "0% 亏电",
+        "20% 预警",
+        "100% 满电"
+      ]
+    },
+    {
+      "kind": "toggle",
+      "key": "estop",
+      "label": "急停开关 (E-Stop)",
+      "color": "#ef4444",
+      "default": false,
+      "emitEvent": {
+        "eventName": "on_robot_estop",
+        "args": [
+          "$value"
+        ],
+        "trigger": "change"
+      }
+    }
+  ]
+}

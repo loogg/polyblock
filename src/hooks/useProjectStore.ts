@@ -1042,7 +1042,7 @@ export function useProjectStore({
     executionBridgeRef.current.resetAllSimStates();
     setIsDirty(false);
     navigateTo('blocks');
-    notify('已恢复 4 个渐进式内置演示项目（L1 入门 ~ L4 旗舰）');
+    notify(`已恢复 ${freshStore.projects.length} 个内置演示项目`);
   }, [executionBridgeRef, mountScriptIntoCanvas, navigateTo, notify]);
 
   const handleSelectLanguage = useCallback(

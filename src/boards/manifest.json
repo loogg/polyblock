@@ -1,0 +1,9 @@
+{
+  "order": [
+    "generic-script",
+    "embedded-rt",
+    "virtual-board-rt",
+    "virtual-board-basic"
+  ],
+  "exclude": []
+}

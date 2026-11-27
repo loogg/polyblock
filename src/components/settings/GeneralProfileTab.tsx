@@ -11,6 +11,7 @@ import type {
   ScriptLanguageId,
   TargetProfile,
 } from '../../types/project';
+import { PolySelect } from '../PolySelect';
 
 interface GeneralProfileTabProps {
   project: ProjectModel;
@@ -159,20 +160,18 @@ export function GeneralProfileTab({
             />
           </div>
         </div>
-        <select
-          aria-label="选择目标板型规格"
-          className="template-select"
-          style={{ width: '100%', height: 32 }}
+        <PolySelect
+          size="md"
+          fullWidth
+          ariaLabel="选择目标板型规格"
           value={project.targetProfileId}
-          onChange={(e) => onApplyTargetProfile(project.id, e.target.value)}
-        >
-          {allTargetProfiles.map((prof) => (
-            <option key={prof.id} value={prof.id}>
-              {prof.name}
-              {prof.builtin ? '' : ' [自定义]'} ({prof.capabilities.length} 项能力)
-            </option>
-          ))}
-        </select>
+          options={allTargetProfiles.map((prof) => ({
+            value: prof.id,
+            label: `${prof.name}${targetProfileRegistry.isBuiltin(prof.id) ? '' : ' [自定义]'}`,
+            badge: `${prof.capabilities.length} 能力`,
+          }))}
+          onChange={(profileId) => onApplyTargetProfile(project.id, profileId)}
+        />
         <p className="settings-hint">
           {activeProfile.description} 切换板型会自动装配预设能力清单，你仍可在「能力与外设」中自由微调单一项开关。
         </p>

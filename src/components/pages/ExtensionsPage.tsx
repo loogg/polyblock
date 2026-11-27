@@ -25,9 +25,11 @@ import {
 import {
   hasCapability,
   SAMPLE_CUSTOM_BOARD_TEMPLATE,
+  targetProfileRegistry,
 } from '../../core/capabilities/registry';
 import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../../core/extensions/builtinPacks';
 import { inspectPackImportSourceMatch } from '../../core/extensions/moduleResolver';
+import { extensionRegistry } from '../../core/extensions/registry';
 import {
   derivePackBadges,
   formatPackPlacementSummary,
@@ -109,8 +111,8 @@ export function ExtensionsPage({
   const boardFileInputRef = useRef<HTMLInputElement | null>(null);
   const attachLibsInputRef = useRef<HTMLInputElement | null>(null);
   const [attachTargetPackId, setAttachTargetPackId] = useState<string | null>(null);
-  const builtinPacks = allPacks.filter((p) => Boolean(p.builtin));
-  const customPacks = allPacks.filter((p) => !p.builtin);
+  const builtinPacks = allPacks.filter((p) => extensionRegistry.isBuiltin(p.id));
+  const customPacks = allPacks.filter((p) => !extensionRegistry.isBuiltin(p.id));
   const backends = backendRegistry.list();
   const supportedExtAccept = getSupportedScriptAcceptAttr();
   const supportedExtLabel = formatSupportedExtensionsLabel();
@@ -567,10 +569,18 @@ export function ExtensionsPage({
                   <div style={{ fontWeight: 700, fontSize: 13.5 }}>{prof.name}</div>
                   <span
                     className={`status-pill ${
-                      isActive ? 'ok' : prof.builtin ? 'idle' : 'accent'
+                      isActive
+                        ? 'ok'
+                        : targetProfileRegistry.isBuiltin(prof.id)
+                          ? 'idle'
+                          : 'accent'
                     }`}
                   >
-                    {isActive ? '当前板型' : prof.builtin ? '内置预设' : '自定义'}
+                    {isActive
+                      ? '当前板型'
+                      : targetProfileRegistry.isBuiltin(prof.id)
+                        ? '内置预设'
+                        : '自定义'}
                   </span>
                 </div>
                 <p className="card-desc">{prof.description}</p>
@@ -595,7 +605,7 @@ export function ExtensionsPage({
                     ID: {prof.id}
                   </span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {!prof.builtin && (
+                    {!targetProfileRegistry.isBuiltin(prof.id) && (
                       <>
                         <button
                           type="button"

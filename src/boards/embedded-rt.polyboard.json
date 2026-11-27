@@ -1,0 +1,13 @@
+{
+  "$schema": "../../schemas/polyboard.schema.json",
+  "format": "polyblock-board",
+  "version": 1,
+  "id": "embedded-rt",
+  "name": "通用嵌入式 RT 控制板",
+  "description": "启用完整嵌入式运行时核心包 rt（周期事件 + 每句柄独立多路定时器 + 系统时钟 tick），不含演示外设，适合按需挂载自家硬件扩展包。",
+  "defaultLanguage": "lua",
+  "maxHandles": 8,
+  "capabilities": [
+    "rt"
+  ]
+}

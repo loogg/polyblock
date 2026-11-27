@@ -10,10 +10,10 @@ import {
   type SetStateAction,
 } from 'react';
 import type { BlocklyWorkbenchHandle } from '../components/BlocklyWorkbench';
-import { buildHandleScriptsMeta } from '../core/backends/eventMode';
 import { backendRegistry } from '../core/backends/registry';
 import type { GeneratedCodeResult } from '../core/backends/types';
 import { setActiveModuleConflicts } from '../core/blocks/workspaceContextBridge';
+import { compileHandleArtifacts } from '../core/compiler/handleBuilder';
 import { resolveProjectModules } from '../core/extensions/moduleResolver';
 import { extensionRegistry } from '../core/extensions/registry';
 import {
@@ -25,25 +25,18 @@ import type {
   PolyExtensionPack,
   SimStateMap,
 } from '../core/extensions/types';
-import { collectHandleSharedVariableNames } from '../core/projects/handleVariables';
 import {
   getActiveHandle,
   getActiveProject,
   getActiveScript,
-  getAllHandleChannelPoolConfigs,
   updateHandleById,
   updateProjectById,
 } from '../core/projects/store';
 import { runnerManager } from '../core/runners/manager';
-import {
-  buildHandleScriptModules,
-  compileScriptHeadless,
-  multiHandleOrchestrator,
-} from '../core/runners/multiHandleManager';
+import { multiHandleOrchestrator } from '../core/runners/multiHandleManager';
 import type { RunnerStatus } from '../core/runners/types';
 import type {
   AppSettings,
-  ChannelPoolConfig,
   ExecutionSpeedId,
   LogEntry,
   LogLevel,
@@ -142,8 +135,6 @@ export interface UseExecutionControllerOptions {
   activeProjectIdRef: RefObject<string>;
   activeHandleIdRef: RefObject<string>;
   activeScriptIdRef: RefObject<string>;
-  activeChannelPoolConfigs: Record<string, ChannelPoolConfig>;
-  activeChannelCounts: Record<string, number>;
   activeSimPacks: PolyExtensionPack[];
   generated: GeneratedCodeResult;
   setGenerated: Dispatch<SetStateAction<GeneratedCodeResult>>;
@@ -173,8 +164,6 @@ export function useExecutionController({
   activeProjectIdRef,
   activeHandleIdRef,
   activeScriptIdRef,
-  activeChannelPoolConfigs,
-  activeChannelCounts,
   activeSimPacks,
   generated,
   setGenerated,
@@ -205,7 +194,7 @@ export function useExecutionController({
       timestamp: formatNowTime(),
       level: 'system',
       message:
-        'PolyBlock v3 三层多句柄工程工作台就绪：支持多隔离句柄并发模拟、事件回调/定时器、局部作用域变量树与双语言断点调试。',
+        'PolyBlock v3 三层多句柄工程工作台就绪：支持多隔离句柄并发模拟、事件回调/定时器、局部作用域变量树与多语言断点调试。',
     },
   ]);
 
@@ -466,65 +455,28 @@ export function useExecutionController({
       setMultiHandleRunning(false);
 
       // Whole-handle execution: 1 Handle = 1 program -> ALWAYS launch from entry script
-      // while preloading all sibling scripts in the same handle (including unsaved live edits!).
-      const entryScript =
-        activeHandle.scripts.find((s) => s.id === activeHandle.entryScriptId) ??
-        activeHandle.scripts[0];
-      const runningEntryDirectly = activeScript.id === entryScript.id;
+      // via unified HandleCompilerService (shared with multi-handle & ZIP export!).
       const liveSnapshot = workbenchRef.current?.saveWorkspaceJson();
-      const handleForRun: RuntimeHandle = liveSnapshot
-        ? {
-            ...activeHandle,
-            scripts: activeHandle.scripts.map((s) =>
-              s.id === activeScript.id ? { ...s, workspace: liveSnapshot } : s,
-            ),
-          }
-        : activeHandle;
-
-      // Pre-Run Static Error Gate: collect blocking `severity === 'error'` diagnostics across ALL scripts in the handle!
-      const handleMetasForRun = buildHandleScriptsMeta(handleForRun);
-      const sharedVarsForRun = collectHandleSharedVariableNames(handleForRun);
-      const blockingErrors: Array<{
-        scriptName: string;
-        message: string;
-        blockId?: string;
-        isActiveScript: boolean;
-      }> = [];
-      for (const scr of handleForRun.scripts) {
-        if (scr.id === activeScript.id) {
-          for (const d of latest.diagnostics) {
-            if (d.severity === 'error') {
-              blockingErrors.push({
-                scriptName: scr.name,
-                message: d.message,
-                blockId: d.blockId,
-                isActiveScript: true,
-              });
-            }
-          }
-        } else {
-          const sibCompiled = compileScriptHeadless(scr.workspace, language, {
-            channelPoolConfigs: activeChannelPoolConfigs,
-            enabledCapabilities: activeProject.enabledCapabilities,
-            handleScripts: handleMetasForRun,
-            currentScriptId: scr.id,
-            sharedVariables: sharedVarsForRun,
-            sharedVarInitials: handleForRun.variableInitialValues ?? {},
-            scriptVarInitials: scr.variableInitialValues ?? {},
-            sharedFunctions: handleForRun.sharedFunctions ?? [],
-          });
-          for (const d of sibCompiled.diagnostics) {
-            if (d.severity === 'error') {
-              blockingErrors.push({
-                scriptName: scr.name,
-                message: d.message,
-                blockId: d.blockId,
-                isActiveScript: false,
-              });
-            }
-          }
-        }
-      }
+      const built = compileHandleArtifacts({
+        project: activeProject,
+        handle: activeHandle,
+        liveScriptOverride: {
+          scriptId: activeScript.id,
+          workspace: liveSnapshot ?? undefined,
+          prebuilt: latest,
+        },
+        useDebugCompanion: true,
+      });
+      const {
+        effectiveHandle: handleForRun,
+        entryScript,
+        entryArtifact,
+        blockingErrors,
+        resolution: modResolution,
+        channelCounts: builtChannelCounts,
+        timerPoolKey,
+      } = built;
+      const runningEntryDirectly = activeScript.id === entryScript.id;
 
       if (blockingErrors.length > 0) {
         setShowConsole(true);
@@ -534,11 +486,11 @@ export function useExecutionController({
             timestamp: formatNowTime(),
             level: 'error' as const,
             message: `[${err.scriptName}.${adapter.extension}] ${err.message}`,
-            blockId: err.isActiveScript ? err.blockId : undefined,
+            blockId: err.scriptId === activeScript.id ? err.blockId : undefined,
           })),
         );
         const firstActiveErr = blockingErrors.find(
-          (e) => e.isActiveScript && e.blockId,
+          (e) => e.scriptId === activeScript.id && e.blockId,
         );
         if (firstActiveErr?.blockId) {
           workbenchRef.current?.focusBlock(firstActiveErr.blockId);
@@ -549,28 +501,9 @@ export function useExecutionController({
         return;
       }
 
-      let runCode = latest.code;
-      let runDebugCode = latest.debugCode || latest.code;
-      let runIsEventDriven = Boolean(latest.isEventDriven);
-      if (!runningEntryDirectly) {
-        const compiledEntry = compileScriptHeadless(
-          entryScript.workspace,
-          language,
-          {
-            channelPoolConfigs: activeChannelPoolConfigs,
-            enabledCapabilities: activeProject.enabledCapabilities,
-            handleScripts: handleMetasForRun,
-            currentScriptId: entryScript.id,
-            sharedVariables: sharedVarsForRun,
-            sharedVarInitials: handleForRun.variableInitialValues ?? {},
-            scriptVarInitials: entryScript.variableInitialValues ?? {},
-            sharedFunctions: handleForRun.sharedFunctions ?? [],
-          },
-        );
-        runCode = compiledEntry.code;
-        runDebugCode = compiledEntry.debugCode;
-        runIsEventDriven = compiledEntry.isEventDriven;
-      }
+      const runCode = entryArtifact.code;
+      const runDebugCode = entryArtifact.debugCode;
+      const runIsEventDriven = entryArtifact.isEventDriven;
 
       const scriptFileLabel = `${activeHandle.name}/${entryScript.name}.${adapter.extension}`;
       const siblingNames = handleForRun.scripts
@@ -580,23 +513,6 @@ export function useExecutionController({
       const exportOnlyBlocks = scanHandleExportOnlyBlocks(handleForRun);
 
       runnerManager.setActive(runner);
-
-      const siblingMocks = buildHandleScriptModules(
-        handleForRun,
-        entryScript.id,
-        language,
-        activeChannelPoolConfigs,
-      );
-
-      const modResolution = resolveProjectModules({
-        enabledCapabilities: activeProject.enabledCapabilities,
-        localExtensions: activeProject.localExtensions,
-        handleScripts: siblingMocks.map((m, idx) => ({
-          scriptId: `${activeHandle.id}-sib-${idx}`,
-          scriptName: m.moduleName,
-          sources: m.sources,
-        })),
-      });
 
       if (modResolution.conflicts.length > 0) {
         setActiveModuleConflicts(modResolution.conflicts);
@@ -664,7 +580,8 @@ export function useExecutionController({
           breakpoints: allHandleBreakpoints,
           stepDelayMs: speedDelay,
           startInStepMode,
-          channelCounts: activeChannelCounts,
+          channelCounts: builtChannelCounts,
+          timerPoolKey: timerPoolKey ?? undefined,
           mockModules: modResolution.sandboxMountOrder,
           mockInputs: simStateRef.current,
         },
@@ -742,14 +659,11 @@ export function useExecutionController({
       settings.executionSpeed,
       settings.timeoutMs,
       settings.timeSliceMs,
-      activeChannelCounts,
-      activeChannelPoolConfigs,
       language,
+      activeProject,
       activeHandle,
       activeScript.id,
       activeScript.name,
-      activeProject.enabledCapabilities,
-      activeProject.localExtensions,
       generated,
       setGenerated,
       workbenchRef,
@@ -794,10 +708,7 @@ export function useExecutionController({
       return;
     }
 
-    // Pre-Run Static Error Gate across all target autoStart handles
-    const poolsForMulti = extensionRegistry
-      .getChannelPools(proj.enabledCapabilities, proj.localExtensions)
-      .map((entry) => entry.pool);
+    // Pre-Run Static Error Gate across all target autoStart handles via HandleCompilerService
     const multiBlockingErrors: Array<{
       handleName: string;
       handleColor: string;
@@ -805,30 +716,18 @@ export function useExecutionController({
       message: string;
     }> = [];
     for (const hdl of runList) {
-      const hdlPools = getAllHandleChannelPoolConfigs(hdl, poolsForMulti);
-      const hdlSharedVars = collectHandleSharedVariableNames(hdl);
-      const hdlMetas = buildHandleScriptsMeta(hdl);
-      for (const scr of hdl.scripts) {
-        const res = compileScriptHeadless(scr.workspace, proj.language, {
-          channelPoolConfigs: hdlPools,
-          enabledCapabilities: proj.enabledCapabilities,
-          handleScripts: hdlMetas,
-          currentScriptId: scr.id,
-          sharedVariables: hdlSharedVars,
-          sharedVarInitials: hdl.variableInitialValues ?? {},
-          scriptVarInitials: scr.variableInitialValues ?? {},
-          sharedFunctions: hdl.sharedFunctions ?? [],
+      const built = compileHandleArtifacts({
+        project: proj,
+        handle: hdl,
+        useDebugCompanion: true,
+      });
+      for (const err of built.blockingErrors) {
+        multiBlockingErrors.push({
+          handleName: hdl.name,
+          handleColor: hdl.color,
+          scriptName: err.scriptName,
+          message: err.message,
         });
-        for (const d of res.diagnostics) {
-          if (d.severity === 'error') {
-            multiBlockingErrors.push({
-              handleName: hdl.name,
-              handleColor: hdl.color,
-              scriptName: scr.name,
-              message: d.message,
-            });
-          }
-        }
       }
     }
 

@@ -26,7 +26,7 @@ import {
   deleteHandleFromProject,
   deleteProjectFromStore,
   deleteScriptFromHandle,
-  DEMO_PROJECT_TEMPLATES,
+  DEMO_PROJECTS,
   duplicateHandleInProject,
   duplicateProjectInStore,
   duplicateScriptInHandle,
@@ -72,12 +72,12 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     expect(p2.handles[0].id).not.toBe(p1.handles[0].id);
     expect(p2.handles[0].scripts[0].id).not.toBe(p1.handles[0].scripts[0].id);
 
-    // Curated demo list has exactly 4 progressive tiers (L1 -> L4)
-    expect(DEMO_PROJECT_TEMPLATES.map((t) => t.difficulty?.level)).toEqual([
-      'L1',
-      'L2',
-      'L3',
-      'L4',
+    // Built-in demo list is auto-discovered from src/demos/*.polyblock.json in manifest order
+    expect(DEMO_PROJECTS.map((d) => d.id)).toEqual([
+      'starter_suite',
+      'virtual_board_demo',
+      'event_timer_demo',
+      'multi_handle_robot',
     ]);
     const defaultStore = createDefaultWorkspaceStore();
     expect(defaultStore.projects).toHaveLength(4);

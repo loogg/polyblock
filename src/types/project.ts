@@ -79,7 +79,6 @@ export interface TargetProfile {
   defaultChannelCounts?: Record<string, number>;
   /** Default enabled capability IDs (pack IDs like `"rt"` or section IDs like `"rt.timers"`). */
   capabilities: string[];
-  builtin?: boolean;
 }
 
 /** Live runtime telemetry emitted by the cooperative WASM event-loop scheduler. */

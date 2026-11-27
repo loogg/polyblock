@@ -4,6 +4,7 @@ import type {
   ScriptLanguageId,
   SourceLineRange,
 } from '../../types/project';
+import { isCoreBlockType } from '../blocks/catalog';
 import {
   getActiveChannelPoolConfig,
   getActiveHandleScriptId,
@@ -274,7 +275,7 @@ export function analyzeWorkspaceDiagnostics(
         });
         continue;
       }
-      if (!owner && blk.type.startsWith('ext_')) {
+      if (!owner && !isCoreBlockType(blk.type)) {
         diagnostics.push({
           id: `cap-missing-ext-unknown-${blk.id}`,
           severity: 'error',
@@ -427,7 +428,7 @@ export function analyzeWorkspaceDiagnostics(
           diagnostics.push({
             id: `cross-file-cb-conflict-${evName}-${sib.name}-${localEntry.blockId}`,
             severity: 'error',
-            message: `回调「${evName}」与同句柄脚本「${sib.name}」冲突：同句柄内所有脚本共享全局 _G.${evName}，请将同类事件合并到同一脚本中。`,
+            message: `回调「${evName}」与同句柄脚本「${sib.name}」冲突：同句柄内所有脚本共享全局回调 ${evName}，请将同类事件合并到同一脚本中。`,
             blockId: localEntry.blockId,
           });
         }

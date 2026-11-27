@@ -1,0 +1,358 @@
+{
+  "$schema": "../../schemas/polyext.schema.json",
+  "format": "polyblock-extension",
+  "version": 1,
+  "id": "virtual-board",
+  "name": "虚拟硬件外设包",
+  "packVersion": "1.0.0",
+  "iconLabel": "硬件",
+  "color": "#0ea5e9",
+  "description": "提供板载 LED、三色灯（红/绿/蓝）、OLED 文本屏、温度传感器与按键 A/B 回调积木；导出标准 board 模块代码供真机运行，浏览器沙箱内置实时交互模拟。",
+  "tags": [
+    "示例板卡"
+  ],
+  "imports": {
+    "lua": [
+      "local board = require(\"board\")"
+    ],
+    "python": [
+      "import board"
+    ]
+  },
+  "sections": [
+    {
+      "id": "main",
+      "label": "硬件",
+      "toolboxOrder": 100,
+      "blocks": [
+        {
+          "type": "ext_board_led",
+          "kind": "statement",
+          "message0": "设置板载 LED %1",
+          "args0": [
+            {
+              "type": "field_dropdown",
+              "name": "STATE",
+              "options": [
+                [
+                  "点亮 (ON)",
+                  "true"
+                ],
+                [
+                  "熄灭 (OFF)",
+                  "false"
+                ]
+              ]
+            }
+          ],
+          "inputsInline": true,
+          "tooltip": "控制板载 LED 指示灯亮灭。",
+          "keywords": "led 灯 点亮 熄灭 硬件 board gpio",
+          "simWidgetKeys": [
+            "led"
+          ],
+          "code": {
+            "lua": {
+              "template": "board.led({{STATE:bool}})"
+            },
+            "python": {
+              "template": "board.led({{STATE:bool}})"
+            }
+          }
+        },
+        {
+          "type": "ext_board_rgb",
+          "kind": "statement",
+          "message0": "设置板载三色灯 %1",
+          "args0": [
+            {
+              "type": "field_dropdown",
+              "name": "COLOR",
+              "options": [
+                [
+                  "红灯 (Red)",
+                  "#ef4444"
+                ],
+                [
+                  "绿灯 (Green)",
+                  "#10b981"
+                ],
+                [
+                  "蓝灯 (Blue)",
+                  "#3b82f6"
+                ],
+                [
+                  "关闭 (OFF)",
+                  "#1e293b"
+                ]
+              ]
+            }
+          ],
+          "inputsInline": true,
+          "tooltip": "设置板载三色指示灯（仅红 / 绿 / 蓝三色 + 关闭；需要 256 级全彩调色时请使用全彩 RGB 控件）。",
+          "keywords": "三色灯 指示灯 红 绿 蓝 tricolor rgb led 硬件 board",
+          "simWidgetKeys": [
+            "rgb"
+          ],
+          "code": {
+            "lua": {
+              "template": "board.rgb({{COLOR:json}})"
+            },
+            "python": {
+              "template": "board.rgb({{COLOR:json}})"
+            }
+          }
+        },
+        {
+          "type": "ext_board_oled",
+          "kind": "statement",
+          "message0": "OLED 屏幕显示 %1",
+          "args0": [
+            {
+              "type": "input_value",
+              "name": "TEXT"
+            }
+          ],
+          "inputsInline": true,
+          "tooltip": "向板载微型 OLED 屏幕输出一行文本。",
+          "keywords": "oled 屏幕 显示 screen display 硬件 board",
+          "shadows": {
+            "TEXT": {
+              "type": "text",
+              "value": "Hello Board!"
+            }
+          },
+          "simWidgetKeys": [
+            "oled"
+          ],
+          "code": {
+            "lua": {
+              "template": "board.oled_show({{TEXT}})"
+            },
+            "python": {
+              "template": "board.oled_show({{TEXT}})"
+            }
+          }
+        },
+        {
+          "type": "ext_board_oled_clear",
+          "kind": "statement",
+          "message0": "清空 OLED 屏幕",
+          "inputsInline": true,
+          "tooltip": "清空板载 OLED 屏幕显示内容。",
+          "keywords": "oled 清空 clear 屏幕 硬件",
+          "simWidgetKeys": [
+            "oled"
+          ],
+          "code": {
+            "lua": {
+              "template": "board.oled_clear()"
+            },
+            "python": {
+              "template": "board.oled_clear()"
+            }
+          }
+        },
+        {
+          "type": "ext_board_temp",
+          "kind": "value",
+          "outputType": "Number",
+          "message0": "读取板载温度 (°C)",
+          "tooltip": "读取板载温度传感器数值（在沙箱右侧「模拟」面板可实时拖动滑块测试）。",
+          "keywords": "温度 传感器 sensor temp temperature 硬件 board",
+          "simWidgetKeys": [
+            "temp"
+          ],
+          "code": {
+            "lua": {
+              "template": "board.read_temp()"
+            },
+            "python": {
+              "template": "board.read_temp()"
+            }
+          }
+        },
+        {
+          "type": "ext_board_button",
+          "kind": "value",
+          "outputType": "Boolean",
+          "message0": "按键 %1 已按下?",
+          "args0": [
+            {
+              "type": "field_dropdown",
+              "name": "BTN",
+              "options": [
+                [
+                  "按键 A",
+                  "A"
+                ],
+                [
+                  "按键 B",
+                  "B"
+                ]
+              ]
+            }
+          ],
+          "tooltip": "读取板载按键 A / B 是否处于按下状态。",
+          "keywords": "按键 按钮 button pressed 硬件 board",
+          "simWidgetKeys": [
+            "btnA",
+            "btnB"
+          ],
+          "code": {
+            "lua": {
+              "template": "board.is_pressed({{BTN:json}})"
+            },
+            "python": {
+              "template": "board.is_pressed({{BTN:json}})"
+            }
+          }
+        },
+        {
+          "type": "poly_on_button",
+          "kind": "hat",
+          "message0": "当按键 %1 %2 时",
+          "args0": [
+            {
+              "type": "field_dropdown",
+              "name": "KEY",
+              "options": [
+                [
+                  "按键 A",
+                  "A"
+                ],
+                [
+                  "按键 B",
+                  "B"
+                ]
+              ]
+            },
+            {
+              "type": "field_dropdown",
+              "name": "EDGE",
+              "options": [
+                [
+                  "按下",
+                  "press"
+                ],
+                [
+                  "释放",
+                  "release"
+                ]
+              ]
+            }
+          ],
+          "inputsInline": true,
+          "blockStyle": "event_blocks",
+          "fields": {
+            "KEY": "A",
+            "EDGE": "press"
+          },
+          "tooltip": "硬件按键边沿事件回调，自动聚合成顶层 on_button(key, pressed) 分发函数（零闭包）。",
+          "keywords": "当按键 按下 释放 回调 硬件 事件 on_button key A B board",
+          "simWidgetKeys": [
+            "btnA",
+            "btnB"
+          ],
+          "hat": {
+            "eventName": "on_button",
+            "params": [
+              "key",
+              "pressed"
+            ],
+            "mode": "dispatch",
+            "condition": {
+              "lua": "key == {{KEY:json}} and {{EDGE:edge:pressed}}",
+              "python": "key == {{KEY:json}} and {{EDGE:edge:pressed}}"
+            },
+            "duplicateKeyTemplate": "{{KEY}}:{{EDGE}}",
+            "scopeLabelTemplate": "on_button · 按键 {{KEY}} {{EDGE:edge_zh}}",
+            "scopeShortTemplate": "按键{{KEY}}",
+            "scopeCategory": "event",
+            "keepsAlive": true
+          }
+        }
+      ]
+    }
+  ],
+  "sandboxMock": {
+    "moduleName": "board",
+    "sources": {
+      "lua": "\nlocal M = {}\nfunction M.led(on)\n  __poly_sim_set(\"led\", on and true or false)\nend\nfunction M.rgb(color)\n  local c = string.lower(tostring(color or \"\"))\n  if c == \"red\" or c == \"#ef4444\" or c == \"#ff0000\" then\n    __poly_sim_set(\"rgb\", \"#ef4444\")\n  elseif c == \"green\" or c == \"#10b981\" or c == \"#00ff00\" then\n    __poly_sim_set(\"rgb\", \"#10b981\")\n  elseif c == \"blue\" or c == \"#3b82f6\" or c == \"#0000ff\" then\n    __poly_sim_set(\"rgb\", \"#3b82f6\")\n  else\n    __poly_sim_set(\"rgb\", \"#1e293b\")\n  end\nend\nfunction M.oled_show(text)\n  __poly_sim_set(\"oled:append\", tostring(text))\nend\nfunction M.oled_clear()\n  __poly_sim_set(\"oled:clear\", true)\nend\nfunction M.read_temp()\n  local v = tonumber(__poly_sim_get(\"temp\"))\n  return v or 28\nend\nfunction M.is_pressed(btn)\n  local key = (tostring(btn) == \"B\") and \"btnB\" or \"btnA\"\n  return __poly_sim_get(key) == true\nend\nreturn M\n",
+      "python": "\nimport _poly\ndef led(on):\n    _poly.sim_set(\"led\", bool(on))\ndef rgb(color):\n    c = str(color or \"\").lower()\n    if c in (\"red\", \"#ef4444\", \"#ff0000\"):\n        _poly.sim_set(\"rgb\", \"#ef4444\")\n    elif c in (\"green\", \"#10b981\", \"#00ff00\"):\n        _poly.sim_set(\"rgb\", \"#10b981\")\n    elif c in (\"blue\", \"#3b82f6\", \"#0000ff\"):\n        _poly.sim_set(\"rgb\", \"#3b82f6\")\n    else:\n        _poly.sim_set(\"rgb\", \"#1e293b\")\ndef oled_show(text):\n    _poly.sim_set(\"oled:append\", str(text))\ndef oled_clear():\n    _poly.sim_set(\"oled:clear\", True)\ndef read_temp():\n    v = _poly.sim_get(\"temp\")\n    return float(v) if v is not None else 28.0\ndef is_pressed(btn):\n    key = \"btnB\" if str(btn) == \"B\" else \"btnA\"\n    return bool(_poly.sim_get(key))\n"
+    }
+  },
+  "simWidgets": [
+    {
+      "kind": "led",
+      "key": "led",
+      "label": "板载 LED",
+      "color": "#22c55e",
+      "default": false
+    },
+    {
+      "kind": "tricolor",
+      "key": "rgb",
+      "label": "三色灯",
+      "default": "#1e293b"
+    },
+    {
+      "kind": "screen",
+      "key": "oled",
+      "label": "虚拟 OLED 显示屏",
+      "maxLines": 4,
+      "default": [
+        "PolyBlock OLED",
+        "等待脚本输出..."
+      ]
+    },
+    {
+      "kind": "slider",
+      "key": "temp",
+      "label": "模拟温度传感器",
+      "hint": "board.read_temp",
+      "min": 15,
+      "max": 95,
+      "step": 1,
+      "unit": "°C",
+      "default": 28,
+      "marks": [
+        "15°C (低温)",
+        "35°C (演示阈值)",
+        "95°C (高温)"
+      ]
+    },
+    {
+      "kind": "button",
+      "key": "btnA",
+      "label": "按键 A",
+      "default": false,
+      "activeLabel": "按下中",
+      "idleLabel": "释放",
+      "emitEvent": {
+        "eventName": "on_button",
+        "args": [
+          "A",
+          "$value"
+        ],
+        "trigger": "change"
+      }
+    },
+    {
+      "kind": "button",
+      "key": "btnB",
+      "label": "按键 B",
+      "default": false,
+      "activeLabel": "按下中",
+      "idleLabel": "释放",
+      "emitEvent": {
+        "eventName": "on_button",
+        "args": [
+          "B",
+          "$value"
+        ],
+        "trigger": "change"
+      }
+    }
+  ]
+}

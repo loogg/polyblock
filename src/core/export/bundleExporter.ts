@@ -1,16 +1,12 @@
 import type { ProjectModel, RuntimeHandle } from '../../types/project';
-import { buildHandleScriptsMeta } from '../backends/eventMode';
-import { buildHandleSharedModule } from '../backends/sharedModule';
 import { backendRegistry } from '../backends/registry';
-import { collectHandleSharedVariableNames } from '../projects/handleVariables';
+import { compileHandleArtifacts } from '../compiler/handleBuilder';
 import {
   resolveProjectModules,
   type ModuleConflictItem,
   type ModuleOverrideItem,
 } from '../extensions/moduleResolver';
 import { extensionRegistry } from '../extensions/registry';
-import { getAllHandleChannelPoolConfigs } from '../projects/store';
-import { compileScriptHeadless } from '../runners/multiHandleManager';
 import { buildZipBytes, type ZipEntryInput } from './zipWriter';
 
 export interface TargetBundleResult {
@@ -46,41 +42,29 @@ export function moduleNameToRelativeFile(
 function compileHandleAllScripts(
   project: ProjectModel,
   handle: RuntimeHandle,
-): Array<{ scriptId: string; scriptName: string; code: string }> {
-  const pools = extensionRegistry
-    .getChannelPools(project.enabledCapabilities, project.localExtensions)
-    .map((entry) => entry.pool);
-  const poolCfgs = getAllHandleChannelPoolConfigs(handle, pools);
-  const sharedVars = collectHandleSharedVariableNames(handle);
-  const scriptMetas = buildHandleScriptsMeta(handle);
-
+) {
+  const built = compileHandleArtifacts({
+    project,
+    handle,
+    useDebugCompanion: false,
+    includeEntryInModuleResolution: true,
+  });
   const compiled: Array<{ scriptId: string; scriptName: string; code: string }> = [];
-  const sharedMod = buildHandleSharedModule(handle, project.language, poolCfgs);
-  if (sharedMod) {
+  if (built.sharedModule) {
     compiled.push({
       scriptId: '__poly_shared__',
-      scriptName: sharedMod.moduleName,
-      code: sharedMod.source,
+      scriptName: built.sharedModule.moduleName,
+      code: built.sharedModule.source,
     });
   }
-  for (const scr of handle.scripts) {
-    const res = compileScriptHeadless(scr.workspace, project.language, {
-      channelPoolConfigs: poolCfgs,
-      enabledCapabilities: project.enabledCapabilities,
-      handleScripts: scriptMetas,
-      currentScriptId: scr.id,
-      sharedVariables: sharedVars,
-      sharedVarInitials: handle.variableInitialValues,
-      scriptVarInitials: scr.variableInitialValues,
-      sharedFunctions: handle.sharedFunctions ?? [],
-    });
+  for (const art of built.allArtifacts) {
     compiled.push({
-      scriptId: scr.id,
-      scriptName: scr.name,
-      code: `${res.code}\n`,
+      scriptId: art.scriptId,
+      scriptName: art.scriptName,
+      code: `${art.code}\n`,
     });
   }
-  return compiled;
+  return { compiled, resolution: built.resolution };
 }
 
 /**
@@ -98,16 +82,10 @@ export function buildSingleHandleTargetBundle(
   const ext = adapter.extension;
   extensionRegistry.setActiveProjectLocalPacks(project.localExtensions ?? []);
 
-  const compiledScripts = compileHandleAllScripts(project, handle);
-  const resolution = resolveProjectModules({
-    enabledCapabilities: project.enabledCapabilities,
-    localExtensions: project.localExtensions,
-    handleScripts: compiledScripts.map((s) => ({
-      scriptId: s.scriptId,
-      scriptName: s.scriptName,
-      sources: { [project.language]: s.code },
-    })),
-  });
+  const { compiled: compiledScripts, resolution } = compileHandleAllScripts(
+    project,
+    handle,
+  );
 
   if (resolution.conflicts.length > 0) {
     throw new ModuleConflictExportError(resolution.conflicts);
@@ -218,7 +196,7 @@ export function buildProjectTargetBundle(
   }> = [];
 
   for (const handle of project.handles) {
-    const compiledScripts = compileHandleAllScripts(project, handle);
+    const { compiled: compiledScripts } = compileHandleAllScripts(project, handle);
     const hdlFiles: string[] = [];
     for (const s of compiledScripts) {
       const p = `${handle.name}/${s.scriptName}.${ext}`;

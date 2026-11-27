@@ -39,11 +39,15 @@ npm run preview
 
 - `AGENTS.md`：PolyBlock 核心架构不变量与开发红线
 - `schemas/`：扩展包（`polyext.schema.json`）与目标板型（`polyboard.schema.json`）JSON Schema
+- `src/packs/`、`src/boards/`、`src/demos/`、`src/templates/`：平级声明式成品 JSON 资产（内置扩展包、板型预设、演示工程、示例模板）与 `manifest.json` 顺序清单（随 Vite 编译内置，无 `builtin` 字段特权）
+- `src/core/assets/`：通用资产清单加载与排序（`manifestLoader.ts`）
 - `src/core/blocks/`：MicroBlocks 风格渲染器、双主题、Layer 0 积木定义与分类目录
-- `src/core/backends/`：多脚本语言后端适配层（`ScriptBackendAdapter`、Lua 5.4 / Python 3、SourceMap、作用域分析与 `shared` 模块）
-- `src/core/extensions/`：声明式扩展包注册表、校验器、模板引擎、3 层模块解析器与原生脚本库扫描器
+- `src/core/compiler/`：单一真相源全句柄编译流水线（`handleBuilder.ts`，单句柄/多句柄运行与 `.zip` 导出共用）
+- `src/core/backends/`：多脚本语言后端适配层（`ScriptBackendAdapter`、`BaseScriptBackend`、Lua 5.4 / Python 3、SourceMap、作用域分析与 `shared` 模块）
+- `src/core/extensions/`：声明式扩展包注册表（宿主 `isBuiltin()`）、校验器、模板引擎、3 层模块解析器与原生脚本库扫描器
 - `src/core/capabilities/`：目标板型（`TargetProfile`）注册表与能力开关
-- `src/core/projects/`：v3 三层工程状态模型、内置演示套件与句柄变量管理
+- `src/core/projects/`：v3 三层工程状态模型、成品演示工程加载与句柄变量管理
 - `src/core/export/`：单脚本 / 单句柄 / 整工程真机 `.zip` 打包导出器
 - `src/core/runners/` & `src/workers/`：可插拔运行器管理层、多句柄并发调度与 WASM Web Worker 沙箱
+- `src/styles/`：按职责拆分的 5 个模块化样式表（`tokens.css` / `layout.css` / `workspace.css` / `modals.css` / `pages.css`）
 - `docs/`：扩展包协议规范（[extension-pack-spec.md](docs/extension-pack-spec.md)）、系统架构（[system-architecture.md](docs/architecture/system-architecture.md)）、GUI 回归清单与各阶段历史验收记录

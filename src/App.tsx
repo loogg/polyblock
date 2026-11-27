@@ -217,8 +217,6 @@ export function App() {
     activeProjectIdRef,
     activeHandleIdRef,
     activeScriptIdRef,
-    activeChannelPoolConfigs: extActions.activeChannelPoolConfigs,
-    activeChannelCounts: extActions.activeChannelCounts,
     activeSimPacks: extActions.activeSimPacks,
     generated,
     setGenerated,

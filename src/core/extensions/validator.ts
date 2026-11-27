@@ -452,7 +452,6 @@ export function validateExtensionPack(raw: unknown): PolyExtensionPack {
       typeof obj.description === 'string'
         ? obj.description
         : '用户自定义扩展积木包',
-    builtin: Boolean(obj.builtin),
     ...(tags && tags.length > 0 ? { tags } : {}),
     ...(imports ? { imports } : {}),
     sections,

@@ -284,7 +284,7 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                   <tr>
                     <td><code>code</code></td>
                     <td>
-                      按语言映射的代码生成模板对象 <code>{`{ lua?: { template, imports? }, python?: { template, imports? }, ... }`}</code>，<strong>至少提供一种目标语言即可</strong>（支持单语言扩展包；切到未提供模板的语言时校验面板会自动报 Error）。占位符修饰器统一语言中立：<code>:json</code>、<code>:int</code>、<code>:min10_int</code>、<code>:bool</code>、<code>:edge:&lt;param&gt;</code>、<code>:edge_zh</code>、<code>:channel_label</code>、<code>:channel_comment</code>（由当前目标语言方言自动展开）。不写 <code>imports</code> 时自动继承包顶层 <code>imports</code>，写 <code>[]</code> 可显式取消导入。
+                      按语言映射的代码生成模板对象 <code>{`{ lua?: { template, imports? }, python?: { template, imports? }, ... }`}</code>，<strong>至少提供一种目标语言即可</strong>（支持单语言扩展包；切到未提供模板的语言时校验面板会自动报 Error）。占位符修饰器统一语言中立：<code>:json</code>、<code>:int</code>、<code>:bool</code>、<code>:edge:&lt;param&gt;</code>、<code>:edge_zh</code>、<code>:channel_label</code>、<code>:channel_comment</code>（由当前目标语言方言自动展开）。不写 <code>imports</code> 时自动继承包顶层 <code>imports</code>，写 <code>[]</code> 可显式取消导入。
                     </td>
                   </tr>
                   <tr>

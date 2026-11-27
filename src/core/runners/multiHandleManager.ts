@@ -1,52 +1,24 @@
-import * as Blockly from 'blockly';
 import type {
   ChannelPoolConfig,
-  DiagnosticItem,
   LogLevel,
   ProjectModel,
   RuntimeHandle,
   RuntimeTelemetry,
   ScriptLanguageId,
 } from '../../types/project';
-import { backendRegistry } from '../backends/registry';
 import { LANGUAGE_DIALECTS } from '../backends/types';
 import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { buildHandleSharedModule } from '../backends/sharedModule';
-import { type CompileContext } from '../blocks/workspaceContextBridge';
+import {
+  compileHandleArtifacts,
+  compileScriptHeadless,
+} from '../compiler/handleBuilder';
 import { collectHandleSharedVariableNames } from '../projects/handleVariables';
-import { resolveProjectModules } from '../extensions/moduleResolver';
-import { extensionRegistry } from '../extensions/registry';
 import type { ExtensionModuleSource } from '../extensions/types';
-import { getAllHandleChannelPoolConfigs } from '../projects/store';
 import { runnerManager } from './manager';
 import type { RunResult, RunnerStatus, ScriptRunner } from './types';
 
-export function compileScriptHeadless(
-  workspaceJson: Record<string, unknown>,
-  language: ScriptLanguageId,
-  context?: CompileContext,
-): {
-  code: string;
-  debugCode: string;
-  moduleDebugCode: string;
-  isEventDriven: boolean;
-  diagnostics: DiagnosticItem[];
-} {
-  const ws = new Blockly.Workspace();
-  try {
-    Blockly.serialization.workspaces.load(workspaceJson, ws);
-    const res = backendRegistry.get(language).generate(ws, context);
-    return {
-      code: res.code,
-      debugCode: res.debugCode || res.code,
-      moduleDebugCode: res.moduleDebugCode || res.code,
-      isEventDriven: Boolean(res.isEventDriven),
-      diagnostics: res.diagnostics,
-    };
-  } finally {
-    ws.dispose();
-  }
-}
+export { compileScriptHeadless };
 
 /**
  * Compiles sibling scripts within the SAME handle into isolated per-handle preload modules
@@ -197,54 +169,15 @@ export class MultiHandleRunnerOrchestrator {
     this.running = true;
     callbacks.onStatusChange('running');
 
-    const channelPools = extensionRegistry
-      .getChannelPools(project.enabledCapabilities, project.localExtensions)
-      .map((entry) => entry.pool);
-
     const tasks = handlesToRun.map(async (handle) => {
-      const entryScript =
-        handle.scripts.find((s) => s.id === handle.entryScriptId) ??
-        handle.scripts[0];
-      const poolCfgs = getAllHandleChannelPoolConfigs(handle, channelPools);
-      const channelCounts: Record<string, number> = {};
-      for (const [k, cfg] of Object.entries(poolCfgs)) {
-        channelCounts[k] = cfg.count;
-      }
-      const sharedVars = collectHandleSharedVariableNames(handle);
-      const scriptMetas = buildHandleScriptsMeta(handle);
-      const compiled = compileScriptHeadless(
-        entryScript.workspace,
-        project.language,
-        {
-          channelPoolConfigs: poolCfgs,
-          enabledCapabilities: project.enabledCapabilities,
-          handleScripts: scriptMetas,
-          currentScriptId: entryScript.id,
-          sharedVariables: sharedVars,
-          sharedVarInitials: handle.variableInitialValues,
-          scriptVarInitials: entryScript.variableInitialValues,
-          sharedFunctions: handle.sharedFunctions ?? [],
-        },
-      );
-      const handleAuxMocks = buildHandleScriptModules(
+      const built = compileHandleArtifacts({
+        project,
         handle,
-        entryScript.id,
-        project.language,
-        poolCfgs,
-      );
-
-      const resolution = resolveProjectModules({
-        enabledCapabilities: project.enabledCapabilities,
-        localExtensions: project.localExtensions,
-        handleScripts: handleAuxMocks.map((m, idx) => ({
-          scriptId: `${handle.id}-aux-${idx}`,
-          scriptName: m.moduleName,
-          sources: m.sources,
-        })),
+        useDebugCompanion: true,
       });
 
-      if (resolution.conflicts.length > 0) {
-        for (const conflict of resolution.conflicts) {
+      if (built.resolution.conflicts.length > 0) {
+        for (const conflict of built.resolution.conflicts) {
           callbacks.onHandleLog(handle, 'error', conflict.message);
         }
         return {
@@ -252,7 +185,7 @@ export class MultiHandleRunnerOrchestrator {
           result: {
             ok: false,
             durationMs: 0,
-            errorMessage: resolution.conflicts.map((c) => c.message).join('\n'),
+            errorMessage: built.resolution.conflicts.map((c) => c.message).join('\n'),
           },
         };
       }
@@ -263,15 +196,16 @@ export class MultiHandleRunnerOrchestrator {
       const result = await runner.run(
         {
           language: project.language,
-          code: compiled.code,
-          debugCode: compiled.debugCode,
+          code: built.entryArtifact.code,
+          debugCode: built.entryArtifact.debugCode,
           timeoutMs,
           timeSliceMs: timeSliceMs ?? 20,
           breakpoints: [],
           stepDelayMs,
           startInStepMode: false,
-          channelCounts,
-          mockModules: resolution.sandboxMountOrder,
+          channelCounts: built.channelCounts,
+          timerPoolKey: built.timerPoolKey ?? undefined,
+          mockModules: built.resolution.sandboxMountOrder,
           mockInputs,
         },
         {

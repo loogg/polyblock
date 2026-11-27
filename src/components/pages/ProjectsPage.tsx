@@ -14,7 +14,7 @@ import { targetProfileRegistry } from '../../core/capabilities/registry';
 import { extensionRegistry } from '../../core/extensions/registry';
 import {
   countProjectScripts,
-  DEMO_PROJECT_TEMPLATES,
+  DEMO_PROJECTS,
   formatHandleChannelPoolsSummary,
   getAbsorbedBundledExtensions,
   parseImportedProject,
@@ -295,55 +295,51 @@ export function ProjectsPage({
         </div>
 
         <h2 className="section-heading">
-          内置演示项目模板（由浅入深 · {DEMO_PROJECT_TEMPLATES.length} 个精选示例）
+          内置演示项目（{DEMO_PROJECTS.length} 个成品工程 · 可导出/复刻）
         </h2>
         <div className="card-grid">
-          {DEMO_PROJECT_TEMPLATES.map((tpl) => {
-            const scriptTotal = tpl.handles.reduce(
+          {DEMO_PROJECTS.map(({ id: demoId, project: demo }) => {
+            const scriptTotal = demo.handles.reduce(
               (acc, h) => acc + h.scripts.length,
               0,
             );
-            const diff = tpl.difficulty;
+            const localCount = demo.localExtensions?.length ?? 0;
+            const capCount = demo.enabledCapabilities.length;
+            const factBadges: string[] = [
+              capCount === 0 ? '纯脚本内核' : `${capCount} 项能力`,
+              ...(demo.handles.length > 1 ? [`${demo.handles.length} 句柄并发`] : []),
+              ...(localCount > 0 ? [`含 ${localCount} 内嵌外设包`] : []),
+            ];
             return (
-              <div key={tpl.id} className="ui-card">
+              <div key={demoId} className="ui-card">
                 <div className="card-top">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-                    {diff && (
-                      <span className={`tier-pill tier-${diff.level}`}>
-                        {diff.label}
-                      </span>
-                    )}
-                    <div style={{ fontWeight: 700, fontSize: 13.5 }}>{tpl.name}</div>
-                  </div>
+                  <div style={{ fontWeight: 700, fontSize: 13.5 }}>{demo.name}</div>
                   <span className="status-pill accent" style={{ flexShrink: 0 }}>
-                    {tpl.handles.length} 句柄 · {scriptTotal} 脚本 ·{' '}
-                    {LANGUAGE_DIALECTS[tpl.language].shortLabel}
+                    {demo.handles.length} 句柄 · {scriptTotal} 脚本 ·{' '}
+                    {LANGUAGE_DIALECTS[demo.language].shortLabel}
                   </span>
                 </div>
-                <p className="card-desc">{tpl.description}</p>
-                {diff && diff.highlights.length > 0 && (
-                  <div className="pack-attr-row">
-                    {diff.highlights.map((hl) => (
-                      <span key={hl} className="pack-attr-badge tone-tag">
-                        {hl}
-                      </span>
-                    ))}
-                  </div>
+                {demo.description && (
+                  <p className="card-desc">{demo.description}</p>
                 )}
+                <div className="pack-attr-row">
+                  {factBadges.map((hl) => (
+                    <span key={hl} className="pack-attr-badge tone-tag">
+                      {hl}
+                    </span>
+                  ))}
+                </div>
                 <div className="card-footer">
                   <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                    {targetProfileRegistry.get(tpl.targetProfileId).name} · 句柄：
-                    {tpl.handles.map((h) => h.name).join(' / ')}
-                    {(tpl.localExtensions?.length ?? 0) > 0
-                      ? ` · 含 ${tpl.localExtensions!.length} 内嵌外设包`
-                      : ''}
+                    {targetProfileRegistry.get(demo.targetProfileId).name} · 句柄：
+                    {demo.handles.map((h) => h.name).join(' / ')}
                   </span>
                   <button
                     type="button"
                     className="btn-outline"
                     style={{ flexShrink: 0 }}
                     onClick={() => {
-                      onCreateFromTemplate(tpl.id);
+                      onCreateFromTemplate(demoId);
                       onReturnToBlocks();
                     }}
                   >

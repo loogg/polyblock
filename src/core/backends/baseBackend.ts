@@ -520,8 +520,16 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
           block,
           this.id,
           {
-            resolveValueInput: (blk, argName) =>
-              gen.valueToCode(blk, argName, this.orderNone) || '""',
+            resolveValueInput: (blk, argName) => {
+              const expr = gen.valueToCode(blk, argName, this.orderNone);
+              if (expr) return expr;
+              const shadowType = b.shadows?.[argName]?.type;
+              const argDef = b.args0?.find((a) => a.name === argName);
+              const check = argDef?.check;
+              if (shadowType === 'math_number' || check === 'Number') return '0';
+              if (check === 'Boolean') return this.dialect.boolFalse;
+              return '""';
+            },
             resolveVarField: (blk, argName) =>
               this.formatVarRef(
                 String(blk.getFieldValue(argName) || ''),

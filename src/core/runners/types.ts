@@ -23,6 +23,8 @@ export interface RunRequest {
   startInStepMode?: boolean;
   /** Per-channel-pool handle capacities keyed by configKey (e.g. `{ "rt.timers": 8 }`). */
   channelCounts?: Record<string, number>;
+  /** Declaratively resolved configKey of the active timer channel pool (from `runtimeMonitor: "timers"`). */
+  timerPoolKey?: string;
   /** Extension sandbox/bundle modules mounted into Lua package.preload / Python sys.modules. */
   mockModules?: ExtensionModuleSource[];
   /** Live interactive simulator inputs (e.g., virtual board temperature / buttons). */

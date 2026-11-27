@@ -210,7 +210,8 @@ export function registerLuaBlockGenerators(): void {
   };
 
   luaGenerator.forBlock['poly_require_script'] = (block) => {
-    const scriptName = String(block.getFieldValue('SCRIPT') || 'timers').trim() || 'timers';
+    const scriptName = String(block.getFieldValue('SCRIPT') || '').trim();
+    if (!scriptName) return `-- 未选择目标脚本\n`;
     return `require(${JSON.stringify(scriptName)})\n`;
   };
 

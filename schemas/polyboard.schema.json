@@ -63,10 +63,6 @@
         "minLength": 1
       },
       "description": "默认启用的能力 ID 列表：可写整包 ID（如 \"rt\"、\"virtual-board\"）或细粒度组件 ID（如 \"rt.lifecycle\"、\"rt.timers\"、\"rt.tick\"）。"
-    },
-    "builtin": {
-      "type": "boolean",
-      "description": "内部保留字段（用户导入板型自动置为 false）。"
     }
   }
 }

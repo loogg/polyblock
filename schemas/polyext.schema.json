@@ -49,10 +49,6 @@
       "type": "string",
       "description": "扩展包功能简介。"
     },
-    "builtin": {
-      "type": "boolean",
-      "description": "内部保留字段（用户导入包自动置为 false）。"
-    },
     "tags": {
       "type": "array",
       "maxItems": 6,
@@ -255,7 +251,7 @@
       "properties": {
         "template": {
           "type": "string",
-          "description": "语言中立代码模板，支持修饰器：{{ARG}}、{{ARG:json}}、{{ARG:int}}、{{ARG:min10_int}}、{{ARG:bool}}、{{ARG:edge:<param>}}、{{ARG:edge_zh}}、{{ARG:channel_comment}}、{{ARG:channel_label}}。"
+          "description": "语言中立代码模板，支持修饰器：{{ARG}}、{{ARG:json}}、{{ARG:int}}、{{ARG:bool}}、{{ARG:edge:<param>}}、{{ARG:edge_zh}}、{{ARG:channel_comment}}、{{ARG:channel_label}}。"
         },
         "imports": {
           "type": "array",

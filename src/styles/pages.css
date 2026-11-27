@@ -1,0 +1,314 @@
+/* ============================================================================
+
+   Multi-Page Subviews (Projects, Devices, Extensions, Settings)
+
+   ============================================================================ */
+
+.subpage-wrap {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 26px 30px;
+  background: var(--bg-canvas);
+}
+
+.subpage-inner {
+  max-width: 1020px;
+  margin: 0 auto;
+}
+
+.subpage-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.subpage-header > div:first-child {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.subpage-header > button,
+.subpage-header > div:last-child {
+  flex-shrink: 0;
+}
+
+.subpage-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.subpage-sub {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 14px;
+}
+
+.ui-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 11px;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.status-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.status-pill.ok { background: var(--success-soft); color: var(--success-text); }
+.status-pill.idle { background: var(--bg-input); color: var(--text-muted); }
+.status-pill.accent { background: var(--accent-soft); color: var(--accent-text); }
+
+.card-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  margin-top: auto;
+  gap: 8px;
+}
+
+.section-heading {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 22px 0 10px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+
+/* ============================================================================
+   Toolbox Order Reference Bar & Multi-Attribute Extension Pack Badges
+   ============================================================================ */
+.toolbox-order-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 9px 12px;
+  margin-bottom: 14px;
+  background: var(--bg-panel-subtle);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.toolbox-order-legend.compact {
+  margin-bottom: 2px;
+  padding: 7px 10px;
+  font-size: 11px;
+}
+
+.toolbox-order-legend-title {
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-right: 2px;
+}
+
+.toolbox-order-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.toolbox-order-chip code {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--accent-text);
+}
+
+.toolbox-order-chip.ext {
+  border-style: dashed;
+  color: var(--text-primary);
+}
+
+.pack-attr-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.pack-attr-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1.5px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  line-height: 1.4;
+}
+
+.pack-attr-badge.tone-sim {
+  background: rgba(14, 165, 233, 0.14);
+  color: #0284c7;
+  border-color: rgba(14, 165, 233, 0.35);
+}
+
+.pack-attr-badge.tone-event {
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+  border-color: rgba(245, 158, 11, 0.38);
+}
+
+.pack-attr-badge.tone-pool {
+  background: rgba(99, 102, 241, 0.14);
+  color: #4f46e5;
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.pack-attr-badge.tone-lib {
+  background: rgba(16, 185, 129, 0.14);
+  color: #047857;
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.pack-attr-badge.tone-tag {
+  background: var(--bg-chrome);
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+[data-theme='dark'] .pack-attr-badge.tone-sim {
+  color: #38bdf8;
+}
+
+[data-theme='dark'] .pack-attr-badge.tone-event {
+  color: #fbbf24;
+}
+
+[data-theme='dark'] .pack-attr-badge.tone-pool {
+  color: #a5b4fc;
+}
+
+[data-theme='dark'] .pack-attr-badge.tone-lib {
+  color: #34d399;
+}
+
+
+.pack-sections-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.pack-sections-bar.compact {
+  padding-top: 7px;
+  gap: 5px;
+}
+
+.pack-sections-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.pack-section-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel-subtle);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.pack-section-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.pack-section-chip.active {
+  background: color-mix(in srgb, var(--chip-accent, var(--accent)) 12%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--chip-accent, var(--accent)) 55%, var(--border-strong));
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.pack-section-chip.active svg {
+  color: var(--chip-accent, var(--accent-text));
+}
+
+.pack-section-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.pack-section-pos {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+

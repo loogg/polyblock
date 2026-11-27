@@ -127,10 +127,6 @@ export function formatTemplateModifier(
     const n = Number(rawValue);
     return String(Number.isFinite(n) ? Math.trunc(n) : 0);
   }
-  if (mod === 'min10_int') {
-    const n = Number(rawValue);
-    return String(Number.isFinite(n) ? Math.max(10, Math.round(n)) : 100);
-  }
   if (mod === 'bool') {
     const dialect = LANGUAGE_DIALECTS[lang];
     return rawValue === 'true' || rawValue === 'TRUE' || rawValue === '1'

@@ -34,6 +34,7 @@ import type {
   ScriptLanguageId,
   ThemeMode,
 } from '../types/project';
+import { PolySelect } from './PolySelect';
 
 interface TopBarProps {
   projects: ProjectModel[];
@@ -357,9 +358,10 @@ export function TopBar({
           ))}
         </div>
 
-        <select
-          className="speed-select"
-          aria-label="执行速度档位"
+        <PolySelect<ExecutionSpeedId>
+          size="sm"
+          variant="subtle"
+          ariaLabel="执行速度档位"
           disabled={!hasSandboxRunner}
           title={
             hasSandboxRunner
@@ -367,12 +369,14 @@ export function TopBar({
               : noSandboxTooltip
           }
           value={executionSpeed}
-          onChange={(e) => onSelectSpeed(e.target.value as ExecutionSpeedId)}
-        >
-          <option value="normal">正常</option>
-          <option value="slow">慢放</option>
-          <option value="fast">极速</option>
-        </select>
+          minPopoverWidth={146}
+          options={[
+            { value: 'normal', label: '正常', badge: '180ms' },
+            { value: 'slow', label: '慢放', badge: '450ms' },
+            { value: 'fast', label: '极速', badge: '0ms' },
+          ]}
+          onChange={onSelectSpeed}
+        />
 
         {!isRunning && !isPaused && (
           <>

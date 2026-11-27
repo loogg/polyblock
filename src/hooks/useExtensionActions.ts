@@ -99,14 +99,6 @@ export function useExtensionActions({
     [activeHandle, activeChannelPools],
   );
 
-  const activeChannelCounts = useMemo<Record<string, number>>(() => {
-    const out: Record<string, number> = {};
-    for (const [key, cfg] of Object.entries(activeChannelPoolConfigs)) {
-      out[key] = cfg.count;
-    }
-    return out;
-  }, [activeChannelPoolConfigs]);
-
   const activeModuleResolution = useMemo(
     () =>
       resolveProjectModules({
@@ -414,7 +406,7 @@ export function useExtensionActions({
   const handleAttachLibsToGlobalPack = useCallback(
     (packId: string, files: UploadedScriptLibFile[]) => {
       const target = extensionRegistry.get(packId);
-      if (!target || target.builtin) return;
+      if (!target || extensionRegistry.isBuiltin(packId)) return;
       try {
         const mergedLibs = mergeAttachedLibFiles(
           target.libs,
@@ -567,7 +559,6 @@ export function useExtensionActions({
     runtimeMonitorSummary,
     activeChannelPools,
     activeChannelPoolConfigs,
-    activeChannelCounts,
     activeModuleResolution,
     activeSharedModule,
     handleToggleCapabilityForProject,

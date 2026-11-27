@@ -20,6 +20,7 @@ import type {
   ScriptLanguageId,
   VariableInitialValue,
 } from '../types/project';
+import { PolySelect } from './PolySelect';
 
 interface SharedVarsViewProps {
   handleName: string;
@@ -193,24 +194,21 @@ export function SharedVarsView({
 
                     <div className="shared-var-init-row">
                       <span className="shared-var-init-label">初始值：</span>
-                      <select
-                        className="shared-var-init-select"
-                        aria-label={`修改 ${entry.name} 初始值类型`}
+                      <PolySelect<VariableInitialValue['kind']>
+                        size="xs"
+                        variant="subtle"
+                        ariaLabel={`修改 ${entry.name} 初始值类型`}
                         disabled={disabled}
                         value={entry.initialValue.kind}
-                        onChange={(e) =>
-                          handleInitKindChange(
-                            entry.name,
-                            e.target.value as VariableInitialValue['kind'],
-                          )
+                        minPopoverWidth={136}
+                        options={initKindOptions.map((opt) => ({
+                          value: opt.kind,
+                          label: opt.label,
+                        }))}
+                        onChange={(nextKind) =>
+                          handleInitKindChange(entry.name, nextKind)
                         }
-                      >
-                        {initKindOptions.map((opt) => (
-                          <option key={opt.kind} value={opt.kind}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
+                      />
 
                       {entry.initialValue.kind === 'number' && (
                         <input
@@ -231,21 +229,24 @@ export function SharedVarsView({
                       )}
 
                       {entry.initialValue.kind === 'boolean' && (
-                        <select
-                          className="shared-var-init-select"
-                          aria-label={`修改 ${entry.name} 初始布尔值`}
+                        <PolySelect<'false' | 'true'>
+                          size="xs"
+                          variant="subtle"
+                          ariaLabel={`修改 ${entry.name} 初始布尔值`}
                           disabled={disabled}
                           value={entry.initialValue.value ? 'true' : 'false'}
-                          onChange={(e) =>
+                          minPopoverWidth={100}
+                          options={[
+                            { value: 'false', label: dialect.boolFalse },
+                            { value: 'true', label: dialect.boolTrue },
+                          ]}
+                          onChange={(val) =>
                             onUpdateVarInitialValue(entry.name, {
                               kind: 'boolean',
-                              value: e.target.value === 'true',
+                              value: val === 'true',
                             })
                           }
-                        >
-                          <option value="false">{dialect.boolFalse}</option>
-                          <option value="true">{dialect.boolTrue}</option>
-                        </select>
+                        />
                       )}
 
                       {entry.initialValue.kind === 'string' && (

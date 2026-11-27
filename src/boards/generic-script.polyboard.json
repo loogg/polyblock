@@ -1,0 +1,11 @@
+{
+  "$schema": "../../schemas/polyboard.schema.json",
+  "format": "polyblock-board",
+  "version": 1,
+  "id": "generic-script",
+  "name": "纯脚本环境（无硬件 / 无定时）",
+  "description": "仅启用纯语言通用积木与 on_start 入口，隐藏定时器与虚拟板模拟界面，适合算法、日志与通用逻辑编排。",
+  "defaultLanguage": "lua",
+  "maxHandles": 4,
+  "capabilities": []
+}

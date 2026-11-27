@@ -1,0 +1,13 @@
+{
+  "$schema": "../../schemas/polyboard.schema.json",
+  "format": "polyblock-board",
+  "version": 1,
+  "id": "virtual-board-basic",
+  "name": "虚拟硬件基础演示板（无定时）",
+  "description": "仅启用示例虚拟硬件外设包，不含 rt 运行时周期与定时器，演示不同项目的差异化能力装配。",
+  "defaultLanguage": "python",
+  "maxHandles": 4,
+  "capabilities": [
+    "virtual-board"
+  ]
+}

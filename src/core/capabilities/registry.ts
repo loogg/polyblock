@@ -1,7 +1,13 @@
+import boardsManifest from '../../boards/manifest.json';
+import sampleBoardRaw from '../../templates/sample-board.polyboard.json';
 import type { TargetProfile } from '../../types/project';
+import {
+  applyAssetManifest,
+  type AssetManifest,
+} from '../assets/manifestLoader';
 import { normalizeLanguageId } from '../backends/types';
 
-/** Unified built-in `rt` runtime pack & its fine-grained section capability IDs. */
+/** Built-in capability ID constants (referenced by tests & board specs; UI uses declarative metadata). */
 export const CAP_RT = 'rt';
 export const CAP_RT_LIFECYCLE = 'rt.lifecycle';
 export const CAP_RT_TIMERS = 'rt.timers';
@@ -9,72 +15,6 @@ export const CAP_RT_TICK = 'rt.tick';
 export const CAP_VIRTUAL_BOARD = 'virtual-board';
 
 export const STORAGE_CUSTOM_PROFILES_KEY = 'polyblock.profiles.custom.v1';
-
-export const BUILTIN_TARGET_PROFILES: TargetProfile[] = [
-  {
-    format: 'polyblock-board',
-    version: 1,
-    id: 'generic-script',
-    name: '纯脚本环境（无硬件 / 无定时）',
-    description:
-      '仅启用纯语言通用积木与 on_start 入口，隐藏定时器与虚拟板模拟界面，适合算法、日志与通用逻辑编排。',
-    defaultLanguage: 'lua',
-    maxHandles: 4,
-    capabilities: [],
-    builtin: true,
-  },
-  {
-    format: 'polyblock-board',
-    version: 1,
-    id: 'embedded-rt',
-    name: '通用嵌入式 RT 控制板',
-    description:
-      '启用完整嵌入式运行时核心包 rt（周期事件 + 每句柄独立多路定时器 + 系统时钟 tick），不含演示外设，适合按需挂载自家硬件扩展包。',
-    defaultLanguage: 'lua',
-    maxHandles: 8,
-    capabilities: [CAP_RT],
-    builtin: true,
-  },
-  {
-    format: 'polyblock-board',
-    version: 1,
-    id: 'virtual-board-rt',
-    name: '虚拟硬件 RT 演示板',
-    description:
-      '完整演示多句柄并发 + 嵌入式运行时核心包 rt（周期 / 定时 / 时钟）+ 示例虚拟板外设（LED / 三色灯 / OLED / 温度 / 按键回调）。',
-    defaultLanguage: 'lua',
-    maxHandles: 8,
-    capabilities: [CAP_RT, CAP_VIRTUAL_BOARD],
-    builtin: true,
-  },
-  {
-    format: 'polyblock-board',
-    version: 1,
-    id: 'virtual-board-basic',
-    name: '虚拟硬件基础演示板（无定时）',
-    description:
-      '仅启用示例虚拟硬件外设包，不含 rt 运行时周期与定时器，演示不同项目的差异化能力装配。',
-    defaultLanguage: 'python',
-    maxHandles: 4,
-    capabilities: [CAP_VIRTUAL_BOARD],
-    builtin: true,
-  },
-];
-
-export const SAMPLE_CUSTOM_BOARD_TEMPLATE: TargetProfile = {
-  format: 'polyblock-board',
-  version: 1,
-  id: 'my-industrial-controller',
-  name: '自定义工业控制板（示例模板）',
-  description:
-    '演示如何通过纯 JSON 定义目标设备规格：Lua 5.4、最多 8 个隔离句柄、启用 rt（也可按 rt.lifecycle / rt.timers / rt.tick 细粒度裁剪）。',
-  defaultLanguage: 'lua',
-  maxHandles: 8,
-  defaultChannelCounts: {
-    [CAP_RT_TIMERS]: 16,
-  },
-  capabilities: [CAP_RT],
-};
 
 export function validateTargetProfile(raw: unknown): TargetProfile {
   if (!raw || typeof raw !== 'object') {
@@ -123,18 +63,40 @@ export function validateTargetProfile(raw: unknown): TargetProfile {
       : 8,
     ...(defaultChannelCounts ? { defaultChannelCounts } : {}),
     capabilities: obj.capabilities.filter((c): c is string => typeof c === 'string'),
-    builtin: Boolean(obj.builtin),
   };
 }
 
+const rawBoardModules = import.meta.glob<unknown>('../../boards/*.polyboard.json', {
+  eager: true,
+  import: 'default',
+});
+
+const allDiscoveredBoards: TargetProfile[] = Object.values(rawBoardModules).map(
+  (raw) => validateTargetProfile(raw),
+);
+
+export const BOARDS_MANIFEST: AssetManifest = boardsManifest as AssetManifest;
+export const DISCOVERED_BOARD_IDS: string[] = allDiscoveredBoards.map((b) => b.id);
+
+export const BUILTIN_TARGET_PROFILES: TargetProfile[] = applyAssetManifest(
+  allDiscoveredBoards,
+  (b) => b.id,
+  BOARDS_MANIFEST,
+);
+
+export const SAMPLE_CUSTOM_BOARD_TEMPLATE: TargetProfile =
+  validateTargetProfile(sampleBoardRaw);
+
 class TargetProfileRegistry {
   private readonly profiles = new Map<string, TargetProfile>();
+  private readonly builtinIds = new Set<string>();
   private initialized = false;
 
   ensureInitialized(): void {
     if (this.initialized) return;
     this.initialized = true;
     for (const p of BUILTIN_TARGET_PROFILES) {
+      this.builtinIds.add(p.id);
       this.profiles.set(p.id, p);
     }
     try {
@@ -145,7 +107,9 @@ class TargetProfileRegistry {
           for (const item of list) {
             try {
               const valid = validateTargetProfile(item);
-              this.profiles.set(valid.id, { ...valid, builtin: false });
+              if (!this.builtinIds.has(valid.id)) {
+                this.profiles.set(valid.id, valid);
+              }
             } catch {
               // ignore corrupted item
             }
@@ -155,6 +119,12 @@ class TargetProfileRegistry {
     } catch {
       // ignore storage errors
     }
+  }
+
+  /** Returns true ONLY for profiles bundled from `src/boards/` at build time (never spoofable via JSON). */
+  isBuiltin(id: string): boolean {
+    this.ensureInitialized();
+    return this.builtinIds.has(id);
   }
 
   listAll(): TargetProfile[] {
@@ -170,20 +140,17 @@ class TargetProfileRegistry {
   importCustomProfile(raw: unknown): TargetProfile {
     this.ensureInitialized();
     const valid = validateTargetProfile(raw);
-    const existing = this.profiles.get(valid.id);
-    if (existing?.builtin) {
+    if (this.builtinIds.has(valid.id)) {
       throw new Error(`板型 ID "${valid.id}" 与内置板型冲突，请更换自定义 ID`);
     }
-    const customProfile: TargetProfile = { ...valid, builtin: false };
-    this.profiles.set(customProfile.id, customProfile);
+    this.profiles.set(valid.id, valid);
     this.persistCustomProfiles();
-    return customProfile;
+    return valid;
   }
 
   removeCustomProfile(id: string): boolean {
     this.ensureInitialized();
-    const existing = this.profiles.get(id);
-    if (!existing || existing.builtin) return false;
+    if (!this.profiles.has(id) || this.builtinIds.has(id)) return false;
     this.profiles.delete(id);
     this.persistCustomProfiles();
     return true;
@@ -191,7 +158,9 @@ class TargetProfileRegistry {
 
   private persistCustomProfiles(): void {
     try {
-      const custom = Array.from(this.profiles.values()).filter((p) => !p.builtin);
+      const custom = Array.from(this.profiles.values()).filter(
+        (p) => !this.builtinIds.has(p.id),
+      );
       localStorage.setItem(STORAGE_CUSTOM_PROFILES_KEY, JSON.stringify(custom));
     } catch {
       // ignore quota errors

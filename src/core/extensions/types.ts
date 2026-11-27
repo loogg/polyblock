@@ -11,7 +11,7 @@ export type ExtensionPackImports = Partial<Record<ScriptLanguageId, string[]>>;
 export interface ExtensionCodeTemplate {
   /**
    * Language-neutral template string supporting:
-   * `{{ARG}}`, `{{ARG:json}}`, `{{ARG:int}}`, `{{ARG:min10_int}}`,
+   * `{{ARG}}`, `{{ARG:json}}`, `{{ARG:int}}`,
    * `{{ARG:bool}}`, `{{ARG:edge:<param>}}`, `{{ARG:edge_zh}}`,
    * `{{ARG:channel_comment}}`, `{{ARG:channel_label}}`.
    */
@@ -289,7 +289,6 @@ export interface PolyExtensionPack {
   iconLabel: string;
   color: string;
   description: string;
-  builtin?: boolean;
   /** Optional custom attribute tags displayed as pills on pack cards (e.g. ["RTOS", "CAN"]). */
   tags?: string[];
   /** Optional pack-level default imports inherited by statement/value blocks (deduplicated globally by content). */

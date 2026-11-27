@@ -1,0 +1,14 @@
+{
+  "$schema": "../../schemas/polyboard.schema.json",
+  "format": "polyblock-board",
+  "version": 1,
+  "id": "virtual-board-rt",
+  "name": "虚拟硬件 RT 演示板",
+  "description": "完整演示多句柄并发 + 嵌入式运行时核心包 rt（周期 / 定时 / 时钟）+ 示例虚拟板外设（LED / 三色灯 / OLED / 温度 / 按键回调）。",
+  "defaultLanguage": "lua",
+  "maxHandles": 8,
+  "capabilities": [
+    "rt",
+    "virtual-board"
+  ]
+}

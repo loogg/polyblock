@@ -344,7 +344,8 @@ export function registerPythonBlockGenerators(): void {
   };
 
   pythonGenerator.forBlock['poly_require_script'] = (block) => {
-    const raw = String(block.getFieldValue('SCRIPT') || 'timers').trim() || 'timers';
+    const raw = String(block.getFieldValue('SCRIPT') || '').trim();
+    if (!raw) return `# 未选择目标脚本\n`;
     const ident = sanitizeLocalIdent(raw);
     return `import ${ident}\n`;
   };

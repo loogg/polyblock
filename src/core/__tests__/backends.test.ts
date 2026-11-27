@@ -14,11 +14,7 @@ import {
   SUPPORTED_LANGUAGE_IDS,
 } from '../backends/types';
 import { registerPolyBlocks } from '../blocks/definitions';
-import {
-  STARTER_DEMO_LOGGER_WORKSPACE,
-  STARTER_STEP_DEBUG_WORKSPACE,
-  STARTER_THRESHOLD_ALARM_WORKSPACE,
-} from '../projects/demos/starterSuite';
+import { getDemoProjectById } from '../projects/builtinDemos';
 import { instantiateProjectFromTemplate } from '../projects/store';
 import { highlightCodeLine } from '../highlight';
 import { extractErrorLine, parseStdoutLine } from '../runners/logParser';
@@ -31,6 +27,11 @@ import { MultiHandleRunnerOrchestrator } from '../runners/multiHandleManager';
 import type { ScriptLanguageId } from '../../types/project';
 import { WorkerDebugSession } from '../../workers/debugSession';
 import { WorkerProtocolHost } from '../../workers/workerProtocolHost';
+
+const starterDemoProject = getDemoProjectById('starter_suite')!.project;
+const STARTER_DEMO_LOGGER_WORKSPACE = starterDemoProject.handles[0].scripts[0].workspace;
+const STARTER_STEP_DEBUG_WORKSPACE = starterDemoProject.handles[1].scripts[0].workspace;
+const STARTER_THRESHOLD_ALARM_WORKSPACE = starterDemoProject.handles[2].scripts[0].workspace;
 
 const LIST_STATS_WORKSPACE: Record<string, unknown> = {
   blocks: {

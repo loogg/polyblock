@@ -1,4 +1,8 @@
 import {
+  qualifySimKey as qualifyScopedSimKey,
+  resolveScopedSimStateMutation,
+} from '../core/extensions/simState';
+import {
   WorkerDebugSession,
   type WorkerControlMessage,
 } from './debugSession';
@@ -52,10 +56,7 @@ export class WorkerProtocolHost {
   }
 
   qualifySimKey(packId: string | undefined, rawKey: string): string {
-    if (!packId || rawKey.startsWith('global:') || rawKey.includes('::')) {
-      return rawKey;
-    }
-    return `${packId}::${rawKey}`;
+    return qualifyScopedSimKey(packId ?? '', rawKey);
   }
 
   emitScopedState(
@@ -65,17 +66,12 @@ export class WorkerProtocolHost {
     runIdOverride?: string,
   ): void {
     const k = this.qualifySimKey(packId, String(rawKind));
-    if (k.endsWith(':clear')) {
-      this.currentMockInputs[k.slice(0, -6)] = [];
-    } else if (k.endsWith(':append')) {
-      const base = k.slice(0, -7);
-      const prev = Array.isArray(this.currentMockInputs[base])
-        ? (this.currentMockInputs[base] as string[])
-        : [];
-      this.currentMockInputs[base] = [...prev, String(value)].slice(-8);
-    } else {
-      this.currentMockInputs[k] = value;
-    }
+    const { targetKey, nextVal } = resolveScopedSimStateMutation(
+      this.currentMockInputs,
+      k,
+      value,
+    );
+    this.currentMockInputs[targetKey] = nextVal;
     this.post({
       type: 'DEVICE_EVENT',
       runId: runIdOverride ?? this.activeRunId,
@@ -170,6 +166,7 @@ export class WorkerProtocolHost {
       stepDelayMs,
       startInStepMode,
       channelCounts,
+      timerPoolKey,
       timeSliceMs,
       callbackTimeoutMs,
       mockInputs,
@@ -178,9 +175,13 @@ export class WorkerProtocolHost {
     this.activeRunId = runId;
     this.currentMockInputs = { ...(mockInputs ?? {}) };
     const startedAt = performance.now();
+    const resolvedTimerCount =
+      (timerPoolKey ? channelCounts?.[timerPoolKey] : undefined) ??
+      (channelCounts ? Object.values(channelCounts)[0] : undefined) ??
+      8;
     const scheduler = new WorkerRuntimeScheduler({
       runId,
-      timerCount: channelCounts?.['rt.timers'] ?? 8,
+      timerCount: resolvedTimerCount,
       timeSliceMs: timeSliceMs ?? 20,
       callbackTimeoutMs: callbackTimeoutMs ?? 5000,
       post: this.post,

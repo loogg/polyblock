@@ -99,7 +99,7 @@
 | `type` | 画布形态 | 常用属性与模板用法 |
 |---|---|---|
 | `input_value` | 凹进去的值插槽（推荐用于容器/表达式参数，遵循纯值槽原则） | `name`、可选 `check`（`"Number"` / `"String"` / `"Boolean"`）；配合 `shadows` 设默认阴影值，模板写 `{{X}}` |
-| `field_number` | 积木内联数字框 | `name`、`value`、`min`、`max`、`precision`；模板写 `{{MS}}`、`{{MS:int}}` 或 `{{MS:min10_int}}` |
+| `field_number` | 积木内联数字框 | `name`、`value`、`min`、`max`、`precision`；模板写 `{{MS}}` 或 `{{MS:int}}` |
 | `field_input` | 积木内联文本框 | `name`、`text`；模板写 `{{TXT:json}}` 自动加双引号转义 |
 | `field_dropdown` | 固定选项下拉框 | `name`、`options: [["展示名", "值"], ...]`；模板写 `{{DIR:json}}`、`{{ON:bool}}`、`{{EDGE:edge:<param>}}`、`{{EDGE:edge_zh}}` |
 | `field_checkbox` | 积木勾选框（布尔开关） | `name`、`checked: true \| false`；模板写 `{{EN:bool}}`（按当前语言方言自动展开为 `true`/`false`、`True`/`False` 等） |

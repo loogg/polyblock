@@ -1,0 +1,172 @@
+/* ============================================================================
+   PolyBlock Design System — Layout 1 (MicroBlocks Compact Workbench)
+   ============================================================================ */
+:root {
+  color-scheme: light;
+  --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+
+  --bg-app: #eef1f6;
+  --bg-chrome: #ffffff;
+  --bg-rail: #1e2433;
+  --bg-rail-hover: rgba(255, 255, 255, 0.1);
+  --bg-rail-active: rgba(99, 102, 241, 0.28);
+  --text-rail: #94a3b8;
+  --text-rail-active: #ffffff;
+  --bg-sidebar: #f8fafc;
+  --bg-panel: #ffffff;
+  --bg-panel-subtle: #f4f6fa;
+  --bg-canvas: #f5f7fb;
+  --canvas-dot: #cfd6e3;
+  --bg-code: #fafbfd;
+  --bg-code-highlight: rgba(79, 70, 229, 0.12);
+  --bg-console: #ffffff;
+  --bg-input: #f1f5f9;
+  --bg-hover: #eef2f7;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+
+  --accent: #4f46e5;
+  --accent-text: #4338ca;
+  --accent-soft: rgba(79, 70, 229, 0.11);
+  --accent-hover: #4338ca;
+  --success: #10b981;
+  --success-solid: #047857;
+  --success-text: #047857;
+  --success-soft: rgba(16, 185, 129, 0.14);
+  --warning: #b45309;
+  --warning-soft: rgba(245, 158, 11, 0.15);
+  --danger: #dc2626;
+  --danger-soft: rgba(239, 68, 68, 0.14);
+
+  --syn-kw: #7c3aed;
+  --syn-fn: #2563eb;
+  --syn-str: #0d9488;
+  --syn-num: #b45309;
+  --syn-cmt: #64748b;
+  --syn-var: #0f172a;
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 6px 20px rgba(15, 23, 42, 0.09);
+  --shadow-float: 0 12px 30px rgba(15, 23, 42, 0.14);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-app: #0d1017;
+  --bg-chrome: #151923;
+  --bg-rail: #0f131c;
+  --bg-rail-hover: rgba(255, 255, 255, 0.08);
+  --bg-rail-active: rgba(99, 102, 241, 0.3);
+  --text-rail: #7586a0;
+  --text-rail-active: #f8fafc;
+  --bg-sidebar: #161b26;
+  --bg-panel: #151923;
+  --bg-panel-subtle: #1c2230;
+  --bg-canvas: #11151e;
+  --canvas-dot: #262f42;
+  --bg-code: #121620;
+  --bg-code-highlight: rgba(99, 102, 241, 0.24);
+  --bg-console: #131722;
+  --bg-input: #1e2536;
+  --bg-hover: #21293b;
+  --border: #263044;
+  --border-strong: #36435e;
+
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted: #9aaac4;
+
+  --accent: #6366f1;
+  --accent-text: #a5b4fc;
+  --accent-soft: rgba(99, 102, 241, 0.22);
+  --accent-hover: #818cf8;
+  --success-solid: #047857;
+  --success-text: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+
+  --syn-kw: #c084fc;
+  --syn-fn: #60a5fa;
+  --syn-str: #2dd4bf;
+  --syn-num: #fbbf24;
+  --syn-cmt: #7c8da8;
+  --syn-var: #e2e8f0;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-float: 0 14px 36px rgba(0, 0, 0, 0.55);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+input,
+select {
+  font-family: inherit;
+  color: inherit;
+}
+
+.hidden-pane {
+  position: absolute !important;
+  inset: 0;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  z-index: -1 !important;
+}
+
+
+/* Shared Scrollbars & Popover Motion */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; }
+
+@keyframes poly-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes poly-popover-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-100% + 4px)) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-100%) scale(1);
+  }
+}

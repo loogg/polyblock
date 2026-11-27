@@ -20,12 +20,10 @@ import type {
 import { normalizeVariableInitialValue } from './handleVariables';
 import {
   createBlankWorkspace,
-  DEMO_PROJECT_TEMPLATES,
-  MULTI_SCRIPT_PROJECT_TEMPLATES,
-  type HandleTemplateSpec,
-  type MultiHandleProjectTemplate,
-  type ProjectDifficultyMeta,
-} from './demos';
+  DEMO_PROJECTS,
+  getDemoProjectById,
+  type BuiltinDemoEntry,
+} from './builtinDemos';
 import type {
   ChannelPoolConfig,
   ProjectModel,
@@ -38,11 +36,9 @@ import type {
 
 export {
   createBlankWorkspace,
-  DEMO_PROJECT_TEMPLATES,
-  MULTI_SCRIPT_PROJECT_TEMPLATES,
-  type HandleTemplateSpec,
-  type MultiHandleProjectTemplate,
-  type ProjectDifficultyMeta,
+  DEMO_PROJECTS,
+  getDemoProjectById,
+  type BuiltinDemoEntry,
 };
 
 export const STORAGE_STORE_V9_KEY = 'polyblock.store.v9';
@@ -229,7 +225,7 @@ function normalizeLocalExtensions(raw: unknown): PolyExtensionPack[] {
   for (const item of raw) {
     try {
       const valid = validateExtensionPack(item);
-      map.set(valid.id, { ...valid, builtin: false });
+      map.set(valid.id, valid);
     } catch {
       // ignore malformed extension entry
     }
@@ -257,9 +253,9 @@ export function buildExportableProjectJson(
     const basePackId = dotIdx > 0 ? capId.slice(0, dotIdx) : capId;
     if (localIds.has(basePackId) || seenBundled.has(basePackId)) continue;
     const globalPack = globalPacks.find((p) => p.id === basePackId);
-    if (globalPack && !globalPack.builtin) {
+    if (globalPack && !extensionRegistry.isBuiltin(globalPack.id)) {
       seenBundled.add(basePackId);
-      bundled.push(cloneJson({ ...globalPack, builtin: false }));
+      bundled.push(cloneJson(globalPack));
     }
   }
 
@@ -324,103 +320,41 @@ function normalizeInitialValuesMap(
   return count > 0 ? out : undefined;
 }
 
-function instantiateHandleSpec(
-  spec: HandleTemplateSpec,
-  idx: number,
-  now: string,
-  defaultChannelCounts?: Record<string, number>,
-): RuntimeHandle {
-  const scripts: ProjectScript[] = spec.scripts.map((s) => {
-    const scriptInitials = normalizeInitialValuesMap(s.variableInitialValues);
-    return {
-      id: createId('scr'),
-      name: sanitizeScriptName(s.name),
-      workspace: cloneJson(s.workspace),
-      breakpoints: [],
-      ...(scriptInitials ? { variableInitialValues: scriptInitials } : {}),
-      updatedAt: now,
-    };
-  });
-  const entryIdx = Math.max(
-    0,
-    spec.scripts.findIndex((s) => s.isEntry),
-  );
-  const entryId = scripts[entryIdx]?.id ?? scripts[0].id;
-  const capabilityConfigs: Record<string, unknown> = {};
-  if (defaultChannelCounts) {
-    for (const [cfgKey, cnt] of Object.entries(defaultChannelCounts)) {
-      capabilityConfigs[cfgKey] = normalizeChannelPoolConfig(undefined, cnt);
-    }
-  }
-  if (spec.capabilityConfigs) {
-    for (const [cfgKey, rawCfg] of Object.entries(spec.capabilityConfigs)) {
-      capabilityConfigs[cfgKey] = normalizeChannelPoolConfig(rawCfg);
-    }
-  }
-
-  const sharedVariables = Array.isArray(spec.sharedVariables)
-    ? [...spec.sharedVariables]
-    : [];
-  const sharedFunctions = Array.isArray(spec.sharedFunctions)
-    ? [...spec.sharedFunctions]
-    : [];
-  const handleInitials = normalizeInitialValuesMap(spec.variableInitialValues);
-
-  return {
-    id: createId('hdl'),
-    name: sanitizeHandleName(spec.name),
-    description: spec.description,
-    color: spec.color ?? HANDLE_COLOR_PALETTE[idx % HANDLE_COLOR_PALETTE.length],
-    autoStart: spec.autoStart ?? true,
-    capabilityConfigs,
-    sharedVariables,
-    sharedFunctions,
-    ...(handleInitials ? { variableInitialValues: handleInitials } : {}),
-    entryScriptId: entryId,
-    activeScriptId: entryId,
-    scripts,
-    updatedAt: now,
-  };
-}
-
 export function instantiateProjectFromTemplate(
   templateId: string,
   existingProjectNames: string[] = [],
   customName?: string,
 ): ProjectModel {
-  const tpl =
-    MULTI_SCRIPT_PROJECT_TEMPLATES.find((t) => t.id === templateId) ??
-    MULTI_SCRIPT_PROJECT_TEMPLATES[0];
-  const now = new Date().toISOString();
-
-  const handles = tpl.handles.map((hs, idx) =>
-    instantiateHandleSpec(hs, idx, now),
+  if (templateId === 'blank_project') {
+    const profile = targetProfileRegistry.get('generic-script');
+    return instantiateProjectFromProfile(
+      profile,
+      existingProjectNames,
+      customName ?? '空白工程',
+    );
+  }
+  const demo = getDemoProjectById(templateId) ?? DEMO_PROJECTS[0];
+  const base = parseImportedProject(
+    demo.project,
+    customName ?? demo.project.name,
+    existingProjectNames,
   );
-
-  return {
-    format: 'polyblock-project',
-    version: 3,
-    id: createId('proj'),
-    name: makeUniqueProjectName(customName ?? tpl.name, existingProjectNames),
-    description: tpl.description,
-    language: tpl.language,
-    targetProfileId: tpl.targetProfileId,
-    enabledCapabilities: [...tpl.enabledCapabilities],
-    localExtensions: tpl.localExtensions ? cloneJson(tpl.localExtensions) : [],
-    activeHandleId: handles[0].id,
-    handles,
-    createdAt: now,
-    updatedAt: now,
-  };
+  if (customName) {
+    return {
+      ...base,
+      name: makeUniqueProjectName(customName, existingProjectNames),
+    };
+  }
+  return base;
 }
 
-/** Creates the clean initial workspace store preloaded with the 4 progressive demo projects (L1 active). */
+/** Creates the clean initial workspace store preloaded with the built-in demos from `src/demos/`. */
 export function createDefaultWorkspaceStore(): WorkspaceStoreState {
   const projects: ProjectModel[] = [];
-  for (const tpl of DEMO_PROJECT_TEMPLATES) {
+  for (const demo of DEMO_PROJECTS) {
     projects.push(
       instantiateProjectFromTemplate(
-        tpl.id,
+        demo.id,
         projects.map((p) => p.name),
       ),
     );
@@ -438,17 +372,34 @@ export function instantiateProjectFromProfile(
   customName?: string,
 ): ProjectModel {
   const now = new Date().toISOString();
-  const handle = instantiateHandleSpec(
-    {
-      name: 'main_vm',
-      color: HANDLE_COLOR_PALETTE[0],
-      autoStart: true,
-      scripts: [{ name: 'main', isEntry: true, workspace: createBlankWorkspace() }],
-    },
-    0,
-    now,
-    profile.defaultChannelCounts,
-  );
+  const scriptId = createId('scr');
+  const capabilityConfigs: Record<string, unknown> = {};
+  if (profile.defaultChannelCounts) {
+    for (const [cfgKey, cnt] of Object.entries(profile.defaultChannelCounts)) {
+      capabilityConfigs[cfgKey] = normalizeChannelPoolConfig(undefined, cnt);
+    }
+  }
+  const handle: RuntimeHandle = {
+    id: createId('hdl'),
+    name: 'main_vm',
+    color: HANDLE_COLOR_PALETTE[0],
+    autoStart: true,
+    capabilityConfigs,
+    sharedVariables: [],
+    sharedFunctions: [],
+    entryScriptId: scriptId,
+    activeScriptId: scriptId,
+    scripts: [
+      {
+        id: scriptId,
+        name: 'main',
+        workspace: createBlankWorkspace(),
+        breakpoints: [],
+        updatedAt: now,
+      },
+    ],
+    updatedAt: now,
+  };
   return {
     format: 'polyblock-project',
     version: 3,

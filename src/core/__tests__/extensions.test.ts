@@ -2,6 +2,7 @@ import * as Blockly from 'blockly';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { backendRegistry } from '../backends/registry';
+import { analyzeWorkspaceDiagnostics } from '../backends/sourceMap';
 import {
   CORE_TOOLBOX_ORDERS,
   getOrderedToolboxCategories,
@@ -17,21 +18,33 @@ import {
   setActiveProjectCapabilities,
 } from '../blocks/workspaceContextBridge';
 import {
+  applyAssetManifest,
+  findUnknownManifestIds,
+} from '../assets/manifestLoader';
+import {
+  BOARDS_MANIFEST,
   CAP_RT,
   CAP_RT_LIFECYCLE,
   CAP_RT_TICK,
   CAP_RT_TIMERS,
   CAP_VIRTUAL_BOARD,
+  DISCOVERED_BOARD_IDS,
   SAMPLE_CUSTOM_BOARD_TEMPLATE,
   targetProfileRegistry,
   validateTargetProfile,
 } from '../capabilities/registry';
 import {
   BUILTIN_EXTENSION_PACKS,
+  DISCOVERED_PACK_IDS,
+  PACKS_MANIFEST,
   RT_PACK,
   SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
   VIRTUAL_BOARD_PACK,
 } from '../extensions/builtinPacks';
+import {
+  DEMOS_MANIFEST,
+  DISCOVERED_DEMO_IDS,
+} from '../projects/builtinDemos';
 import {
   derivePackBadges,
   extensionRegistry,
@@ -53,7 +66,7 @@ import {
 } from '../extensions/simState';
 import {
   buildExportableProjectJson,
-  DEMO_PROJECT_TEMPLATES,
+  DEMO_PROJECTS,
   getAllHandleChannelPoolConfigs,
   instantiateProjectFromTemplate,
   parseImportedProject,
@@ -113,7 +126,8 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       SAMPLE_CUSTOM_BOARD_TEMPLATE,
     );
     expect(imported.id).toBe('my-industrial-controller');
-    expect(imported.builtin).toBe(false);
+    expect('builtin' in imported).toBe(false);
+    expect(targetProfileRegistry.isBuiltin(imported.id)).toBe(false);
     expect(targetProfileRegistry.get(imported.id).defaultChannelCounts?.[CAP_RT_TIMERS]).toBe(16);
     expect(targetProfileRegistry.removeCustomProfile(imported.id)).toBe(true);
   });
@@ -260,7 +274,8 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
     );
     expect(imported.id).toBe('my-robot-api');
-    expect(imported.builtin).toBe(false);
+    expect('builtin' in imported).toBe(false);
+    expect(extensionRegistry.isBuiltin(imported.id)).toBe(false);
 
     const ws = new Blockly.Workspace();
     Blockly.serialization.workspaces.load(
@@ -1251,11 +1266,11 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
 
-  it('compiles every handle and script across all 4 progressive demo projects (L1-L4) cleanly in BOTH Lua 5.4 and Python 3 with 0 diagnostics (including handle-wide uniqueness checks!)', () => {
-    expect(DEMO_PROJECT_TEMPLATES).toHaveLength(4);
+  it('compiles every handle and script across all 4 built-in .polyblock.json demo projects cleanly in BOTH Lua 5.4 and Python 3 with 0 diagnostics (including handle-wide uniqueness checks!)', () => {
+    expect(DEMO_PROJECTS).toHaveLength(4);
 
-    for (const tpl of DEMO_PROJECT_TEMPLATES) {
-      const proj = instantiateProjectFromTemplate(tpl.id);
+    for (const demo of DEMO_PROJECTS) {
+      const proj = instantiateProjectFromTemplate(demo.id);
       extensionRegistry.setActiveProjectLocalPacks(proj.localExtensions ?? []);
       setActiveProjectCapabilities(proj.enabledCapabilities);
       const pools = extensionRegistry
@@ -1279,15 +1294,15 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
 
           expect(
             luaRes.diagnostics,
-            `${tpl.id}/${hdl.name}/${scr.name} Lua diagnostics`,
+            `${demo.id}/${hdl.name}/${scr.name} Lua diagnostics`,
           ).toHaveLength(0);
           expect(
             pyRes.diagnostics,
-            `${tpl.id}/${hdl.name}/${scr.name} Python diagnostics`,
+            `${demo.id}/${hdl.name}/${scr.name} Python diagnostics`,
           ).toHaveLength(0);
 
           if (
-            tpl.id === 'multi_handle_robot' &&
+            demo.id === 'multi_handle_robot' &&
             hdl.name === 'drive_ctrl' &&
             scr.name === 'main'
           ) {
@@ -1636,5 +1651,86 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
         `${filePath} must use runnerManager.findForLanguage/hasRunnerForLanguage`,
       ).not.toContain('runnerManager.getForLanguage');
     }
+
+    // 5. Asset manifest integrity & zero `builtin` field spoofing across packs, boards, and demos
+    expect(findUnknownManifestIds(DISCOVERED_PACK_IDS, PACKS_MANIFEST)).toEqual([]);
+    expect(findUnknownManifestIds(DISCOVERED_BOARD_IDS, BOARDS_MANIFEST)).toEqual([]);
+    expect(findUnknownManifestIds(DISCOVERED_DEMO_IDS, DEMOS_MANIFEST)).toEqual([]);
+
+    // Unlisted items append deterministically in ASCII ID order; excluded items are skipped
+    const orderedSample = applyAssetManifest(
+      [{ id: 'zeta' }, { id: 'alpha' }, { id: 'beta' }, { id: 'hidden' }],
+      (x) => x.id,
+      { order: ['beta'], exclude: ['hidden'] },
+    );
+    expect(orderedSample.map((x) => x.id)).toEqual(['beta', 'alpha', 'zeta']);
+
+    // Portable pack/board JSON never carries a `builtin` key, and spoofing `builtin: true` never grants builtin status
+    expect(extensionRegistry.isBuiltin('rt')).toBe(true);
+    expect(targetProfileRegistry.isBuiltin('generic-script')).toBe(true);
+    for (const p of BUILTIN_EXTENSION_PACKS) {
+      expect('builtin' in p).toBe(false);
+    }
+    for (const b of targetProfileRegistry.listAll()) {
+      expect('builtin' in b).toBe(false);
+    }
+    const spoofedPack = extensionRegistry.importCustomPack({
+      ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+      id: 'spoof-builtin-pack',
+      builtin: true,
+    });
+    expect('builtin' in spoofedPack).toBe(false);
+    expect(extensionRegistry.isBuiltin('spoof-builtin-pack')).toBe(false);
+    extensionRegistry.removeCustomPack('spoof-builtin-pack');
+
+    const spoofedBoard = targetProfileRegistry.importCustomProfile({
+      ...SAMPLE_CUSTOM_BOARD_TEMPLATE,
+      id: 'spoof-builtin-board',
+      builtin: true,
+    });
+    expect('builtin' in spoofedBoard).toBe(false);
+    expect(targetProfileRegistry.isBuiltin('spoof-builtin-board')).toBe(false);
+    targetProfileRegistry.removeCustomProfile('spoof-builtin-board');
+
+    // 6. Zero native <select> elements in UI components (unified PolySelect portal)
+    for (const filePath of collectSourceFiles(path.join(repoRoot, 'src/components'))) {
+      const src = fs.readFileSync(filePath, 'utf8');
+      expect(
+        src,
+        `${filePath} must use <PolySelect> instead of native <select>`,
+      ).not.toMatch(/<select\b/);
+    }
+
+    // 7. Non-`ext_`-prefixed removed extension block is detected via authoritative core block catalog
+    setActiveProjectCapabilities([]);
+    const orphanWs = new Blockly.Workspace();
+    const orphanBlock = {
+      type: 'custom_relay_set',
+      id: 'orphan_relay_1',
+      isShadow: () => false,
+      isEnabled: () => true,
+      getFieldValue: () => undefined,
+      getInputTargetBlock: () => null,
+      getNextBlock: () => null,
+      getPreviousBlock: () => null,
+      getOutputShape: () => null,
+      getChildren: () => [],
+      getRootBlock: function () {
+        return this;
+      },
+      getParent: () => null,
+    } as unknown as Blockly.Block;
+    orphanWs.getTopBlocks = () => [orphanBlock];
+    orphanWs.getAllBlocks = () => [orphanBlock];
+    const orphanDiags = analyzeWorkspaceDiagnostics(orphanWs, 'lua');
+    setActiveProjectCapabilities(null);
+    expect(
+      orphanDiags.some(
+        (d) =>
+          d.severity === 'error' &&
+          d.id === 'cap-missing-ext-unknown-orphan_relay_1',
+      ),
+    ).toBe(true);
+    orphanWs.dispose();
   });
 });
