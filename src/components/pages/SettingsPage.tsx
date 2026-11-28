@@ -24,7 +24,7 @@ export function SettingsPage({
           <div>
             <h1 className="subpage-title">环境与偏好设置</h1>
             <p className="subpage-sub">
-              调整界面外观、WASM 沙箱死循环超时保护及工作区行为，配置自动保存在本地浏览器。
+              调整界面外观、浏览器沙箱死循环超时保护及工作区行为，配置自动保存在本地浏览器。
             </p>
           </div>
           <button type="button" className="btn-outline" onClick={onReturnToBlocks}>
@@ -37,7 +37,7 @@ export function SettingsPage({
           <div>
             <div style={{ fontWeight: 600, marginBottom: 2 }}>界面主题风格</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              切换 MicroBlocks 浅色工作台或深色护眼主题（同步应用到 Blockly 画布）
+              切换 PolyBlock 浅色工作台或深色护眼主题（同步应用到 Blockly 画布）
             </div>
           </div>
           <div className="seg-control">
@@ -107,7 +107,7 @@ export function SettingsPage({
           <div>
             <div style={{ fontWeight: 600, marginBottom: 2 }}>单次事件回调 / 阻塞超时保护</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              仅限制单次事件回调（<code>on_run</code> / <code>on_timer</code> / <code>on_button</code>）或纯同步计算的连续耗时，不影响常驻事件循环与 <code>on_start</code> 协程的长期运行
+              仅限制单次事件回调（周期回调 / 定时器 / 外部事件回调）或纯同步计算的连续耗时，不影响常驻事件循环与 <code>on_start</code> 协程的长期运行
             </div>
           </div>
           <PolySelect
@@ -148,14 +148,14 @@ export function SettingsPage({
           <div>
             <div style={{ fontWeight: 600, marginBottom: 2 }}>重置默认示例画布</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              清除本地缓存并恢复全部内置成品演示项目
+              清除本地缓存并恢复全部出厂演示项目
             </div>
           </div>
           <button
             type="button"
             className="btn-outline"
             disabled={editingLocked}
-            title={editingLocked ? '请先停止当前运行再重置示例' : '清除本地缓存并恢复内置演示项目'}
+            title={editingLocked ? '请先停止当前运行再重置示例' : '清除本地缓存并恢复出厂演示项目'}
             onClick={onResetWorkspace}
           >
             <RotateCcw size={13} />

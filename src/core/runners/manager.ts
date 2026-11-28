@@ -1,8 +1,8 @@
 import type { ScriptLanguageId } from '../../types/project';
-import { getSupportedLanguageIds } from '../backends/registry';
-import { BrowserJsWorkerRunner } from './jsRunner';
-import { WasmoonLuaRunner } from './luaRunner';
-import { MicroPythonWasmRunner } from './pythonRunner';
+import {
+  backendRegistry,
+  getSupportedLanguageIds,
+} from '../backends/registry';
 import type { RunnerKind, ScriptRunner } from './types';
 
 export interface PlannedRunnerDescriptor {
@@ -26,7 +26,7 @@ export const PLANNED_RUNNER_SLOTS: PlannedRunnerDescriptor[] = [
     },
     description:
       '将积木生成的目标脚本直接下发至支持网络协议的远端设备或服务网关，并实时订阅设备日志回传。',
-    upgradePath: '实现 ScriptRunner 接口并注册到 RunnerManager 即可无缝接入。',
+    upgradePath: '实现 ScriptRunner 接口并通过 LanguagePlugin 或 RunnerManager 注册即可无缝接入。',
   },
   {
     id: 'local-bridge-agent',
@@ -57,28 +57,96 @@ export const PLANNED_RUNNER_SLOTS: PlannedRunnerDescriptor[] = [
 export class RunnerManager {
   private readonly runners = new Map<string, ScriptRunner>();
   private readonly factories = new Map<ScriptLanguageId, () => ScriptRunner>();
+  private readonly runnerIdByLanguage = new Map<ScriptLanguageId, string>();
+  private readonly listeners = new Set<() => void>();
   private activeRunner: ScriptRunner | null = null;
+  private initializedFromPlugins = false;
+  private revision = 0;
 
-  constructor() {
-    this.registerFactory('lua', () => new WasmoonLuaRunner());
-    this.registerFactory('python', () => new MicroPythonWasmRunner());
-    this.registerFactory('js', () => new BrowserJsWorkerRunner());
+  private emitChange(): void {
+    this.revision += 1;
+    for (const listener of this.listeners) {
+      listener();
+    }
+  }
+
+  getRevision(): number {
+    return this.revision;
+  }
+
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  constructor(autoSyncPlugins = true) {
+    if (autoSyncPlugins) {
+      this.ensurePluginRunnersLoaded();
+      backendRegistry.onPluginChange((ev) => {
+        if (ev.kind === 'registered' && ev.plugin) {
+          this.unregisterLanguage(ev.id);
+          if (ev.plugin.createRunner) {
+            this.registerFactory(ev.id, ev.plugin.createRunner);
+          }
+        } else if (ev.kind === 'unregistered') {
+          this.unregisterLanguage(ev.id);
+        }
+      });
+    }
+  }
+
+  private ensurePluginRunnersLoaded(): void {
+    if (this.initializedFromPlugins) return;
+    this.initializedFromPlugins = true;
+    for (const plugin of backendRegistry.listPlugins()) {
+      if (plugin.createRunner && !this.factories.has(plugin.id)) {
+        this.registerFactory(plugin.id, plugin.createRunner);
+      }
+    }
   }
 
   register(runner: ScriptRunner): void {
     this.runners.set(runner.id, runner);
+    this.emitChange();
   }
 
   registerFactory(
     language: ScriptLanguageId,
     factory: () => ScriptRunner,
   ): void {
+    this.unregisterLanguage(language);
     this.factories.set(language, factory);
-    this.register(factory());
+    const instance = factory();
+    this.runnerIdByLanguage.set(language, instance.id);
+    this.register(instance);
+  }
+
+  unregisterLanguage(language: ScriptLanguageId): void {
+    const hadFactory = this.factories.delete(language);
+    const runnerId = this.runnerIdByLanguage.get(language);
+    let removedRunner = false;
+    if (runnerId) {
+      this.runnerIdByLanguage.delete(language);
+      const existing = this.runners.get(runnerId);
+      if (existing) {
+        existing.dispose();
+        this.runners.delete(runnerId);
+        removedRunner = true;
+        if (this.activeRunner === existing) {
+          this.activeRunner = null;
+        }
+      }
+    }
+    if (hadFactory || removedRunner) {
+      this.emitChange();
+    }
   }
 
   /** Creates a fresh isolated ScriptRunner instance (used for multi-handle concurrent runs). */
   createForLanguage(language: ScriptLanguageId): ScriptRunner {
+    this.ensurePluginRunnersLoaded();
     const factory = this.factories.get(language);
     if (!factory) {
       throw new Error(`No runner factory registered for language: ${language}`);
@@ -86,11 +154,21 @@ export class RunnerManager {
     return factory();
   }
 
-  listBuiltin(): ScriptRunner[] {
+  listRegistered(): ScriptRunner[] {
+    this.ensurePluginRunnersLoaded();
     return Array.from(this.runners.values());
   }
 
+  /** Lists all registered runners supporting a given language (ready for multi-runner selection). */
+  listForLanguage(language: ScriptLanguageId): ScriptRunner[] {
+    this.ensurePluginRunnersLoaded();
+    return Array.from(this.runners.values()).filter((runner) =>
+      runner.supportedLanguages.includes(language),
+    );
+  }
+
   findForLanguage(language: ScriptLanguageId): ScriptRunner | null {
+    this.ensurePluginRunnersLoaded();
     for (const runner of this.runners.values()) {
       if (runner.supportedLanguages.includes(language)) {
         return runner;
@@ -103,20 +181,8 @@ export class RunnerManager {
     return this.findForLanguage(language) !== null;
   }
 
-  getForLanguage(language: ScriptLanguageId): ScriptRunner {
-    const found = this.findForLanguage(language);
-    if (!found) {
-      throw new Error(`No runner registered for language: ${language}`);
-    }
-    return found;
-  }
-
   setActive(runner: ScriptRunner | null): void {
     this.activeRunner = runner;
-  }
-
-  getActive(): ScriptRunner | null {
-    return this.activeRunner;
   }
 
   stopActive(force = false): void {

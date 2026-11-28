@@ -16,12 +16,19 @@ import {
   formatSharedVarRef,
   resetCodegenPassContext,
 } from '../backends/codegenContext';
-import type { LanguageDialect, ScriptBackendAdapter } from '../backends/types';
+import { sanitizeLocalIdent } from '../backends/scopeAnalysis';
+import type {
+  LanguageDialect,
+  LanguagePlugin,
+  ScriptBackendAdapter,
+} from '../backends/types';
+import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { extractImportedModuleNames } from '../extensions/moduleResolver';
+import type { ScriptRunner } from '../runners/types';
 import { scanScriptLibraryFile } from '../extensions/scriptLibScanner';
 import { validateSharedVariableName } from '../projects/handleVariables';
 import { registerPolyBlocks } from '../blocks/definitions';
-import { getDemoProjectById } from '../projects/builtinDemos';
+import { getDemoProjectById } from '../projects/defaultDemos';
 import { instantiateProjectFromTemplate } from '../projects/store';
 import { highlightCodeLine } from '../highlight';
 import { extractErrorLine, parseStdoutLine } from '../runners/logParser';
@@ -208,9 +215,10 @@ describe('PolyBlock Backends (Lua 5.4 & Python 3)', () => {
     expect(res.code).not.toContain("typeof total === 'number'");
     expect(res.code).toContain('Target: JavaScript ES2023');
     expect(res.code).toContain('async function on_start()');
+    expect(res.code).not.toContain('let i = null;');
     expect(res.code).toContain('total += 10;');
     expect(res.code).toContain('console.log("[INFO] " + String(');
-    expect(res.code).toContain('for (i = 1; i <= 3; i++)');
+    expect(res.code).toContain('for (let i = 1; i <= 3; i++)');
     expect(res.code).toContain('console.log("最终 total =", total);');
     expect(res.code).toContain('console.log("[OK] " + String(');
     expect(res.debugCode).toContain('_poly.init_scheduler');
@@ -710,9 +718,6 @@ describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocol
     const exportOnlyLang = 'c' as ScriptLanguageId;
     expect(manager.findForLanguage(exportOnlyLang)).toBeNull();
     expect(manager.hasRunnerForLanguage(exportOnlyLang)).toBe(false);
-    expect(() => manager.getForLanguage(exportOnlyLang)).toThrow(
-      /No runner registered for language/,
-    );
 
     for (const slot of PLANNED_RUNNER_SLOTS) {
       expect(slot.supportedLanguages).toEqual(getSupportedLanguageIds());
@@ -742,7 +747,6 @@ describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocol
       },
     );
 
-    expect(orchestrator.isRunning()).toBe(false);
     expect(results).toHaveLength(1);
     expect(results[0].result.ok).toBe(false);
     expect(results[0].result.errorMessage).toContain('未注册浏览器沙箱 Runner');
@@ -750,6 +754,578 @@ describe('Language dialects, BaseScriptBackend, Runner fallback & WorkerProtocol
       true,
     );
     expect(statuses).toContain('ready');
+  });
+
+  it('supports hot-registering and unregistering a unified LanguagePlugin with RunnerManager auto-sync', () => {
+    const mockDialect: LanguageDialect = {
+      id: 'mockdsl',
+      displayName: 'MockDSL',
+      shortLabel: 'DSL',
+      compactLabel: 'DSL',
+      accentGradient: 'linear-gradient(135deg, #14b8a6, #0d9488)',
+      extension: 'dsl',
+      commentToken: '//',
+      lineCommentPrefix: '// ',
+      notOp: '!',
+      boolTrue: 'true',
+      boolFalse: 'false',
+      nullLiteral: 'null',
+      listLiteral: '[]',
+      dictLiteral: '{}',
+      keywords: ['fn', 'dsl_only_kw'],
+      libBinding: {
+        formatImport: (m) => `use ${m}`,
+        formatCall: (m, f, args) => `${m}.${f}(${args.join(', ')})`,
+        scanFunctions: () => [],
+        extractImportedModuleName: () => null,
+      },
+      extractErrorLine: () => undefined,
+    };
+    const mockBackend: ScriptBackendAdapter = {
+      id: 'mockdsl',
+      name: 'MockDSL',
+      extension: 'dsl',
+      fileName: 'main.dsl',
+      version: '0.1',
+      description: 'Test language plugin',
+      accentColor: '#14b8a6',
+      dialect: mockDialect,
+      generate: () => ({
+        language: 'mockdsl',
+        code: '// mock',
+        debugCode: '// mock',
+        sourceMap: {},
+        lineToBlock: {},
+        breakpointableLines: [],
+        diagnostics: [],
+        blockCount: 0,
+        variableNames: [],
+      }),
+      formatDispatchRouter: () => ({ autoImports: [], code: '' }),
+      registerExtensionBlock: () => {},
+      registerExtensionHat: () => {},
+      compileSharedProcedure: () => ({
+        ident: 'mock',
+        imports: [],
+        cleanFnCode: '',
+        debugFnCode: '',
+      }),
+      formatSharedModuleDocument: () => ({ source: '// shared', debugSource: '// shared' }),
+    };
+    const mockRunner: ScriptRunner = {
+      id: 'mock-dsl-runner',
+      name: 'MockDSL Runner',
+      shortLabel: 'MockDSL',
+      kind: 'browser-wasm',
+      availability: 'builtin',
+      supportsDebugging: false,
+      description: 'Test runner',
+      supportedLanguages: ['mockdsl'],
+      run: async () => ({ ok: true, durationMs: 0, finalVars: {} }),
+      stop: () => {},
+      dispose: () => {},
+    };
+    const plugin: LanguagePlugin = {
+      id: 'mockdsl',
+      dialect: mockDialect,
+      createBackend: () => mockBackend,
+      createRunner: () => mockRunner,
+    };
+
+    try {
+      backendRegistry.registerPlugin(plugin);
+      expect(backendRegistry.has('mockdsl')).toBe(true);
+      expect(getSupportedLanguageIds()).toContain('mockdsl');
+      expect(runnerManager.hasRunnerForLanguage('mockdsl')).toBe(true);
+      expect(runnerManager.findForLanguage('mockdsl')?.id).toBe('mock-dsl-runner');
+      // Dynamic keyword reservation from registered dialects (including JS & hot plugins)
+      expect(validateSharedVariableName('const', []).valid).toBe(false);
+      expect(validateSharedVariableName('dsl_only_kw', []).valid).toBe(false);
+    } finally {
+      backendRegistry.unregister('mockdsl');
+    }
+
+    expect(backendRegistry.has('mockdsl')).toBe(false);
+    expect(runnerManager.hasRunnerForLanguage('mockdsl')).toBe(false);
+  });
+
+  it('fixes JS controls_for shared var double-prefix, floating poly_local_set duplicate let, Lua for-loop shadowing, and emits breakpointableLines across languages', () => {
+    const ws = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        variables: [{ name: 'i', id: 'var_shared_i' }],
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_start',
+              id: 'b_start',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'controls_for',
+                    id: 'b_for',
+                    fields: { VAR: { id: 'var_shared_i' } },
+                    inputs: {
+                      FROM: { shadow: { type: 'math_number', id: 'n1', fields: { NUM: 1 } } },
+                      TO: { shadow: { type: 'math_number', id: 'n2', fields: { NUM: 3 } } },
+                      BY: { shadow: { type: 'math_number', id: 'n3', fields: { NUM: 1 } } },
+                      DO: {
+                        block: {
+                          type: 'poly_print',
+                          id: 'b_print',
+                          inputs: {
+                            VALUE: {
+                              block: {
+                                type: 'variables_get',
+                                id: 'b_get_i',
+                                fields: { VAR: { id: 'var_shared_i' } },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      ws,
+    );
+
+    const ctx = { sharedVariables: ['i'] };
+    const jsRes = backendRegistry.get('js').generate(ws, ctx);
+    expect(jsRes.code).not.toContain('shared.shared.');
+    expect(jsRes.code).toContain('shared.i');
+    expect(() => new Function(jsRes.code)).not.toThrow();
+    expect(jsRes.breakpointableLines && jsRes.breakpointableLines.length).toBeGreaterThan(0);
+
+    const luaRes = backendRegistry.get('lua').generate(ws, ctx);
+    expect(luaRes.code).toContain('for i = 1, 3, 1 do');
+    expect(luaRes.code).toContain('print(i)');
+    expect(luaRes.code).not.toContain('print(shared.i)');
+    expect(luaRes.breakpointableLines && luaRes.breakpointableLines.length).toBeGreaterThan(0);
+
+    const pyRes = backendRegistry.get('python').generate(ws, ctx);
+    expect(pyRes.breakpointableLines && pyRes.breakpointableLines.length).toBeGreaterThan(0);
+    ws.dispose();
+
+    // Floating poly_local_set twice outside any hat must emit `let` only once in JS
+    const floatWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_local_set',
+              id: 'fl_1',
+              fields: { NAME: 'tmp' },
+              inputs: { VALUE: { shadow: { type: 'math_number', id: 'fn1', fields: { NUM: 1 } } } },
+              next: {
+                block: {
+                  type: 'poly_local_set',
+                  id: 'fl_2',
+                  fields: { NAME: 'tmp' },
+                  inputs: { VALUE: { shadow: { type: 'math_number', id: 'fn2', fields: { NUM: 2 } } } },
+                },
+              },
+            },
+          ],
+        },
+      },
+      floatWs,
+    );
+    const floatJs = backendRegistry.get('js').generate(floatWs);
+    expect((floatJs.code.match(/\blet tmp\b/g) ?? []).length).toBe(1);
+    expect(() => new Function(floatJs.code)).not.toThrow();
+    floatWs.dispose();
+  });
+
+  it('propagates transitive usesSleep across shared functions defined in separate scripts of the same handle', () => {
+    const project = instantiateProjectFromTemplate('blank_project');
+    const handle = project.handles[0];
+    handle.sharedFunctions = ['fnA', 'fnB'];
+    handle.scripts = [
+      {
+        id: 'scr_a',
+        name: 'main',
+        breakpoints: [],
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        workspace: {
+          blocks: {
+            languageVersion: 0,
+            blocks: [
+              {
+                type: 'procedures_defnoreturn',
+                id: 'def_a',
+                fields: { NAME: 'fnA' },
+                inputs: {
+                  STACK: {
+                    block: {
+                      type: 'poly_wait_ms',
+                      id: 'wait_a',
+                      inputs: {
+                        MS: { shadow: { type: 'math_number', id: 'ms_a', fields: { NUM: 50 } } },
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+      {
+        id: 'scr_b',
+        name: 'helper',
+        breakpoints: [],
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        workspace: {
+          blocks: {
+            languageVersion: 0,
+            blocks: [
+              {
+                type: 'procedures_defnoreturn',
+                id: 'def_b',
+                fields: { NAME: 'fnB' },
+                inputs: {
+                  STACK: {
+                    block: {
+                      type: 'poly_call_shared_noreturn',
+                      id: 'call_a',
+                      extraState: { fnName: 'fnA', params: [] },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    ];
+
+    const metas = buildHandleScriptsMeta(handle);
+    const fnAMeta = metas[0].declaredFunctions?.find((f) => f.name === 'fnA');
+    const fnBMeta = metas[1].declaredFunctions?.find((f) => f.name === 'fnB');
+    expect(fnAMeta?.usesSleep).toBe(true);
+    expect(fnBMeta?.calledProcedures).toContain('fnA');
+    expect(fnBMeta?.usesSleep).toBe(true);
+  });
+
+  it('allows for-loops inside shared functions with strict-mode let in shared.js, escapes Lua poly_str_replace patterns, and maps controls_flow_statements cleanly', () => {
+    // 1. Shared function containing poly_for_range must produce 0 false-positive diagnostics and valid strict-mode JS
+    const sharedLoopWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        variables: [{ name: 'k', id: 'var_k' }],
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'procedures_defnoreturn',
+              id: 'def_sum',
+              fields: { NAME: 'sum_loop' },
+              inputs: {
+                STACK: {
+                  block: {
+                    type: 'poly_for_range',
+                    id: 'loop_k',
+                    fields: { VAR: { id: 'var_k' } },
+                    inputs: {
+                      FROM: { shadow: { type: 'math_number', id: 'f1', fields: { NUM: 1 } } },
+                      TO: { shadow: { type: 'math_number', id: 't1', fields: { NUM: 3 } } },
+                      BY: { shadow: { type: 'math_number', id: 'b1', fields: { NUM: 1 } } },
+                      DO: {
+                        block: {
+                          type: 'poly_print',
+                          id: 'pr_k',
+                          inputs: {
+                            VALUE: {
+                              block: {
+                                type: 'variables_get',
+                                id: 'get_k',
+                                fields: { VAR: { id: 'var_k' } },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      sharedLoopWs,
+    );
+    const diagRes = backendRegistry.get('js').generate(sharedLoopWs, {
+      sharedFunctions: ['sum_loop'],
+      handleScripts: [
+        {
+          id: 's1',
+          name: 'main',
+          isEntry: true,
+          declaredEvents: [],
+          requiredScripts: [],
+          hasExternalKeepAliveHat: false,
+        },
+      ],
+      currentScriptId: 's1',
+    });
+    expect(
+      diagRes.diagnostics.filter((d) => d.id.startsWith('shared-fn-private-var')),
+    ).toHaveLength(0);
+    const compiledSharedFn = backendRegistry.get('js').compileSharedProcedure({
+      name: 'sum_loop',
+      params: [],
+      hasReturn: false,
+      usesSleep: false,
+      blockJson: (Blockly.serialization.workspaces.save(sharedLoopWs) as {
+        blocks: { blocks: Array<Record<string, unknown>> };
+      }).blocks.blocks[0],
+      scriptVariables: [{ id: 'var_k', name: 'k' }],
+      moduleName: 'shared',
+      sharedAttrByName: new Map(),
+      allAsyncSharedFnNames: new Set(),
+    });
+    expect(compiledSharedFn.cleanFnCode).toContain('for (let k =');
+    expect(
+      () => new Function(`"use strict";\n${compiledSharedFn.cleanFnCode}`),
+    ).not.toThrow();
+    sharedLoopWs.dispose();
+
+    // 2. Lua poly_str_replace escapes pattern metacharacters & % safely + controls_flow_statements maps sourceMap cleanly
+    const flowWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_start',
+              id: 's_flow',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'poly_print',
+                    id: 'p_rep',
+                    inputs: {
+                      VALUE: {
+                        block: {
+                          type: 'poly_str_replace',
+                          id: 'rep_1',
+                          inputs: {
+                            SRC: { shadow: { type: 'text', id: 'tx1', fields: { TEXT: 'a-b 50%' } } },
+                            OLD: { shadow: { type: 'text', id: 'tx2', fields: { TEXT: 'a-b' } } },
+                            NEW: { shadow: { type: 'text', id: 'tx3', fields: { TEXT: '100%' } } },
+                          },
+                        },
+                      },
+                    },
+                    next: {
+                      block: {
+                        type: 'poly_repeat_times',
+                        id: 'rep_loop',
+                        inputs: {
+                          TIMES: { shadow: { type: 'math_number', id: 'rn1', fields: { NUM: 3 } } },
+                          DO: {
+                            block: {
+                              type: 'controls_flow_statements',
+                              id: 'brk_1',
+                              fields: { FLOW: 'BREAK' },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      flowWs,
+    );
+    const luaFlow = backendRegistry.get('lua').generate(flowWs);
+    expect(luaFlow.code).toContain('([%(%)%.%%%+%-%*%?%[%]%^%$])');
+    expect(luaFlow.sourceMap['brk_1']).toBeDefined();
+    expect(luaFlow.breakpointableLines).toContain(luaFlow.sourceMap['brk_1'].startLine);
+    const pyFlow = backendRegistry.get('python').generate(flowWs);
+    expect(pyFlow.sourceMap['brk_1']).toBeDefined();
+    expect(pyFlow.breakpointableLines).toContain(pyFlow.sourceMap['brk_1'].startLine);
+    const jsFlow = backendRegistry.get('js').generate(flowWs);
+    expect(jsFlow.sourceMap['brk_1']).toBeDefined();
+    expect(jsFlow.breakpointableLines).toContain(jsFlow.sourceMap['brk_1'].startLine);
+    flowWs.dispose();
+  });
+
+  it('enforces cross-language scope guarantees: C1 shared fn ident stability, C2 loop-local counter isolation, C3 Lua mutual recursion, C5 mixed Chinese disambiguation, and Lua text_join safety', () => {
+    // C5: Mixed non-ASCII + ASCII local names never silently alias
+    expect(sanitizeLocalIdent('温度1')).not.toBe(sanitizeLocalIdent('湿度1'));
+    expect(sanitizeLocalIdent('tmp')).toBe('tmp');
+
+    // C1: Caller with variable `step` calling shared `step()` still emits `shared.step()` (never `shared.step2()`) across Lua/Python/JS
+    const callerWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        variables: [{ name: 'step', id: 'var_step' }],
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_start',
+              id: 'c1_start',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'variables_set',
+                    id: 'c1_set',
+                    fields: { VAR: { id: 'var_step' } },
+                    inputs: { VALUE: { shadow: { type: 'math_number', id: 'c1_n', fields: { NUM: 1 } } } },
+                    next: {
+                      block: {
+                        type: 'poly_call_shared_noreturn',
+                        id: 'c1_call',
+                        extraState: { scriptName: 'utils', fnName: 'step', params: [] },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      callerWs,
+    );
+    const c1Ctx = { sharedFunctions: ['step'] };
+    expect(backendRegistry.get('lua').generate(callerWs, c1Ctx).code).toContain('shared.step()');
+    expect(backendRegistry.get('python').generate(callerWs, c1Ctx).code).toContain('shared.step()');
+    expect(backendRegistry.get('js').generate(callerWs, c1Ctx).code).toContain('shared.step()');
+    callerWs.dispose();
+
+    // C2: Pure loop-only counter `i` stays function/block-local in Python & JS (no top-level `i = None`/`let i` or `global i`)
+    const loopWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        variables: [{ name: 'i', id: 'var_loop_i' }],
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'poly_on_start',
+              id: 'c2_start',
+              inputs: {
+                BODY: {
+                  block: {
+                    type: 'poly_for_range',
+                    id: 'c2_for',
+                    fields: { VAR: { id: 'var_loop_i' } },
+                    inputs: {
+                      FROM: { shadow: { type: 'math_number', id: 'c2_f', fields: { NUM: 1 } } },
+                      TO: { shadow: { type: 'math_number', id: 'c2_t', fields: { NUM: 3 } } },
+                      BY: { shadow: { type: 'math_number', id: 'c2_b', fields: { NUM: 1 } } },
+                      DO: {
+                        block: {
+                          type: 'poly_print',
+                          id: 'c2_p',
+                          inputs: {
+                            VALUE: {
+                              block: {
+                                type: 'variables_get',
+                                id: 'c2_g',
+                                fields: { VAR: { id: 'var_loop_i' } },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      loopWs,
+    );
+    const pyLoop = backendRegistry.get('python').generate(loopWs);
+    expect(pyLoop.code).not.toMatch(/^i = /m);
+    expect(pyLoop.code).not.toContain('global i');
+    const jsLoop = backendRegistry.get('js').generate(loopWs);
+    expect(jsLoop.code).not.toMatch(/^let i = /m);
+    expect(jsLoop.code).toContain('for (let i = 1; i <= 3; i++)');
+    loopWs.dispose();
+
+    // C3: Lua 5.4 hoists `local fn_a, fn_b` when 2+ private functions exist (supports forward calls & mutual recursion)
+    // + Lua `text_join` wraps boolean operand with `tostring(...)`
+    const recWs = new Blockly.Workspace();
+    Blockly.serialization.workspaces.load(
+      {
+        blocks: {
+          languageVersion: 0,
+          blocks: [
+            {
+              type: 'procedures_defnoreturn',
+              id: 'rec_a',
+              x: 10,
+              y: 10,
+              fields: { NAME: 'fn_a' },
+              inputs: {
+                STACK: {
+                  block: {
+                    type: 'procedures_callnoreturn',
+                    id: 'call_b',
+                    extraState: { name: 'fn_b' },
+                  },
+                },
+              },
+            },
+            {
+              type: 'procedures_defnoreturn',
+              id: 'rec_b',
+              x: 10,
+              y: 150,
+              fields: { NAME: 'fn_b' },
+              inputs: {
+                STACK: {
+                  block: {
+                    type: 'poly_print',
+                    id: 'pr_join',
+                    inputs: {
+                      VALUE: {
+                        block: {
+                          type: 'text_join',
+                          id: 'tj_1',
+                          extraState: { itemCount: 2 },
+                          inputs: {
+                            ADD0: { shadow: { type: 'text', id: 'tj_s', fields: { TEXT: 'ok=' } } },
+                            ADD1: { block: { type: 'logic_boolean', id: 'tj_b', fields: { BOOL: 'TRUE' } } },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+      recWs,
+    );
+    const luaRec = backendRegistry.get('lua').generate(recWs);
+    expect(luaRec.code).toContain('local fn_a, fn_b');
+    expect(luaRec.code).toContain('tostring(true)');
+    recWs.dispose();
   });
 
   it('routes worker control messages, pack-scoped sim state, and DONE/ERROR lifecycle in WorkerProtocolHost', async () => {

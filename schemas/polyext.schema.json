@@ -22,7 +22,7 @@
     "id": {
       "type": "string",
       "pattern": "^[a-zA-Z0-9_-]{2,48}$",
-      "description": "扩展包唯一 ID（2~48 位字母、数字、横线或下划线）。所有全局扩展包完全平权，导入同 ID 包将覆盖升级（可随时通过「恢复默认」还原出厂清单）；项目内嵌包可在当前项目内独立覆盖同名全局包。"
+      "description": "扩展包唯一 ID（2~48 位字母、数字、横线或下划线）。所有全局扩展包完全平权，导入同 ID 包将覆盖升级（可随时通过「恢复默认」还原出厂清单）；项目私有/锁定包可在当前项目内独立覆盖同名全局包。"
     },
     "name": {
       "type": "string",
@@ -84,7 +84,7 @@
     "LanguageIdKey": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_-]{0,23}$",
-      "description": "目标脚本语言 ID（内置 lua、python、js，及未来任意扩展语言）。"
+      "description": "目标脚本语言 ID（任意已注册的默认或插件语言 ID，如 lua、python、js 及未来任意扩展语言）。"
     },
     "ExtensionPackImports": {
       "type": "object",
@@ -166,12 +166,12 @@
           "default": "CH",
           "description": "编号前缀（如 T -> T0、PWM -> PWM0；省略默认 CH）。"
         },
-        "min": { "type": "integer", "minimum": 1, "maximum": 32 },
-        "max": { "type": "integer", "minimum": 1, "maximum": 32 },
-        "defaultCount": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "min": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "max": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "defaultCount": { "type": "integer", "minimum": 1, "maximum": 64 },
         "presets": {
           "type": "array",
-          "items": { "type": "integer", "minimum": 1, "maximum": 32 },
+          "items": { "type": "integer", "minimum": 1, "maximum": 64 },
           "description": "可选快捷通道数预设按钮（如 [4, 8, 16]）。"
         },
         "hint": { "type": "string", "description": "句柄配置面板下方的补充说明文字。" }

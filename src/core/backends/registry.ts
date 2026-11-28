@@ -2,87 +2,151 @@ import type {
   ScriptLanguageId,
   VariableInitialValue,
 } from '../../types/project';
-import { extensionRegistry } from '../extensions/registry';
-import { JS_DIALECT, JsBackendAdapter } from './jsBackend';
-import { LUA_DIALECT, LuaBackendAdapter } from './luaBackend';
-import { PYTHON_DIALECT, PythonBackendAdapter } from './pythonBackend';
 import {
   formatInitialValueForDialect,
   type LanguageDialect,
+  type LanguagePlugin,
   type ScriptBackendAdapter,
 } from './types';
 
+type PluginChangeListener = (event: {
+  kind: 'registered' | 'unregistered';
+  id: string;
+  plugin?: LanguagePlugin;
+}) => void;
+
+type AdapterLifecycleListener = (
+  event:
+    | { kind: 'attached'; adapter: ScriptBackendAdapter }
+    | { kind: 'detached'; id: ScriptLanguageId },
+) => void;
+
 /**
- * Single registration entry point for all built-in target language backends.
- * Adding a new target language (e.g. Arduino / C / DSL) ONLY requires:
- *   1. Creating `<lang>Backend.ts` exporting `<LANG>_DIALECT` & `<Lang>BackendAdapter`
- *   2. Adding one entry to `BUILTIN_BACKEND_ENTRIES` below.
- * `ScriptLanguageId`, dialect lookup, syntax highlighting, file extension helpers,
- * library scanning, validation, and UI pickers all derive automatically from here.
+ * Pure, language-agnostic, zero-cycle central registry for `LanguagePlugin` instances.
+ * Concrete target languages live outside `src/core/` (under `src/plugins/languages/`)
+ * and register inward via `backendRegistry.registerPlugin(...)` at startup or runtime.
+ * Downstream consumers (such as `extensionRegistry` and `runnerManager`) subscribe outward
+ * via `onAdapterLifecycle` / `onPluginChange` so this module stays a one-way Layer 0 leaf.
  */
-const BUILTIN_BACKEND_ENTRIES = [
-  { getDialect: () => LUA_DIALECT, create: () => new LuaBackendAdapter() },
-  { getDialect: () => PYTHON_DIALECT, create: () => new PythonBackendAdapter() },
-  { getDialect: () => JS_DIALECT, create: () => new JsBackendAdapter() },
-] as const;
-
-export type RegisteredLanguageId = ReturnType<
-  (typeof BUILTIN_BACKEND_ENTRIES)[number]['getDialect']
->['id'];
-
 class BackendRegistry {
+  private readonly plugins = new Map<string, LanguagePlugin>();
   private readonly dialects = new Map<string, LanguageDialect>();
   private readonly adapters = new Map<string, ScriptBackendAdapter>();
-  private dialectsLoaded = false;
+  private readonly listeners = new Set<PluginChangeListener>();
+  private readonly adapterListeners = new Set<AdapterLifecycleListener>();
   private initialized = false;
+  private revision = 0;
 
-  /**
-   * Lazily seeds dialect metadata on first access (safe under ANY ESM module import order
-   * without triggering Blockly or `extensionRegistry` initialization).
-   */
-  private ensureDialectsLoaded(): void {
-    if (this.dialectsLoaded) return;
-    this.dialectsLoaded = true;
-    for (const entry of BUILTIN_BACKEND_ENTRIES) {
-      const dialect = entry.getDialect();
-      if (!this.dialects.has(dialect.id)) {
-        this.dialects.set(dialect.id, dialect);
-      }
+  private notifyAdapterAttached(adapter: ScriptBackendAdapter): void {
+    for (const listener of this.adapterListeners) {
+      listener({ kind: 'attached', adapter });
+    }
+  }
+
+  private notifyAdapterDetached(id: ScriptLanguageId): void {
+    for (const listener of this.adapterListeners) {
+      listener({ kind: 'detached', id });
     }
   }
 
   private ensureInitialized(): void {
-    this.ensureDialectsLoaded();
     if (this.initialized) return;
     this.initialized = true;
-    for (const entry of BUILTIN_BACKEND_ENTRIES) {
-      const dialect = entry.getDialect();
-      if (!this.adapters.has(dialect.id)) {
-        const adapter = entry.create();
+    for (const plugin of this.plugins.values()) {
+      if (!this.adapters.has(plugin.id)) {
+        const adapter = plugin.createBackend();
         this.adapters.set(adapter.id, adapter);
         this.dialects.set(adapter.id, adapter.dialect);
-        extensionRegistry.attachBackend(adapter);
+        this.notifyAdapterAttached(adapter);
       }
     }
   }
 
-  /** Registers (or replaces) a target language backend & its dialect metadata dynamically. */
-  register(adapter: ScriptBackendAdapter): void {
-    this.ensureInitialized();
-    this.adapters.set(adapter.id, adapter);
-    this.dialects.set(adapter.id, adapter.dialect);
-    extensionRegistry.attachBackend(adapter);
+  /** Monotonic revision counter incremented on plugin register/unregister (for React useSyncExternalStore). */
+  getRevision(): number {
+    return this.revision;
   }
 
-  /** Unregisters a dynamically added language backend (cannot remove built-in backends). */
+  /** Subscribes to runtime language plugin registration / unregistration (used by RunnerManager & UI). */
+  onPluginChange(listener: PluginChangeListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  /**
+   * Subscribes to concrete backend adapter attach / detach lifecycle events (used by
+   * `extensionRegistry` to avoid a circular runtime import back into extensions).
+   * Immediately replays any already-initialized adapters to the new subscriber.
+   */
+  onAdapterLifecycle(listener: AdapterLifecycleListener): () => void {
+    this.adapterListeners.add(listener);
+    for (const adapter of this.adapters.values()) {
+      listener({ kind: 'attached', adapter });
+    }
+    return () => {
+      this.adapterListeners.delete(listener);
+    };
+  }
+
+  /** Lists all registered language plugin descriptors. */
+  listPlugins(): LanguagePlugin[] {
+    return Array.from(this.plugins.values());
+  }
+
+  /**
+   * Registers (or replaces) a complete language plugin (dialect + backend + optional sandbox runner).
+   * Defers adapter instantiation until first compiler access if not yet initialized,
+   * and attaches immediately for hot runtime registrations.
+   */
+  registerPlugin(plugin: LanguagePlugin): void {
+    this.plugins.set(plugin.id, plugin);
+    this.dialects.set(plugin.id, plugin.dialect);
+    if (this.initialized) {
+      const adapter = plugin.createBackend();
+      this.adapters.set(adapter.id, adapter);
+      this.dialects.set(adapter.id, adapter.dialect);
+      this.notifyAdapterAttached(adapter);
+    } else {
+      this.adapters.delete(plugin.id);
+    }
+    this.revision += 1;
+    for (const listener of this.listeners) {
+      listener({ kind: 'registered', id: plugin.id, plugin });
+    }
+  }
+
+  /** Convenience helper to register an export-only backend adapter directly as a plugin. */
+  register(adapter: ScriptBackendAdapter): void {
+    this.registerPlugin({
+      id: adapter.id,
+      dialect: adapter.dialect,
+      createBackend: () => adapter,
+    });
+  }
+
+  /**
+   * Unregisters a language plugin (all plugins are equal; at least 1 language plugin must remain).
+   */
   unregister(id: string): boolean {
-    this.ensureDialectsLoaded();
-    if (BUILTIN_BACKEND_ENTRIES.some((e) => e.getDialect().id === id)) {
+    if (!this.plugins.has(id) || this.plugins.size <= 1) {
       return false;
     }
+    const deletedPlugin = this.plugins.delete(id);
     const deletedAdapter = this.adapters.delete(id);
     const deletedDialect = this.dialects.delete(id);
-    return deletedAdapter || deletedDialect;
+    const changed = deletedPlugin || deletedAdapter || deletedDialect;
+    if (changed) {
+      if (this.initialized) {
+        this.notifyAdapterDetached(id as ScriptLanguageId);
+      }
+      this.revision += 1;
+      for (const listener of this.listeners) {
+        listener({ kind: 'unregistered', id });
+      }
+    }
+    return changed;
   }
 
   get(id: ScriptLanguageId): ScriptBackendAdapter {
@@ -94,9 +158,8 @@ class BackendRegistry {
     return found;
   }
 
-  tryGet(id: string): ScriptBackendAdapter | undefined {
-    this.ensureInitialized();
-    return this.adapters.get(id);
+  has(id: string): boolean {
+    return this.plugins.has(id);
   }
 
   list(): ScriptBackendAdapter[] {
@@ -106,19 +169,22 @@ class BackendRegistry {
 
   /** Lists all registered language IDs (synchronously safe without triggering extension init). */
   listIds(): ScriptLanguageId[] {
-    this.ensureDialectsLoaded();
     return Array.from(this.dialects.keys()) as ScriptLanguageId[];
   }
 
-  /** Returns the primary default language ID (first registered built-in backend). */
+  /** Returns the primary default language ID (first currently registered language plugin). */
   getDefaultId(): ScriptLanguageId {
-    this.ensureDialectsLoaded();
-    return BUILTIN_BACKEND_ENTRIES[0].getDialect().id;
+    const first = this.dialects.keys().next().value;
+    if (!first) {
+      throw new Error(
+        'No language plugins registered in backendRegistry. Ensure `registerDefaultLanguagePlugins()` runs before use.',
+      );
+    }
+    return first as ScriptLanguageId;
   }
 
   /** Returns the LanguageDialect for a registered language ID (throws if unregistered). */
   getDialect(id: ScriptLanguageId): LanguageDialect {
-    this.ensureDialectsLoaded();
     const found = this.dialects.get(id);
     if (!found) {
       throw new Error(`Unsupported script language dialect: ${id}`);
@@ -127,26 +193,14 @@ class BackendRegistry {
   }
 
   tryGetDialect(id: string): LanguageDialect | undefined {
-    this.ensureDialectsLoaded();
     return this.dialects.get(id);
   }
 
   listDialects(): LanguageDialect[] {
-    this.ensureDialectsLoaded();
     return Array.from(this.dialects.values());
   }
 
-  getDialectsMap(): Record<ScriptLanguageId, LanguageDialect> {
-    this.ensureDialectsLoaded();
-    const out = {} as Record<ScriptLanguageId, LanguageDialect>;
-    for (const [id, dialect] of this.dialects.entries()) {
-      out[id as ScriptLanguageId] = dialect;
-    }
-    return out;
-  }
-
   isSupported(raw: unknown): raw is ScriptLanguageId {
-    this.ensureDialectsLoaded();
     return typeof raw === 'string' && this.dialects.has(raw);
   }
 
@@ -155,14 +209,14 @@ class BackendRegistry {
     return fallback ?? this.getDefaultId();
   }
 
-  /** Returns comma-separated `.ext` list for `<input accept>` (e.g. `'.lua,.py'`). */
+  /** Returns comma-separated `.ext` list for `<input accept>` (e.g. `'.lua,.py,.js'`). */
   getSupportedAcceptAttr(): string {
     return this.listDialects()
       .map((d) => `.${d.extension}`)
       .join(',');
   }
 
-  /** Returns human-readable supported extensions label (e.g. `'.lua / .py'`). */
+  /** Returns human-readable supported extensions label (e.g. `'.lua / .py / .js'`). */
   formatSupportedExtensionsLabel(): string {
     return this.listDialects()
       .map((d) => `.${d.extension}`)
@@ -179,22 +233,37 @@ class BackendRegistry {
     return name.replace(extRe, '');
   }
 
+  /** Detects a registered language ID from a filename extension, or falls back when unknown. */
+  detectLanguageFromFileName(
+    fileName: string,
+    fallback: ScriptLanguageId = this.getDefaultId(),
+  ): ScriptLanguageId {
+    const lower = fileName.trim().toLowerCase();
+    for (const d of this.listDialects()) {
+      if (lower.endsWith(`.${d.extension.toLowerCase()}`)) {
+        return d.id as ScriptLanguageId;
+      }
+    }
+    return fallback;
+  }
+
+  /** Formats a structured VariableInitialValue into the target dialect's native literal syntax. */
   formatInitialValue(
     init: VariableInitialValue | null | undefined,
-    lang: ScriptLanguageId,
+    language: ScriptLanguageId,
   ): string {
-    return formatInitialValueForDialect(init, this.getDialect(lang));
+    return formatInitialValueForDialect(init, this.getDialect(language));
   }
 }
 
 export const backendRegistry = new BackendRegistry();
 
-export function getLanguageDialect(lang: ScriptLanguageId): LanguageDialect {
-  return backendRegistry.getDialect(lang);
-}
-
 export function getSupportedLanguageIds(): ScriptLanguageId[] {
   return backendRegistry.listIds();
+}
+
+export function getLanguageDialect(id: ScriptLanguageId): LanguageDialect {
+  return backendRegistry.getDialect(id);
 }
 
 export function isSupportedLanguageId(raw: unknown): raw is ScriptLanguageId {
@@ -222,7 +291,7 @@ export function stripScriptExtension(name: string): string {
 
 export function formatInitialValueForLanguage(
   init: VariableInitialValue | null | undefined,
-  lang: ScriptLanguageId,
+  language: ScriptLanguageId,
 ): string {
-  return backendRegistry.formatInitialValue(init, lang);
+  return backendRegistry.formatInitialValue(init, language);
 }

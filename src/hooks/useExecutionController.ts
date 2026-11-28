@@ -15,7 +15,10 @@ import type { GeneratedCodeResult } from '../core/backends/types';
 import { setActiveModuleConflicts } from '../core/blocks/workspaceContextBridge';
 import { compileHandleArtifacts } from '../core/compiler/handleBuilder';
 import { resolveProjectModules } from '../core/extensions/moduleResolver';
-import { extensionRegistry } from '../core/extensions/registry';
+import {
+  extensionRegistry,
+  formatExtensionBlockLabel,
+} from '../core/extensions/registry';
 import {
   applySimDeviceEvent,
   buildDefaultSimState,
@@ -107,9 +110,9 @@ function scanHandleExportOnlyBlocks(handle: RuntimeHandle): Set<string> {
     const obj = node as Record<string, unknown>;
     if (obj.enabled === false) return;
     if (typeof obj.type === 'string') {
-      const def = extensionRegistry.getBlockDef(obj.type);
+      const def = extensionRegistry.findOwnerForBlockType(obj.type);
       if (def?.block.sandboxRunnable === false) {
-        exportOnlyBlocks.add(def.block.message0.replace(/%\d/g, '▢'));
+        exportOnlyBlocks.add(formatExtensionBlockLabel(def.block, def.section));
       }
     }
     if (obj.inputs && typeof obj.inputs === 'object') {
@@ -203,7 +206,7 @@ export function useExecutionController({
       timestamp: formatNowTime(),
       level: 'system',
       message:
-        'PolyBlock v3 三层多句柄工程工作台就绪：支持多隔离句柄并发模拟、事件回调/定时器、局部作用域变量树与多语言断点调试。',
+        'PolyBlock 多语言积木工作台就绪：支持多隔离句柄并发模拟、事件回调/定时器、局部作用域变量树与多语言断点调试。',
     },
   ]);
 
@@ -217,6 +220,7 @@ export function useExecutionController({
   const activeSimPacksRef = useRef<PolyExtensionPack[]>(activeSimPacks);
   const runnerStatusRef = useRef<RunnerStatus>(runnerStatus);
   const multiHandleRunningRef = useRef<boolean>(multiHandleRunning);
+  const launchingRef = useRef<boolean>(false);
   const runningHandleIdRef = useRef<string | null>(null);
   const lastExecutingRef = useRef<{ handleId: string; blockId: string } | null>(
     null,
@@ -236,6 +240,7 @@ export function useExecutionController({
     };
   }, []);
 
+  const MAX_LOG_ENTRIES = 1000;
   const appendLog = useCallback(
     (
       level: LogLevel,
@@ -244,19 +249,21 @@ export function useExecutionController({
       blockId?: string,
       handleMeta?: { name: string; color: string },
     ) => {
-      setLogs((prev) => [
-        ...prev,
-        {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          timestamp: formatNowTime(),
-          level,
-          message,
-          line,
-          blockId,
-          handleName: handleMeta?.name,
-          handleColor: handleMeta?.color,
-        },
-      ]);
+      const nextEntry: LogEntry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        timestamp: formatNowTime(),
+        level,
+        message,
+        line,
+        blockId,
+        handleName: handleMeta?.name,
+        handleColor: handleMeta?.color,
+      };
+      setLogs((prev) =>
+        prev.length >= MAX_LOG_ENTRIES
+          ? [...prev.slice(prev.length - MAX_LOG_ENTRIES + 1), nextEntry]
+          : [...prev, nextEntry],
+      );
     },
     [],
   );
@@ -412,29 +419,38 @@ export function useExecutionController({
         (runnerStatusRef.current === 'running' ||
           runnerStatusRef.current === 'paused');
 
-      setStore((prev) => {
-        const proj = getActiveProject(prev);
-        const hdl = getActiveHandle(proj);
-        const scr = getActiveScript(hdl);
-        const exists = scr.breakpoints.includes(blockId);
-        const nextBps = exists
-          ? scr.breakpoints.filter((id) => id !== blockId)
-          : [...scr.breakpoints, blockId];
-        const nextScripts = hdl.scripts.map((s) =>
-          s.id === scr.id ? { ...s, breakpoints: nextBps } : s,
-        );
-        if (isSingleActive && runningHandleIdRef.current === hdl.id) {
-          runnerManager.updateActiveBreakpoints(
-            collectHandleAllBreakpoints({ ...hdl, scripts: nextScripts }),
-          );
-        }
-        return updateProjectById(prev, proj.id, (p) =>
-          updateHandleById(p, hdl.id, (h) => ({
+      const curProj = getActiveProject(storeRef.current);
+      const curHdl = getActiveHandle(curProj);
+      const curScr = getActiveScript(curHdl);
+      const exists = curScr.breakpoints.includes(blockId);
+      const nextBps = exists
+        ? curScr.breakpoints.filter((id) => id !== blockId)
+        : [...curScr.breakpoints, blockId];
+      const nextScripts = curHdl.scripts.map((s) =>
+        s.id === curScr.id ? { ...s, breakpoints: nextBps } : s,
+      );
+      setStore((prev) =>
+        updateProjectById(prev, curProj.id, (p) =>
+          updateHandleById(p, curHdl.id, (h) => ({
             ...h,
-            scripts: nextScripts,
+            scripts: h.scripts.map((s) =>
+              s.id === curScr.id
+                ? {
+                    ...s,
+                    breakpoints: s.breakpoints.includes(blockId)
+                      ? s.breakpoints.filter((id) => id !== blockId)
+                      : [...s.breakpoints, blockId],
+                  }
+                : s,
+            ),
           })),
+        ),
+      );
+      if (isSingleActive && runningHandleIdRef.current === curHdl.id) {
+        runnerManager.updateActiveBreakpoints(
+          collectHandleAllBreakpoints({ ...curHdl, scripts: nextScripts }),
         );
-      });
+      }
 
       if (isMulti) {
         notify(
@@ -442,7 +458,7 @@ export function useExecutionController({
         );
       }
     },
-    [notify, setStore],
+    [notify, setStore, storeRef],
   );
 
   const handleClearBreakpoints = useCallback(() => {
@@ -452,26 +468,29 @@ export function useExecutionController({
       (runnerStatusRef.current === 'running' ||
         runnerStatusRef.current === 'paused');
 
-    setStore((prev) => {
-      const proj = getActiveProject(prev);
-      const hdl = getActiveHandle(proj);
-      const nextScripts = hdl.scripts.map((s) =>
-        s.id === activeScriptIdRef.current ? { ...s, breakpoints: [] } : s,
-      );
-      if (isSingleActive && runningHandleIdRef.current === hdl.id) {
-        runnerManager.updateActiveBreakpoints(
-          collectHandleAllBreakpoints({ ...hdl, scripts: nextScripts }),
-        );
-      }
-      return updateProjectById(prev, activeProjectIdRef.current, (p) =>
-        updateHandleById(p, activeHandleIdRef.current, (h) => ({
+    const curProj = getActiveProject(storeRef.current);
+    const curHdl = getActiveHandle(curProj);
+    const targetScriptId = activeScriptIdRef.current;
+    const nextScripts = curHdl.scripts.map((s) =>
+      s.id === targetScriptId ? { ...s, breakpoints: [] } : s,
+    );
+    setStore((prev) =>
+      updateProjectById(prev, curProj.id, (p) =>
+        updateHandleById(p, curHdl.id, (h) => ({
           ...h,
-          scripts: nextScripts,
+          scripts: h.scripts.map((s) =>
+            s.id === targetScriptId ? { ...s, breakpoints: [] } : s,
+          ),
         })),
+      ),
+    );
+    if (isSingleActive && runningHandleIdRef.current === curHdl.id) {
+      runnerManager.updateActiveBreakpoints(
+        collectHandleAllBreakpoints({ ...curHdl, scripts: nextScripts }),
       );
-    });
+    }
     notify('已清除当前脚本的全部断点');
-  }, [activeHandleIdRef, activeProjectIdRef, activeScriptIdRef, notify, setStore]);
+  }, [activeScriptIdRef, notify, setStore, storeRef]);
 
   const handleSelectSpeed = useCallback(
     (speed: ExecutionSpeedId) => {
@@ -493,11 +512,20 @@ export function useExecutionController({
      ======================================================================== */
   const launchSingleHandleExecution = useCallback(
     async (startInStepMode: boolean) => {
-      const runner = runnerManager.findForLanguage(language);
-      if (!runner) {
-        notify('当前语言仅支持代码生成与导出，暂无内置沙箱');
+      if (
+        launchingRef.current ||
+        runnerStatusRef.current === 'running' ||
+        runnerStatusRef.current === 'paused'
+      ) {
         return;
       }
+      const runner = runnerManager.findForLanguage(language);
+      if (!runner) {
+        notify('当前目标语言仅支持代码生成与导出，暂无浏览器沙箱运行器');
+        return;
+      }
+      launchingRef.current = true;
+      try {
 
       if (activePage !== 'blocks') navigateTo('blocks');
       if (settings.autoOpenConsoleOnRun) setShowConsole(true);
@@ -674,8 +702,8 @@ export function useExecutionController({
             const ownerScript = findScriptOwningBlockId(handleForRun, blockId);
             setLiveVariables(vars);
 
-            if (!inActiveCanvas && ownerScript) {
-              // Auto-jump to the paused script so breakpoint / step pause is always visible
+            if (ownerScript) {
+              // Always exit SharedVarsView / auto-jump to the paused script so breakpoint pause is visible
               onFocusScriptForPauseRef.current(handleForRun.id, ownerScript.id);
               requestAnimationFrame(() => {
                 workbenchRef.current?.focusBlock(blockId);
@@ -710,14 +738,8 @@ export function useExecutionController({
         },
       );
 
-      runningHandleIdRef.current = null;
-      lastExecutingRef.current = null;
-      setRunningHandleIds([]);
       setLastDurationMs(result.durationMs);
-      setExecutingBlockId(null);
-      setHandleTelemetries({});
       if (result.finalVars) setLiveVariables(result.finalVars);
-      runnerManager.setActive(null);
 
       if (result.ok) {
         appendLog(
@@ -729,10 +751,23 @@ export function useExecutionController({
           'system',
           `[${scriptFileLabel}] 已退出事件循环并停止运行（累计耗时 ${result.durationMs}ms）。`,
         );
-      } else if (result.errorLine) {
+      } else if (
+        result.errorLine &&
+        runningEntryDirectly &&
+        activeScriptIdRef.current === entryScript.id
+      ) {
         setErrorLine(result.errorLine);
         const mappedBlock = latest.lineToBlock[result.errorLine];
         if (mappedBlock) workbenchRef.current?.focusBlock(mappedBlock);
+      }
+      } finally {
+        runningHandleIdRef.current = null;
+        lastExecutingRef.current = null;
+        setRunningHandleIds([]);
+        setExecutingBlockId(null);
+        setHandleTelemetries({});
+        runnerManager.setActive(null);
+        launchingRef.current = false;
       }
     },
     [
@@ -748,6 +783,7 @@ export function useExecutionController({
       activeHandle,
       activeScript.id,
       activeScript.name,
+      activeScriptIdRef,
       generated,
       setGenerated,
       workbenchRef,
@@ -759,11 +795,20 @@ export function useExecutionController({
   );
 
   const launchMultiHandleSimulation = useCallback(async () => {
-    const currentProj = getActiveProject(storeRef.current);
-    if (!runnerManager.hasRunnerForLanguage(currentProj.language)) {
-      notify('当前语言仅支持代码生成与导出，暂无内置沙箱');
+    if (
+      launchingRef.current ||
+      runnerStatusRef.current === 'running' ||
+      runnerStatusRef.current === 'paused'
+    ) {
       return;
     }
+    const currentProj = getActiveProject(storeRef.current);
+    if (!runnerManager.hasRunnerForLanguage(currentProj.language)) {
+      notify('当前目标语言仅支持代码生成与导出，暂无浏览器沙箱运行器');
+      return;
+    }
+    launchingRef.current = true;
+    try {
 
     if (activePage !== 'blocks') navigateTo('blocks');
     if (settings.autoOpenConsoleOnRun) setShowConsole(true);
@@ -792,7 +837,11 @@ export function useExecutionController({
       return;
     }
 
-    // Pre-Run Static Error Gate across all target autoStart handles via HandleCompilerService
+    // Pre-Run Static Error Gate across all target autoStart handles (compile ONCE & reuse!)
+    const precompiledByHandleId = new Map<
+      string,
+      ReturnType<typeof compileHandleArtifacts>
+    >();
     const multiBlockingErrors: Array<{
       handleName: string;
       handleColor: string;
@@ -805,6 +854,7 @@ export function useExecutionController({
         handle: hdl,
         useDebugCompanion: true,
       });
+      precompiledByHandleId.set(hdl.id, built);
       for (const err of built.blockingErrors) {
         multiBlockingErrors.push({
           handleName: hdl.name,
@@ -854,7 +904,7 @@ export function useExecutionController({
         id: `mstart-${Date.now()}`,
         timestamp: formatNowTime(),
         level: 'system',
-        message: `启动多句柄并发仿真：${runList.map((h) => h.name).join(' + ')}（共 ${runList.length} 个独立 WASM Worker · ${speedLabel} · 定时器与全局变量完全隔离）...`,
+        message: `启动多句柄并发仿真：${runList.map((h) => h.name).join(' + ')}（共 ${runList.length} 个独立沙箱 Worker · ${speedLabel} · 定时器与全局变量完全隔离）...`,
       },
       {
         id: `mbp-hint-${Date.now()}`,
@@ -889,6 +939,7 @@ export function useExecutionController({
         timeSliceMs: settings.timeSliceMs,
         stepDelayMs: SPEED_DELAY_MS[settings.executionSpeed],
         mockInputs: simStateRef.current,
+        precompiledByHandleId,
       },
       {
         onHandleLog: (hdl, level, message, line) => {
@@ -916,16 +967,19 @@ export function useExecutionController({
     );
 
     const totalMs = Math.max(1, Math.round(performance.now() - t0));
-    runningHandleIdRef.current = null;
-    lastExecutingRef.current = null;
-    setRunningHandleIds([]);
     setLastDurationMs(totalMs);
-    setMultiHandleRunning(false);
-    setHandleTelemetries({});
     appendLog(
       'system',
       `多句柄并发仿真已全部退出（累计耗时 ${totalMs}ms）。`,
     );
+    } finally {
+      runningHandleIdRef.current = null;
+      lastExecutingRef.current = null;
+      setRunningHandleIds([]);
+      setMultiHandleRunning(false);
+      setHandleTelemetries({});
+      launchingRef.current = false;
+    }
   }, [
     activePage,
     navigateTo,

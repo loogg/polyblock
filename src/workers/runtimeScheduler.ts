@@ -95,7 +95,7 @@ export class WorkerRuntimeScheduler {
 
   constructor(config: RuntimeSchedulerConfig) {
     this.runId = config.runId;
-    this.timerCount = Math.max(1, Math.min(32, Math.trunc(config.timerCount || 8)));
+    this.timerCount = Math.max(1, Math.min(64, Math.trunc(config.timerCount || 8)));
     this.timeSliceMs = this.clampTimeSlice(config.timeSliceMs ?? 20);
     this.callbackTimeoutMs = Math.max(
       500,
@@ -149,10 +149,6 @@ export class WorkerRuntimeScheduler {
 
   getTimeSliceMs(): number {
     return this.timeSliceMs;
-  }
-
-  getCallbackTimeoutMs(): number {
-    return this.callbackTimeoutMs;
   }
 
   /**
@@ -215,10 +211,6 @@ export class WorkerRuntimeScheduler {
 
   isInCallback(): boolean {
     return this.activeCallbackName !== null;
-  }
-
-  getActiveCallbackName(): string {
-    return this.activeCallbackName ?? '';
   }
 
   isCallbackTimedOut(): boolean {
@@ -289,10 +281,6 @@ export class WorkerRuntimeScheduler {
     this.resolveAsyncSliceDone();
     this.wake();
     this.emitTelemetry(true);
-  }
-
-  getStartCoState(): StartCoroutineState {
-    return this.coState;
   }
 
   // --- Explicit-async coroutine single-slice mutual-exclusion handshake ---
@@ -550,7 +538,7 @@ export class WorkerRuntimeScheduler {
   /**
    * Waits cooperatively for the next scheduled event or `on_start` coroutine slice.
    * Returns compact primitive tokens:
-   *   "start_resume" | "run" | "timer:<id>" | "button:<A|B>:<1|0>" | "event:<json>" | "stop" | "done"
+   *   "start_resume" | "run" | "timer:<id>" | "event:<json>" | "stop" | "done"
    */
   async nextEvent(): Promise<string> {
     while (true) {

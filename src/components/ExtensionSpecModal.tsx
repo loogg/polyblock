@@ -125,7 +125,7 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                     <td><code>imports</code></td>
                     <td>可选</td>
                     <td>
-                      包级默认顶部导入（<code>{`{ lua: [...], python: [...] }`}</code>），普通/表达式积木自动继承并在文件顶部<strong>按内容全局去重</strong>。纯语法包不填。
+                      包级默认顶部导入（按目标语言 ID 映射，如 <code>{`{ lua: [...], python: [...], js: [...] }`}</code>），普通/表达式积木自动继承并在文件顶部<strong>按内容全局去重</strong>。纯语法包不填。
                     </td>
                   </tr>
                   <tr>
@@ -159,7 +159,7 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
               <div className="spec-tip-box">
                 <div>
                   <strong>唯一查找顺序：</strong>
-                  <code>1. 当前句柄脚本</code> &gt; <code>2. 项目内嵌包</code> &gt; <code>3. 全局扩展包（预装 rt/board 与用户包平级）</code>。项目内嵌包可用任意包 ID（含 <code>rt</code>）在本项目内无条件覆盖全局包。
+                  <code>1. 当前句柄脚本</code> &gt; <code>2. 项目私有/锁定扩展包</code> &gt; <code>3. 全局扩展包（所有包完全平权）</code>。项目私有/锁定包可用任意包 ID 在本项目内优先覆盖全局包且不污染全局库。
                 </div>
                 <div style={{ marginTop: 4 }}>
                   <strong>交付属性解耦：</strong>
@@ -262,7 +262,7 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                   </tr>
                   <tr>
                     <td><code>"hat"</code></td>
-                    <td><strong>事件回调帽块</strong>（圆顶 + C 型包裹体）：生成顶层零闭包 <code>function on_xxx(...)</code>。</td>
+                    <td><strong>事件回调帽块</strong>（圆顶 + C 型包裹体）：生成顶层零闭包事件回调函数（如 <code>on_xxx</code>）。</td>
                     <td><code>on_run</code>、<code>on_timer</code>、<code>on_button</code></td>
                   </tr>
                 </tbody>
@@ -284,7 +284,7 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                   <tr>
                     <td><code>code</code></td>
                     <td>
-                      按语言映射的代码生成模板对象 <code>{`{ lua?: { template, imports? }, python?: { template, imports? }, ... }`}</code>，<strong>至少提供一种目标语言即可</strong>（支持单语言扩展包；切到未提供模板的语言时校验面板会自动报 Error）。占位符修饰器统一语言中立：<code>:json</code>、<code>:int</code>、<code>:bool</code>、<code>:edge:&lt;param&gt;</code>、<code>:edge_zh</code>、<code>:channel_label</code>、<code>:channel_comment</code>（由当前目标语言方言自动展开）。不写 <code>imports</code> 时自动继承包顶层 <code>imports</code>，写 <code>[]</code> 可显式取消导入。
+                      按语言映射的代码生成模板对象 <code>{`{ lua?: { template, imports? }, python?: { template, imports? }, js?: { template, imports? }, ... }`}</code>，<strong>至少提供一种目标语言即可</strong>（支持单语言扩展包；切到未提供模板的语言时校验面板会自动报 Error）。占位符修饰器统一语言中立：<code>:json</code>、<code>:int</code>、<code>:bool</code>、<code>:edge:&lt;param&gt;</code>、<code>:edge_zh</code>、<code>:channel_label</code>、<code>:channel_comment</code>（由当前目标语言方言自动展开）。不写 <code>imports</code> 时自动继承包顶层 <code>imports</code>，写 <code>[]</code> 可显式取消导入。
                     </td>
                   </tr>
                   <tr>
@@ -406,7 +406,7 @@ export function ExtensionSpecModal({ onClose }: ExtensionSpecModalProps) {
                   <code>poly-pack</code>（整包）、<code>poly-section</code>（新组件）、<code>poly-block-stmt</code>（语句块）、<code>poly-block-val</code>（表达式块）、<code>poly-block-hat</code>（事件帽块）、<code>poly-pool</code>（通道池）、<code>poly-widget</code>（模拟控件）、<code>poly-lib</code>（脚本库模块）。
                 </div>
                 <div style={{ marginTop: 6 }}>
-                  3. 完整图文规范同步保存在仓库 <code>docs/extension-pack-spec.md</code>。
+                  3. 完整图文规范同步保存在仓库 <code>docs/specs/extension-pack-spec.md</code>。
                 </div>
               </div>
             </div>

@@ -127,10 +127,3 @@ export function buildZipBytes(entries: ZipEntryInput[]): Uint8Array {
   out.set(eocd, pos);
   return out;
 }
-
-export function buildZipBlob(entries: ZipEntryInput[]): Blob {
-  const bytes = buildZipBytes(entries);
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  return new Blob([copy.buffer], { type: 'application/zip' });
-}

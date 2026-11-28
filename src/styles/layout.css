@@ -110,6 +110,8 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: min(380px, 65vh);
+  overflow-y: auto;
 }
 
 .dropdown-section-label {
@@ -190,6 +192,11 @@
 .dropdown-rename-input:focus-visible {
   border-color: var(--accent);
   box-shadow: 0 0 0 2.5px var(--accent-soft);
+}
+
+.dropdown-rename-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ============================================================================
@@ -364,6 +371,11 @@
   color: var(--danger);
 }
 
+.script-tab-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .script-add-btn {
   width: 26px;
   height: 26px;
@@ -380,6 +392,11 @@
   background: var(--bg-chrome);
   color: var(--accent-text);
   border: 1px solid var(--border);
+}
+
+.script-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .dirty-dot {
@@ -586,8 +603,13 @@
   white-space: nowrap;
 }
 
-.seg-btn:hover {
+.seg-btn:hover:not(:disabled) {
   color: var(--text-primary);
+}
+
+.seg-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .seg-btn.active {
@@ -681,8 +703,13 @@
   white-space: nowrap;
 }
 
-.btn-pause:hover {
+.btn-pause:hover:not(:disabled) {
   filter: brightness(1.05);
+}
+
+.btn-pause:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 
@@ -723,9 +750,14 @@
   white-space: nowrap;
 }
 
-.btn-ghost:hover {
+.btn-ghost:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.btn-ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .btn-ghost.active {
@@ -748,8 +780,13 @@
   white-space: nowrap;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
+}
+
+.btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* ============================================================================
@@ -871,17 +908,27 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 0 12px;
   background: var(--bg-chrome);
   border-top: 1px solid var(--border);
   font-size: 11px;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .status-group {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.status-group > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .status-dot {
@@ -1252,7 +1299,7 @@
     max-width: 165px;
     padding: 0 7px;
   }
-  .btn-ghost span {
+  .app-topbar .btn-ghost span {
     display: none;
   }
 }

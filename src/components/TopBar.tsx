@@ -25,6 +25,7 @@ import { useEffect, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
 import { countProjectScripts } from '../core/projects/store';
 import { runnerManager } from '../core/runners/manager';
+import { useLanguagePluginsRevision } from '../hooks/useLanguagePlugins';
 import type { RunnerStatus } from '../core/runners/types';
 import type {
   ExecutionSpeedId,
@@ -53,6 +54,7 @@ interface TopBarProps {
   onRenameCurrentProject: (nextName: string) => void;
   onOpenProjectSettings: () => void;
   onSaveProjectFile: () => void;
+  onSaveProjectArchive: () => void;
   onOpenProjectsPage: () => void;
   onSelectLanguage: (lang: ScriptLanguageId) => void;
   onSelectSpeed: (speed: ExecutionSpeedId) => void;
@@ -89,6 +91,7 @@ export function TopBar({
   onRenameCurrentProject,
   onOpenProjectSettings,
   onSaveProjectFile,
+  onSaveProjectArchive,
   onOpenProjectsPage,
   onSelectLanguage,
   onSelectSpeed,
@@ -113,12 +116,13 @@ export function TopBar({
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
 
+  useLanguagePluginsRevision();
   const backends = backendRegistry.list();
   const activeBackend = backendRegistry.get(activeProject.language);
   const hasSandboxRunner = runnerManager.hasRunnerForLanguage(
     activeProject.language,
   );
-  const noSandboxTooltip = '当前语言仅支持代码生成与导出，暂无内置沙箱';
+  const noSandboxTooltip = '当前语言仅支持代码生成与导出，无浏览器沙箱';
   const isRunning = runnerStatus === 'running';
   const isPaused = runnerStatus === 'paused';
   const activeFileName = `${activeScriptName}.${activeBackend.extension}`;
@@ -301,11 +305,23 @@ export function TopBar({
                 className="dropdown-item"
                 onClick={() => {
                   setProjectMenuOpen(false);
+                  onSaveProjectArchive();
+                }}
+              >
+                <FolderArchive size={13} />
+                <span>导出完整工程包 (.polyblock.zip)</span>
+              </button>
+
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => {
+                  setProjectMenuOpen(false);
                   onSaveProjectFile();
                 }}
               >
                 <Save size={13} />
-                <span>保存整项目工程 (.polyblock.json)</span>
+                <span>导出纯工程文件 (.polyblock.json)</span>
               </button>
 
               <div className="dropdown-divider" />
@@ -508,8 +524,8 @@ export function TopBar({
             className="btn-outline"
             onClick={() => setExportMenuOpen((v) => !v)}
             aria-expanded={exportMenuOpen}
-            aria-label="导出脚本或真机部署包"
-            title="导出单脚本、当前句柄真机包 (.zip) 或整工程部署包 (.zip)"
+            aria-label="导出部署代码或工程源文件"
+            title="导出真机部署代码（当前语言）或 PolyBlock 工程归档"
           >
             <Download size={14} />
             <span>导出</span>
@@ -519,9 +535,11 @@ export function TopBar({
           {exportMenuOpen && (
             <div
               className="dropdown-menu export-dropdown-menu"
-              style={{ right: 0, left: 'auto', minWidth: 268 }}
+              style={{ right: 0, left: 'auto', minWidth: 288 }}
             >
-              <div className="dropdown-section-label">目标代码与真机部署包</div>
+              <div className="dropdown-section-label">
+                真机部署代码（仅 {backendRegistry.getDialect(activeProject.language).displayName}）
+              </div>
               <button
                 type="button"
                 className="dropdown-item"
@@ -533,7 +551,7 @@ export function TopBar({
                 <FileCode2 size={13} style={{ flexShrink: 0 }} />
                 <div className="export-item-col">
                   <span>导出当前脚本 ({activeFileName})</span>
-                  <small>仅导出当前标签页干净源码</small>
+                  <small>仅当前标签页纯净源码</small>
                 </div>
               </button>
               <button
@@ -546,7 +564,7 @@ export function TopBar({
               >
                 <Package size={13} style={{ flexShrink: 0, color: 'var(--accent)' }} />
                 <div className="export-item-col">
-                  <span>打包导出当前句柄 (.zip)</span>
+                  <span>导出当前句柄部署包 (.zip)</span>
                   <small>
                     [{activeHandleName}] 扁平根目录脚本 + 真实 libs[] + manifest（剥离假桩）
                   </small>
@@ -560,12 +578,47 @@ export function TopBar({
                   onExportProjectBundle();
                 }}
               >
-                <FolderArchive size={13} style={{ flexShrink: 0, color: '#10b981' }} />
+                <Package size={13} style={{ flexShrink: 0, color: '#10b981' }} />
                 <div className="export-item-col">
-                  <span>打包导出整工程 (.zip)</span>
+                  <span>导出全部句柄部署包 (.zip)</span>
                   <small>
-                    全部 {activeProject.handles.length} 句柄分目录 + 共享 libs/ + manifest
+                    全部 {activeProject.handles.length} 句柄分目录脚本 + 共享 libs/（剥离假桩）
                   </small>
+                </div>
+              </button>
+
+              <div className="dropdown-divider" />
+              <div className="dropdown-section-label">
+                PolyBlock 工程归档（可重新导入编辑）
+              </div>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  onSaveProjectArchive();
+                }}
+              >
+                <FolderArchive size={13} style={{ flexShrink: 0, color: 'var(--accent)' }} />
+                <div className="export-item-col">
+                  <span>导出完整工程包 (.polyblock.zip)</span>
+                  <small>
+                    project.polyblock.json + 全部依赖扩展包与板型（开箱即用、版本锁定）
+                  </small>
+                </div>
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  onSaveProjectFile();
+                }}
+              >
+                <Save size={13} style={{ flexShrink: 0 }} />
+                <div className="export-item-col">
+                  <span>导出纯工程文件 (.polyblock.json)</span>
+                  <small>仅积木画布与包/板型 ID 引用，轻量零内嵌</small>
                 </div>
               </button>
             </div>

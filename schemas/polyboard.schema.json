@@ -22,7 +22,7 @@
     "id": {
       "type": "string",
       "pattern": "^[a-zA-Z0-9_-]{2,48}$",
-      "description": "板型规格唯一 ID（2~48 位字母、数字、横线或下划线；不可与内置板型冲突）。"
+      "description": "板型规格唯一 ID（2~48 位字母、数字、横线或下划线）。所有板型规格完全平权，同 ID 导入可覆盖升级。"
     },
     "name": {
       "type": "string",
@@ -38,7 +38,7 @@
       "pattern": "^[a-z][a-z0-9_-]{0,23}$",
       "default": "lua",
       "examples": ["lua", "python", "js"],
-      "description": "新建或应用此板型时的默认目标脚本语言 ID（内置 lua、python、js 及未来扩展语言；未识别时回退至默认语言）。"
+      "description": "新建或应用此板型时的默认目标脚本语言 ID（任意已注册的默认或插件语言 ID，如 lua、python、js；未识别时回退至默认语言）。"
     },
     "maxHandles": {
       "type": "integer",

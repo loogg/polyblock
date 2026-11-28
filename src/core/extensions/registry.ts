@@ -15,7 +15,7 @@ import {
   isCurrentHandleScriptEntry,
 } from '../blocks/workspaceContextBridge';
 import { hasCapability } from '../capabilities/matching';
-import { DEFAULT_EXTENSION_PACKS } from './builtinPacks';
+import { DEFAULT_EXTENSION_PACKS } from './defaultPacks';
 import {
   DEFAULT_PACK_TOOLBOX_ORDER,
   findSectionForBlockType,
@@ -28,7 +28,6 @@ import type {
   CoreCategoryTarget,
   ExtensionBlockDef,
   ExtensionHatSpec,
-  ExtensionModuleSource,
   PackAttributeBadge,
   PolyExtensionPack,
   ResolvedHandleChannelPoolSpec,
@@ -329,6 +328,153 @@ export function derivePackBadges(pack: PolyExtensionPack): PackAttributeBadge[] 
   return badges;
 }
 
+export type BlockMessageSegment =
+  | { kind: 'text'; text: string }
+  | { kind: 'arg'; label: string; index: number };
+
+function cleanDropdownOptionLabel(raw: string): string {
+  return raw
+    .replace(/\s*[（(][A-Za-z0-9_/\s+-]+[)）]\s*/g, '')
+    .trim();
+}
+
+function resolveBlockArgPreviewLabel(
+  block: ExtensionBlockDef,
+  argIndex1Based: number,
+  section?: ResolvedPackSection,
+  prevText = '',
+): string {
+  const arg = block.args0?.[argIndex1Based - 1];
+  if (!arg || typeof arg !== 'object') return '参数';
+  const argType = typeof arg.type === 'string' ? arg.type : '';
+  const argName = typeof arg.name === 'string' ? arg.name : '';
+
+  if (argType === 'field_dropdown' && Array.isArray(arg.options)) {
+    const rawLabels = (arg.options as unknown[])
+      .map((opt) => (Array.isArray(opt) && typeof opt[0] === 'string' ? opt[0] : ''))
+      .map(cleanDropdownOptionLabel)
+      .filter(Boolean);
+    if (rawLabels.length > 0) {
+      // Deduplicate repeated prefix already spoken right before the slot (e.g. "按键 " + "按键 A" -> "A")
+      const tailWord = prevText.trim().split(/\s+/).pop() ?? '';
+      const labels =
+        tailWord.length >= 2 && rawLabels.every((l) => l.startsWith(tailWord))
+          ? rawLabels.map((l) => l.slice(tailWord.length).trim() || l)
+          : rawLabels;
+      if (labels.length === 1) return labels[0];
+      if (labels.length === 2) return `${labels[0]}/${labels[1]}`;
+      return `${labels[0]}/${labels[1]}…`;
+    }
+    return '选项';
+  }
+
+  if (argType === 'field_channel_id') {
+    const prefix = section?.channelPool?.prefix;
+    return prefix ? `${prefix}0` : '通道';
+  }
+
+  if (argType === 'field_checkbox') return '开/关';
+  if (argType === 'field_number') {
+    return arg.value !== undefined ? String(arg.value) : '数值';
+  }
+  if (argType === 'field_variable') {
+    return typeof arg.variable === 'string' && arg.variable.trim()
+      ? arg.variable.trim()
+      : '变量';
+  }
+  if (argType === 'field_input') {
+    const t = typeof arg.text === 'string' ? arg.text.trim() : '';
+    return t && t.length <= 6 ? t : '文本';
+  }
+
+  if (argType === 'input_value') {
+    const shadow = argName ? block.shadows?.[argName] : undefined;
+    if (shadow) {
+      if (shadow.type === 'math_number') {
+        return shadow.value !== undefined ? String(shadow.value) : '数值';
+      }
+      if (shadow.type === 'text') {
+        const s = typeof shadow.value === 'string' ? shadow.value.trim() : '';
+        return s && s.length <= 6 && !/\s/.test(s) ? s : '文本';
+      }
+    }
+    if (argName && !/^(ARG\d*|VAL|VALUE|INPUT\d*)$/i.test(argName) && argName.length <= 8) {
+      return argName.toLowerCase();
+    }
+    return '参数';
+  }
+
+  return '参数';
+}
+
+/**
+ * Parses a Blockly `message0` template into human-readable display segments:
+ * - Unescapes Blockly literal `%%` -> `%`
+ * - Resolves `%1`, `%2`, ... placeholders into meaningful parameter previews derived
+ *   declaratively from `args0`, `shadows`, and `section.channelPool` (zero empty boxes).
+ */
+export function parseExtensionBlockMessage(
+  block: ExtensionBlockDef,
+  section?: ResolvedPackSection,
+): BlockMessageSegment[] {
+  const message0 = block.message0;
+  const segments: BlockMessageSegment[] = [];
+  const tokenRe = /%%|%(\d+)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  const pushText = (chunk: string) => {
+    if (!chunk) return;
+    const prev = segments[segments.length - 1];
+    if (prev && prev.kind === 'text') {
+      prev.text += chunk;
+    } else {
+      segments.push({ kind: 'text', text: chunk });
+    }
+  };
+
+  while ((match = tokenRe.exec(message0)) !== null) {
+    if (match.index > lastIndex) {
+      pushText(message0.slice(lastIndex, match.index));
+    }
+    if (match[0] === '%%') {
+      pushText('%');
+    } else {
+      const argIdx = Number(match[1]);
+      const prevSeg = segments[segments.length - 1];
+      const prevText = prevSeg && prevSeg.kind === 'text' ? prevSeg.text : '';
+      const label = resolveBlockArgPreviewLabel(block, argIdx, section, prevText);
+      segments.push({ kind: 'arg', label, index: argIdx });
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < message0.length) {
+    pushText(message0.slice(lastIndex));
+  }
+
+  return segments
+    .map((seg) =>
+      seg.kind === 'text' ? { kind: 'text' as const, text: seg.text.trim() } : seg,
+    )
+    .filter((seg) => seg.kind === 'arg' || seg.text.length > 0);
+}
+
+/**
+ * Formats a Blockly extension block into a clean, self-explanatory plain-text label
+ * for diagnostics and tooltips (e.g. `设置板载 LED 点亮/熄灭`, `启动/停止 周期运行`).
+ */
+export function formatExtensionBlockLabel(
+  block: ExtensionBlockDef,
+  section?: ResolvedPackSection,
+): string {
+  return parseExtensionBlockMessage(block, section)
+    .map((seg) => (seg.kind === 'text' ? seg.text : seg.label))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Tracks the last registered Blockly visual definition fingerprint per block type to avoid redundant overwrites. */
 const registeredBlockVisualFingerprints = new Map<string, string>();
 
@@ -470,7 +616,7 @@ function registerSingleBlockInBlockly(
               prefix: pool?.prefix ?? 'CH',
               label: pool?.label ?? '通道',
               defaultCount: pool?.defaultCount ?? DEFAULT_CHANNEL_COUNT,
-              maxCount: pool?.max ?? 32,
+              maxCount: pool?.max ?? 64,
             }),
             argName,
           );
@@ -498,6 +644,21 @@ function registerSingleBlockInBlockly(
         } else if (argType === 'field_input') {
           ensureDummy().appendField(
             new Blockly.FieldTextInput(String(arg.text ?? '')),
+            argName,
+          );
+        } else if (argType === 'field_checkbox') {
+          ensureDummy().appendField(
+            new Blockly.FieldCheckbox(Boolean(arg.checked)),
+            argName,
+          );
+        } else if (argType === 'field_variable') {
+          ensureDummy().appendField(
+            new Blockly.FieldVariable(String(arg.variable ?? 'item')),
+            argName,
+          );
+        } else if (argType === 'field_label') {
+          ensureDummy().appendField(
+            new Blockly.FieldLabel(String(arg.text ?? '')),
             argName,
           );
         }
@@ -618,6 +779,16 @@ class ExtensionRegistry {
   private readonly attachedBackends = new Map<ScriptLanguageId, ScriptBackendAdapter>();
   private initialized = false;
 
+  constructor() {
+    backendRegistry.onAdapterLifecycle((ev) => {
+      if (ev.kind === 'attached') {
+        this.attachBackend(ev.adapter);
+      } else {
+        this.detachBackend(ev.id);
+      }
+    });
+  }
+
   /**
    * Attaches a `ScriptBackendAdapter` so all currently active packs (and any future packs)
    * automatically register their declarative blocks and hats into that backend.
@@ -636,6 +807,23 @@ class ExtensionRegistry {
     for (const localPack of this.activeLocalPacks.values()) {
       registerPackIntoBackend(localPack, adapter);
     }
+  }
+
+  detachBackend(id: ScriptLanguageId): void {
+    this.attachedBackends.delete(id);
+  }
+
+  /** Lists all global packs merged with active project-local overrides (local shadows global by ID). */
+  listAllWithLocal(): PolyExtensionPack[] {
+    this.ensureInitialized();
+    const merged = new Map<string, PolyExtensionPack>();
+    for (const [id, pack] of this.packs.entries()) {
+      merged.set(id, pack);
+    }
+    for (const [id, pack] of this.activeLocalPacks.entries()) {
+      merged.set(id, pack);
+    }
+    return Array.from(merged.values());
   }
 
   ensureInitialized(): void {
@@ -680,8 +868,7 @@ class ExtensionRegistry {
   /**
    * Returns true if `pack` is byte-identical to an unmodified default seed pack in `src/packs/`.
    * Pure content equality (zero privileged built-in identity): used only to skip redundant
-   * `localStorage` copies and keep exported `.polyblock.json` concise while snapshotting any
-   * user-added or user-modified global pack deterministically.
+   * `localStorage` diff copies for unchanged default seed packs.
    */
   isSameAsDefault(pack: PolyExtensionPack): boolean {
     const defaultJson = DEFAULT_PACK_JSON_BY_ID.get(pack.id);
@@ -715,6 +902,13 @@ class ExtensionRegistry {
    */
   setActiveProjectLocalPacks(localPacks: PolyExtensionPack[] = []): void {
     this.ensureInitialized();
+    const prevList = Array.from(this.activeLocalPacks.values());
+    if (
+      prevList.length === localPacks.length &&
+      prevList.every((p, idx) => p === localPacks[idx])
+    ) {
+      return;
+    }
     const prevOverriddenIds = Array.from(this.activeLocalPacks.keys());
     const nextLocalIds = new Set(localPacks.map((p) => p.id));
     this.activeLocalPacks.clear();
@@ -736,6 +930,31 @@ class ExtensionRegistry {
         rawPack,
         this.attachedBackends.values(),
       );
+    }
+  }
+
+  /**
+   * Executes `fn` with `localPacks` temporarily active as the project-local override scope,
+   * unconditionally restoring the previous scope in `finally` (safe for non-active project export/compile).
+   */
+  withLocalPacks<T>(
+    localPacks: PolyExtensionPack[] | undefined,
+    fn: () => T,
+  ): T {
+    this.ensureInitialized();
+    const prev = Array.from(this.activeLocalPacks.values());
+    const next = localPacks ?? [];
+    const sameOrderAndRefs =
+      prev.length === next.length &&
+      prev.every((p, idx) => p === next[idx]);
+    if (sameOrderAndRefs) {
+      return fn();
+    }
+    this.setActiveProjectLocalPacks(next);
+    try {
+      return fn();
+    } finally {
+      this.setActiveProjectLocalPacks(prev);
     }
   }
 
@@ -840,7 +1059,9 @@ class ExtensionRegistry {
     this.ensureInitialized();
     const searchPacks = [
       ...this.activeLocalPacks.values(),
-      ...this.packs.values(),
+      ...Array.from(this.packs.values()).filter(
+        (p) => !this.activeLocalPacks.has(p.id),
+      ),
     ];
     for (const pack of searchPacks) {
       for (const sec of resolvePackSections(pack)) {
@@ -851,22 +1072,6 @@ class ExtensionRegistry {
       }
     }
     return undefined;
-  }
-
-  findPackForBlockType(blockType: string): PolyExtensionPack | undefined {
-    return this.findOwnerForBlockType(blockType)?.pack;
-  }
-
-  getBlockDef(
-    blockType: string,
-  ):
-    | {
-        pack: PolyExtensionPack;
-        section: ResolvedPackSection;
-        block: ExtensionBlockDef;
-      }
-    | undefined {
-    return this.findOwnerForBlockType(blockType);
   }
 
   getHatBlockDef(
@@ -1085,35 +1290,6 @@ class ExtensionRegistry {
     )) {
       if (section.visible && section.categoryTarget === coreCategoryId) {
         out.push(...buildToolboxBlocksForSection(pack, section));
-      }
-    }
-    return out;
-  }
-
-  getSandboxMocks(
-    enabledIds: string[],
-    localPacks?: PolyExtensionPack[],
-  ): ExtensionModuleSource[] {
-    const out: ExtensionModuleSource[] = [];
-    for (const p of this.getEnabledPacks(enabledIds, localPacks)) {
-      if (p.sandboxMock) {
-        out.push({ ...p.sandboxMock, packId: p.id });
-      }
-      for (const lib of p.libs ?? []) {
-        out.push({ ...lib, packId: p.id });
-      }
-    }
-    return out;
-  }
-
-  getBundleModules(
-    enabledIds: string[],
-    localPacks?: PolyExtensionPack[],
-  ): ExtensionModuleSource[] {
-    const out: ExtensionModuleSource[] = [];
-    for (const p of this.getEnabledPacks(enabledIds, localPacks)) {
-      for (const lib of p.libs ?? []) {
-        out.push({ ...lib, packId: p.id });
       }
     }
     return out;

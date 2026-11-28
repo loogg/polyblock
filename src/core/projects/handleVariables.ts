@@ -3,6 +3,7 @@ import type {
   VariableInitialValue,
 } from '../../types/project';
 import { backendRegistry } from '../backends/registry';
+import { extensionRegistry } from '../extensions/registry';
 
 export type VariableScopeKind = 'shared' | 'file';
 
@@ -45,41 +46,29 @@ export function normalizeVariableInitialValue(
   }
 }
 
-export function describeInitialValue(init?: VariableInitialValue | null): string {
-  const v = normalizeVariableInitialValue(init);
-  switch (v.kind) {
-    case 'number':
-      return `数字 ${v.value}`;
-    case 'boolean':
-      return v.value ? '布尔 true' : '布尔 false';
-    case 'string':
-      return `文本 ${JSON.stringify(v.value)}`;
-    case 'list':
-      return '空列表 []';
-    case 'dict':
-      return '空字典 {}';
-    default:
-      return '空值 nil / None / null';
-  }
-}
-
 interface SerializedVarEntry {
   id: string;
   name: string;
   type?: string;
 }
 
-const RESERVED_RUNTIME_MODULES = new Set([
-  // PolyBlock runtime modules
+const EXTRA_RESERVED_MODULE_IDENTS = new Set([
   'shared',
-  'rt',
-  'sys',
+  'module',
+  'exports',
+  'require',
 ]);
 
 function isReservedVarName(name: string): boolean {
-  if (RESERVED_RUNTIME_MODULES.has(name)) return true;
+  if (EXTRA_RESERVED_MODULE_IDENTS.has(name)) return true;
   for (const dialect of backendRegistry.listDialects()) {
     if (dialect.keywords.includes(name)) return true;
+  }
+  for (const pack of extensionRegistry.listAllWithLocal()) {
+    if (pack.sandboxMock?.moduleName === name) return true;
+    for (const lib of pack.libs ?? []) {
+      if (lib.moduleName === name) return true;
+    }
   }
   return false;
 }
@@ -92,12 +81,12 @@ export function validateSharedVariableName(
 ): { valid: true; trimmed: string } | { valid: false; error: string } {
   const trimmed = rawName.trim();
   if (!trimmed) {
-    return { valid: false, error: '请输入变量名称' };
+    return { valid: false, error: `请输入${scopeLabel}名称` };
   }
   if (/^[0-9]/.test(trimmed)) {
     return {
       valid: false,
-      error: '变量名不能以数字开头，请使用字母、下划线或中文（如 count、步数）',
+      error: `${scopeLabel}名不能以数字开头，请使用字母、下划线或中文（如 count、步数）`,
     };
   }
   if (!/^[A-Za-z_\u4e00-\u9fff][A-Za-z0-9_\u4e00-\u9fff]*$/.test(trimmed)) {

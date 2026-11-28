@@ -7,7 +7,7 @@ import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { buildHandleSharedModule } from '../backends/sharedModule';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
-import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../extensions/builtinPacks';
+import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../extensions/defaultPacks';
 import { extensionRegistry } from '../extensions/registry';
 import {
   getAllHandleChannelPoolConfigs,
@@ -21,7 +21,7 @@ import {
   setActiveHandleSharedVariables,
 } from '../blocks/workspaceContextBridge';
 import { WorkerDebugSession } from '../../workers/debugSession';
-import { runJsInSandbox } from '../../workers/jsSandboxCore';
+import { runJsInSandbox } from '../../plugins/languages/js/jsSandboxCore';
 import { WorkerRuntimeScheduler } from '../../workers/runtimeScheduler';
 import type { ExtensionModuleSource } from '../extensions/types';
 
@@ -174,7 +174,6 @@ async function runLuaDebugInWasmoon(
     lua.global.set('__poly_step_start', (bid: string, vars: string) =>
       session.onStep(String(bid), vars, true),
     );
-    lua.global.set('__poly_sleep', (ms: number) => session.onSleep(ms));
     lua.global.set('__poly_final_snap', (vars: string) =>
       session.setFinalVars(vars),
     );
@@ -330,12 +329,6 @@ async function getSharedTestMicroPython() {
           activePySession
             ? activePySession.onStep(String(bid), vars, true)
             : Promise.resolve(),
-        sleep: (ms: number) => {
-          if (activePyScheduler?.isInCallback()) {
-            throw new Error('禁止在事件回调中调用等待 (sleep)');
-          }
-          return activePySession ? activePySession.onSleep(ms) : Promise.resolve();
-        },
         final_snap: (vars: string) => activePySession?.setFinalVars(vars),
         sim_set: () => {},
         sim_get: (k: unknown) => (k === 'temp' ? 28 : false),
@@ -2549,7 +2542,6 @@ sys.modules["board"] = _m
             handleScripts: handleMetas,
             currentScriptId: scr.id,
             sharedVariables: sharedVars,
-            sharedVarInitials: hdl.variableInitialValues,
             scriptVarInitials: scr.variableInitialValues,
             sharedFunctions: sharedFns,
           });
@@ -2583,7 +2575,6 @@ sys.modules["board"] = _m
       handleScripts: oneshotMeta,
       currentScriptId: oneshotHandle.scripts[0].id,
       sharedVariables: oneshotHandle.sharedVariables ?? [],
-      sharedVarInitials: oneshotHandle.variableInitialValues,
       scriptVarInitials: oneshotHandle.scripts[0].variableInitialValues,
       sharedFunctions: oneshotHandle.sharedFunctions ?? [],
     });
@@ -2613,7 +2604,6 @@ sys.modules["board"] = _m
       handleScripts: boardMeta,
       currentScriptId: mainScript.id,
       sharedVariables: boardHandle.sharedVariables ?? [],
-      sharedVarInitials: boardHandle.variableInitialValues,
       scriptVarInitials: mainScript.variableInitialValues,
       sharedFunctions: boardHandle.sharedFunctions ?? [],
     });
@@ -2627,7 +2617,6 @@ sys.modules["board"] = _m
       handleScripts: boardMeta,
       currentScriptId: timersScript.id,
       sharedVariables: boardHandle.sharedVariables ?? [],
-      sharedVarInitials: boardHandle.variableInitialValues,
       scriptVarInitials: timersScript.variableInitialValues,
       sharedFunctions: boardHandle.sharedFunctions ?? [],
     });

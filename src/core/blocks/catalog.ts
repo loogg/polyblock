@@ -467,7 +467,6 @@ export function isCoreBlockType(blockType: string): boolean {
       'text_append',
       'procedures_defnoreturn',
       'procedures_defreturn',
-      'procedures_defreturn_return',
       'procedures_callnoreturn',
       'procedures_callreturn',
       'procedures_ifreturn',

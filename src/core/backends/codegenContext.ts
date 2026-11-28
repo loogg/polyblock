@@ -21,6 +21,8 @@ export interface CodegenPassContext {
   globalVarIdents: string[];
   /** Sanitized identifiers of variables actively referenced by enabled blocks in the current workspace. */
   usedVarIdents: Set<string> | null;
+  /** Non-shared variable identifiers used ONLY as `for`-loop counters (kept function/block-local in Python & JS). */
+  loopOnlyVarIdents: Set<string>;
   /** Set of custom procedure raw names (private or shared) that transitively call `sleep_ms`. */
   asyncFnNames: Set<string>;
   /** Set to true during codegen whenever the compiled script references any shared variable or shared function. */
@@ -37,6 +39,7 @@ export interface CodegenPassContextOptions {
   sharedVarIdents?: Set<string>;
   globalVarIdents?: string[];
   usedVarIdents?: Set<string> | null;
+  loopOnlyVarIdents?: Set<string>;
   asyncFnNames?: Set<string>;
 }
 
@@ -49,6 +52,7 @@ export const codegenContext: CodegenPassContext = {
   sharedVarIdents: new Set<string>(),
   globalVarIdents: [],
   usedVarIdents: null,
+  loopOnlyVarIdents: new Set<string>(),
   asyncFnNames: new Set<string>(),
   usedSharedModule: false,
   hoistedLocalsByRoot: new Map<string, Set<string>>(),
@@ -64,6 +68,7 @@ export function resetCodegenPassContext(opts: CodegenPassContextOptions): void {
   codegenContext.globalVarIdents = opts.globalVarIdents ?? [];
   codegenContext.usedVarIdents =
     opts.usedVarIdents !== undefined ? opts.usedVarIdents : null;
+  codegenContext.loopOnlyVarIdents = new Set(opts.loopOnlyVarIdents ?? []);
   codegenContext.asyncFnNames = new Set(opts.asyncFnNames ?? []);
   codegenContext.usedSharedModule = false;
   codegenContext.hoistedLocalsByRoot = new Map<string, Set<string>>();
@@ -136,7 +141,7 @@ export function collectNestedPolyLocalIdents(
   return hoisted;
 }
 
-function isShadowedByProcedureParam(
+export function isShadowedByProcedureParam(
   varId: string,
   block?: Blockly.Block,
 ): boolean {
@@ -163,9 +168,36 @@ function isShadowedByProcedureParam(
   return false;
 }
 
+export const LOOP_SCOPED_FOR_TYPES = new Set([
+  'poly_for_range',
+  'controls_for',
+  'controls_forEach',
+]);
+
+export function isShadowedByEnclosingForLoop(
+  varId: string,
+  block?: Blockly.Block,
+): boolean {
+  if (!block) return false;
+  let prev: Blockly.Block = block;
+  let cur: Blockly.Block | null = block.getParent();
+  while (cur) {
+    if (
+      LOOP_SCOPED_FOR_TYPES.has(cur.type) &&
+      String(cur.getFieldValue('VAR') || '') === varId &&
+      cur.getInputWithBlock(prev)?.name === 'DO'
+    ) {
+      return true;
+    }
+    prev = cur;
+    cur = cur.getParent();
+  }
+  return false;
+}
+
 /**
  * Language-agnostic variable reference resolver under Style A1:
- * - Shadowed by enclosing procedure formal param -> bare local ident
+ * - Shadowed by enclosing procedure formal param (or loop-scoped `for` var when enabled) -> bare local ident
  * - Cross-file shared variable:
  *   - Inside `shared.<ext>` (`compilingSharedModule`): returns bare `<attr>` when
  *     `bareAttrInSharedModule` is true (e.g. Python module-level globals), or `<mod>.<attr>`
@@ -177,13 +209,20 @@ export function formatSharedVarRef(
   varId: string,
   generator: { getVariableName(id: string): string },
   block?: Blockly.Block,
-  opts?: { bareAttrInSharedModule?: boolean },
+  opts?: { bareAttrInSharedModule?: boolean; loopScopedForVars?: boolean },
 ): string {
   const sharedMod = codegenContext.sharedModuleName;
   const sharedAttr = sharedMod
     ? codegenContext.sharedVarIdToAttr.get(varId)
     : undefined;
-  if (sharedMod && sharedAttr && !isShadowedByProcedureParam(varId, block)) {
+  const shadowedByLoop =
+    Boolean(opts?.loopScopedForVars) && isShadowedByEnclosingForLoop(varId, block);
+  if (
+    sharedMod &&
+    sharedAttr &&
+    !shadowedByLoop &&
+    !isShadowedByProcedureParam(varId, block)
+  ) {
     if (codegenContext.compilingSharedModule) {
       return opts?.bareAttrInSharedModule
         ? sharedAttr

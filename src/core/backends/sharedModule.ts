@@ -113,6 +113,50 @@ function collectSharedProcBlocks(
   return out;
 }
 
+export interface HandleSharedSummary {
+  moduleName: string;
+  fileName: string;
+  varCount: number;
+  fnCount: number;
+}
+
+/**
+ * Pure metadata-only summary of a handle's `shared.<ext>` module (ZERO headless Blockly compilation).
+ * Used by UI components like `ProjectExplorer` during render.
+ */
+export function getHandleSharedSummary(
+  handle: RuntimeHandle,
+  language: ScriptLanguageId,
+): HandleSharedSummary | null {
+  const explicitVars = collectHandleSharedVariableNames(handle);
+  const explicitFns = (handle.sharedFunctions ?? [])
+    .map((n) => n.trim())
+    .filter(Boolean);
+  if (explicitVars.length === 0 && explicitFns.length === 0) {
+    return null;
+  }
+  const metas = buildHandleScriptsMeta(handle);
+  const sharedFnSet = new Set(explicitFns);
+  const foundFns = new Set<string>();
+  for (const m of metas) {
+    for (const fn of m.declaredFunctions ?? []) {
+      if (sharedFnSet.has(fn.name)) foundFns.add(fn.name);
+    }
+  }
+  if (explicitVars.length === 0 && foundFns.size === 0) {
+    return null;
+  }
+  const info = resolveHandleSharedInfo(metas, explicitVars, explicitFns);
+  const moduleName = info.moduleName || 'shared';
+  const ext = backendRegistry.getDialect(language).extension;
+  return {
+    moduleName,
+    fileName: `${moduleName}.${ext}`,
+    varCount: info.entries.length,
+    fnCount: foundFns.size,
+  };
+}
+
 /**
  * Language-agnostic Style A1 read-only `shared.<ext>` module orchestrator.
  * Builds a shared module whenever `sharedVariables.length > 0 || sharedFunctions.length > 0`
@@ -142,11 +186,14 @@ export function buildHandleSharedModule(
     .map((n) => n.trim())
     .filter(Boolean);
 
-  // Build transitive `usesSleep` map across ALL declared shared functions in the handle
+  // Build transitive `usesSleep` map strictly across declared shared functions in the handle
+  const explicitFnSet = new Set(explicitFns);
   const usesSleepMap = new Map<string, boolean>();
   for (const m of metas) {
     for (const fn of m.declaredFunctions ?? []) {
-      if (fn.usesSleep) usesSleepMap.set(fn.name, true);
+      if (fn.usesSleep && explicitFnSet.has(fn.name)) {
+        usesSleepMap.set(fn.name, true);
+      }
     }
   }
   const procSources = collectSharedProcBlocks(

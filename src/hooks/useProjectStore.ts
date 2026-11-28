@@ -23,7 +23,6 @@ import {
   setActiveHandleScripts,
   setActiveHandleSharedFunctions,
   setActiveHandleSharedVariables,
-  setActiveHandleSharedVarInitials,
   setActiveModuleConflicts,
   setActiveProjectCapabilities,
   setActiveScriptVarInitials,
@@ -34,6 +33,11 @@ import {
   buildSingleHandleTargetBundle,
   ModuleConflictExportError,
 } from '../core/export/bundleExporter';
+import {
+  buildProjectArchiveBundle,
+  buildPureProjectJson,
+  type ImportedProjectResult,
+} from '../core/export/projectArchive';
 import { resolveProjectModules } from '../core/extensions/moduleResolver';
 import { extensionRegistry } from '../core/extensions/registry';
 import {
@@ -48,7 +52,6 @@ import {
 import {
   addHandleToProject,
   addScriptToHandle,
-  buildExportableProjectJson,
   countProjectScripts,
   createDefaultWorkspaceStore,
   deleteHandleFromProject,
@@ -76,7 +79,6 @@ import {
 import type {
   ChannelPoolConfig,
   PageId,
-  ProjectModel,
   RuntimeHandle,
   ScriptLanguageId,
   WorkspaceStoreState,
@@ -142,10 +144,16 @@ export function useProjectStore({
   notify,
   dialogRefreshKey,
 }: UseProjectStoreOptions) {
-  const initialStoreRef = useRef<WorkspaceStoreState>(loadWorkspaceStore());
-  const [store, setStore] = useState<WorkspaceStoreState>(initialStoreRef.current);
+  const [store, setStore] = useState<WorkspaceStoreState>(loadWorkspaceStore);
   const [isDirty, setIsDirty] = useState<boolean>(false);
   const [viewingSharedModule, setViewingSharedModule] = useState<boolean>(false);
+  const [initialScriptWorkspace] = useState<Record<string, unknown>>(() => {
+    const initialHandle = getActiveHandle(getActiveProject(store));
+    return syncHandleVariablesIntoWorkspaceJson(
+      getActiveScript(initialHandle).workspace,
+      collectHandleSharedVariableNames(initialHandle),
+    );
+  });
 
   const activeProject = getActiveProject(store);
   const activeHandle = getActiveHandle(activeProject);
@@ -160,6 +168,7 @@ export function useProjectStore({
     debugCode: '',
     sourceMap: {},
     lineToBlock: {},
+    breakpointableLines: [],
     diagnostics: [],
     blockCount: 0,
     variableNames: [],
@@ -180,9 +189,26 @@ export function useProjectStore({
   languageRef.current = language;
   breakpointsRef.current = breakpoints;
 
+  // Debounced workspace persistence with immediate pagehide/beforeunload flush
   useEffect(() => {
-    saveWorkspaceStore(store);
+    const timer = window.setTimeout(() => {
+      saveWorkspaceStore(store);
+    }, 350);
+    return () => window.clearTimeout(timer);
   }, [store]);
+
+  useEffect(() => {
+    const flushOnUnload = () => {
+      saveWorkspaceStore(storeRef.current);
+    };
+    window.addEventListener('pagehide', flushOnUnload);
+    window.addEventListener('beforeunload', flushOnUnload);
+    return () => {
+      window.removeEventListener('pagehide', flushOnUnload);
+      window.removeEventListener('beforeunload', flushOnUnload);
+      saveWorkspaceStore(storeRef.current);
+    };
+  }, []);
 
   const regenerateFromWorkspace = useCallback(
     (ws: Blockly.WorkspaceSvg, lang: ScriptLanguageId) => {
@@ -246,7 +272,6 @@ export function useProjectStore({
       setActiveProjectCapabilities(nextProj.enabledCapabilities);
       const sharedVarNames = collectHandleSharedVariableNames(nextHandle);
       setActiveHandleSharedVariables(sharedVarNames);
-      setActiveHandleSharedVarInitials(nextHandle.variableInitialValues ?? {});
       setActiveScriptVarInitials(nextScript.variableInitialValues ?? {});
       setActiveHandleSharedFunctions(nextHandle.sharedFunctions ?? []);
       setActiveHandleScripts(buildHandleScriptsMeta(nextHandle), nextScript.id);
@@ -314,9 +339,6 @@ export function useProjectStore({
 
       if (nextSharedNames !== null && previewRes) {
         setActiveHandleSharedVariables(nextSharedNames);
-        setActiveHandleSharedVarInitials(
-          previewRes.handle.variableInitialValues ?? {},
-        );
         const nextActiveScr = previewRes.handle.scripts.find((s) => s.id === scrId);
         if (nextActiveScr) {
           setActiveScriptVarInitials(nextActiveScr.variableInitialValues ?? {});
@@ -503,9 +525,10 @@ export function useProjectStore({
   );
 
   const handleWorkspaceChange = useCallback(
-    (ws: Blockly.WorkspaceSvg) => {
+    (ws: Blockly.WorkspaceSvg, isInitial = false) => {
       if (executionBridgeRef.current.isExecutionActive()) return;
       regenerateFromWorkspace(ws, languageRef.current);
+      if (isInitial) return;
       setIsDirty(true);
 
       const snapshot = workbenchRef.current?.saveWorkspaceJson();
@@ -515,18 +538,33 @@ export function useProjectStore({
       const scrId = activeScriptIdRef.current;
       const now = new Date().toISOString();
 
+      const curProj = getActiveProject(storeRef.current);
+      const curHdl = getActiveHandle(curProj);
+      let prunedBreakpoints: string[] | null = null;
+      const curScr = curHdl.scripts.find((s) => s.id === scrId);
+      if (curScr) {
+        const pruned = curScr.breakpoints.filter((bid) =>
+          Boolean(ws.getBlockById(bid)),
+        );
+        if (pruned.length !== curScr.breakpoints.length) {
+          const nextHdl = {
+            ...curHdl,
+            scripts: curHdl.scripts.map((s) =>
+              s.id === scrId ? { ...s, breakpoints: pruned } : s,
+            ),
+          };
+          prunedBreakpoints = collectHandleAllBreakpoints(nextHdl);
+        }
+      }
+
       setStore((prev) =>
         updateProjectById(prev, projId, (proj) =>
           updateHandleById(proj, hdlId, (hdl) => {
-            let prunedAny = false;
             const nextScripts = hdl.scripts.map((s) => {
               if (s.id !== scrId) return s;
               const pruned = s.breakpoints.filter((bid) =>
                 Boolean(ws.getBlockById(bid)),
               );
-              if (pruned.length !== s.breakpoints.length) {
-                prunedAny = true;
-              }
               return {
                 ...s,
                 workspace: snapshot,
@@ -534,16 +572,13 @@ export function useProjectStore({
                 updatedAt: now,
               };
             });
-            const nextHdl = { ...hdl, scripts: nextScripts, updatedAt: now };
-            if (prunedAny) {
-              executionBridgeRef.current.syncActiveBreakpoints(
-                collectHandleAllBreakpoints(nextHdl),
-              );
-            }
-            return nextHdl;
+            return { ...hdl, scripts: nextScripts, updatedAt: now };
           }),
         ),
       );
+      if (prunedBreakpoints) {
+        executionBridgeRef.current.syncActiveBreakpoints(prunedBreakpoints);
+      }
     },
     [executionBridgeRef, regenerateFromWorkspace, workbenchRef],
   );
@@ -767,6 +802,7 @@ export function useProjectStore({
         },
       );
       setStore(nextStore);
+      setIsDirty(true);
       mountScriptIntoCanvas(nextStore);
       const added = getActiveScript(getActiveHandle(getActiveProject(nextStore)));
       notify(
@@ -776,15 +812,34 @@ export function useProjectStore({
     [executionBridgeRef, flushActiveCanvasIntoStore, mountScriptIntoCanvas, notify],
   );
 
-  const handleRenameScript = useCallback((scriptId: string, nextName: string) => {
-    setStore((prev) =>
-      updateProjectById(prev, activeProjectIdRef.current, (p) =>
-        updateHandleById(p, activeHandleIdRef.current, (h) =>
-          renameScriptInHandle(h, scriptId, nextName),
-        ),
-      ),
-    );
-  }, []);
+  const handleRenameScript = useCallback(
+    (scriptId: string, nextName: string) => {
+      const projId = activeProjectIdRef.current;
+      const hdlId = activeHandleIdRef.current;
+      const nextStore = updateProjectById(storeRef.current, projId, (p) =>
+        updateHandleById(p, hdlId, (h) => renameScriptInHandle(h, scriptId, nextName)),
+      );
+      setStore(nextStore);
+      const nextProj = getActiveProject(nextStore);
+      const nextHdl = getActiveHandle(nextProj);
+      setActiveHandleScripts(
+        buildHandleScriptsMeta(nextHdl),
+        activeScriptIdRef.current,
+      );
+      const modRes = resolveProjectModules({
+        enabledCapabilities: nextProj.enabledCapabilities,
+        localExtensions: nextProj.localExtensions,
+        handleScripts: nextHdl.scripts.map((s) => ({
+          scriptId: s.id,
+          scriptName: s.name,
+        })),
+      });
+      setActiveModuleConflicts(modRes.conflicts);
+      const ws = workbenchRef.current?.getWorkspace();
+      if (ws) regenerateFromWorkspace(ws, languageRef.current);
+    },
+    [regenerateFromWorkspace, workbenchRef],
+  );
 
   const handleDuplicateScript = useCallback(
     (scriptId: string) => {
@@ -799,6 +854,7 @@ export function useProjectStore({
           ),
       );
       setStore(nextStore);
+      setIsDirty(true);
       mountScriptIntoCanvas(nextStore);
       const copied = getActiveScript(getActiveHandle(getActiveProject(nextStore)));
       notify(`已复制脚本为 ${copied.name}`);
@@ -808,18 +864,26 @@ export function useProjectStore({
 
   const handleSetEntryScript = useCallback(
     (scriptId: string) => {
-      setStore((prev) =>
-        updateProjectById(prev, activeProjectIdRef.current, (p) =>
-          updateHandleById(p, activeHandleIdRef.current, (h) => ({
-            ...h,
-            entryScriptId: scriptId,
-            updatedAt: new Date().toISOString(),
-          })),
-        ),
+      const projId = activeProjectIdRef.current;
+      const hdlId = activeHandleIdRef.current;
+      const nextStore = updateProjectById(storeRef.current, projId, (p) =>
+        updateHandleById(p, hdlId, (h) => ({
+          ...h,
+          entryScriptId: scriptId,
+          updatedAt: new Date().toISOString(),
+        })),
       );
+      setStore(nextStore);
+      const nextHdl = getActiveHandle(getActiveProject(nextStore));
+      setActiveHandleScripts(
+        buildHandleScriptsMeta(nextHdl),
+        activeScriptIdRef.current,
+      );
+      const ws = workbenchRef.current?.getWorkspace();
+      if (ws) regenerateFromWorkspace(ws, languageRef.current);
       notify('已设为当前句柄入口脚本 (★)');
     },
-    [notify],
+    [notify, regenerateFromWorkspace, workbenchRef],
   );
 
   const handleDeleteScript = useCallback(
@@ -841,10 +905,38 @@ export function useProjectStore({
           ),
       );
       setStore(nextStore);
-      if (wasActive) mountScriptIntoCanvas(nextStore);
+      setIsDirty(true);
+      if (wasActive) {
+        mountScriptIntoCanvas(nextStore);
+      } else {
+        const nextProj = getActiveProject(nextStore);
+        const nextHdl = getActiveHandle(nextProj);
+        setActiveHandleScripts(
+          buildHandleScriptsMeta(nextHdl),
+          activeScriptIdRef.current,
+        );
+        const modRes = resolveProjectModules({
+          enabledCapabilities: nextProj.enabledCapabilities,
+          localExtensions: nextProj.localExtensions,
+          handleScripts: nextHdl.scripts.map((s) => ({
+            scriptId: s.id,
+            scriptName: s.name,
+          })),
+        });
+        setActiveModuleConflicts(modRes.conflicts);
+        const ws = workbenchRef.current?.getWorkspace();
+        if (ws) regenerateFromWorkspace(ws, languageRef.current);
+      }
       notify('已删除脚本');
     },
-    [executionBridgeRef, flushActiveCanvasIntoStore, mountScriptIntoCanvas, notify],
+    [
+      executionBridgeRef,
+      flushActiveCanvasIntoStore,
+      mountScriptIntoCanvas,
+      notify,
+      regenerateFromWorkspace,
+      workbenchRef,
+    ],
   );
 
   /* ========================================================================
@@ -863,6 +955,7 @@ export function useProjectStore({
         activeProjectId: projectId,
       };
       setStore(nextStore);
+      setIsDirty(false);
       mountScriptIntoCanvas(nextStore);
       const nextProj = getActiveProject(nextStore);
       if (nextProj.handles.length > 1 && window.innerWidth >= 1280) {
@@ -968,6 +1061,7 @@ export function useProjectStore({
       const flushed = flushActiveCanvasIntoStore(storeRef.current);
       const nextStore = duplicateProjectInStore(flushed, projectId);
       setStore(nextStore);
+      setIsDirty(false);
       mountScriptIntoCanvas(nextStore);
       notify(`已复制项目：${getActiveProject(nextStore).name}`);
     },
@@ -1002,35 +1096,49 @@ export function useProjectStore({
         ) ?? getActiveProject(flushed);
       const safeName = target.name.replace(/[\\/:*?"<>|]+/g, '_');
       const fileName = `${safeName || 'project'}.polyblock.json`;
-      const exportPayload = buildExportableProjectJson(
-        target,
-        extensionRegistry.listAll(),
-      );
+      const purePayload = buildPureProjectJson(target);
       triggerFileDownload(
         fileName,
-        JSON.stringify(exportPayload, null, 2),
+        `${JSON.stringify(purePayload, null, 2)}\n`,
         'application/json;charset=utf-8',
       );
       setIsDirty(false);
-      const bundledCount = exportPayload.bundledExtensions?.length ?? 0;
-      const localCount = exportPayload.localExtensions?.length ?? 0;
-      const packHint =
-        bundledCount > 0 || localCount > 0
-          ? ` · 含 ${localCount + bundledCount} 个随工程打包外设（开箱即用）`
-          : '';
+      const localCount = target.localExtensions?.length ?? 0;
+      const hint =
+        localCount > 0
+          ? `（纯配置引用文件；如需一并打包 ${localCount} 个项目扩展包请导出 .polyblock.zip）`
+          : `（${target.handles.length} 句柄 · ${countProjectScripts(target)} 脚本 · 仅含引用 ID）`;
+      notify(`已导出纯工程文件 ${fileName}${hint}`);
+    },
+    [flushActiveCanvasIntoStore, notify],
+  );
+
+  const handleSaveProjectArchive = useCallback(
+    (projectId?: string) => {
+      const flushed = flushActiveCanvasIntoStore(storeRef.current);
+      setStore(flushed);
+      const target =
+        flushed.projects.find(
+          (p) => p.id === (projectId ?? activeProjectIdRef.current),
+        ) ?? getActiveProject(flushed);
+      const archive = buildProjectArchiveBundle(target, extensionRegistry.listAll());
+      triggerBinaryDownload(archive.fileName, archive.zipBytes, 'application/zip');
+      setIsDirty(false);
       notify(
-        `已保存整项目工程 ${fileName}（${target.handles.length} 句柄 · ${countProjectScripts(target)} 脚本${packHint}）`,
+        `已导出完整工程包 ${archive.fileName}（含 ${archive.includedPackIds.length} 个独立扩展包与板型 ${archive.includedBoardId}，开箱即用）`,
       );
     },
     [flushActiveCanvasIntoStore, notify],
   );
 
   const handleImportProject = useCallback(
-    (imported: ProjectModel, absorbedPackNames: string[] = []) => {
+    (result: ImportedProjectResult) => {
       if (executionBridgeRef.current.isExecutionActive()) {
         notify('请先停止当前运行再导入项目');
         return;
       }
+      const { project: imported, lockedPackNames, lockedBoardName, missingPackIds } =
+        result;
       const flushed = flushActiveCanvasIntoStore(storeRef.current);
       const nextStore: WorkspaceStoreState = {
         version: 3,
@@ -1042,11 +1150,30 @@ export function useProjectStore({
       setShowExplorer(imported.handles.length > 1 && window.innerWidth >= 1280);
       setIsDirty(false);
       navigateTo('blocks');
-      notify(
-        absorbedPackNames.length > 0
-          ? `已导入项目「${imported.name}」，并将随工程附带的外设快照（${absorbedPackNames.join('、')}）直接加载为项目内嵌包（优先覆盖全局、不污染全局库）`
-          : `已导入项目：${imported.name}（${imported.handles.length} 句柄 · ${countProjectScripts(imported)} 脚本）`,
-      );
+      if (lockedPackNames.length > 0 || lockedBoardName) {
+        const parts: string[] = [];
+        if (lockedPackNames.length > 0) {
+          parts.push(`锁定 ${lockedPackNames.length} 个扩展包（${lockedPackNames.join('、')}）`);
+        }
+        if (lockedBoardName) {
+          parts.push(`锁定板型「${lockedBoardName}」`);
+        }
+        const missingSuffix =
+          missingPackIds.length > 0
+            ? `；但缺少引用包：${missingPackIds.join('、')}`
+            : '';
+        notify(
+          `已导入完整工程包「${imported.name}」：${parts.join('，')}（不污染全局库${missingSuffix}）`,
+        );
+      } else if (missingPackIds.length > 0) {
+        notify(
+          `已导入纯工程「${imported.name}」，但当前环境缺少扩展包：${missingPackIds.join('、')}，请导入对应 .polyext.json`,
+        );
+      } else {
+        notify(
+          `已导入纯工程「${imported.name}」（${imported.handles.length} 句柄 · ${countProjectScripts(imported)} 脚本）`,
+        );
+      }
     },
     [
       executionBridgeRef,
@@ -1070,7 +1197,7 @@ export function useProjectStore({
     executionBridgeRef.current.resetAllSimStates();
     setIsDirty(false);
     navigateTo('blocks');
-    notify(`已恢复 ${freshStore.projects.length} 个内置演示项目`);
+    notify(`已恢复 ${freshStore.projects.length} 个出厂演示项目`);
   }, [executionBridgeRef, mountScriptIntoCanvas, navigateTo, notify]);
 
   const handleSelectLanguage = useCallback(
@@ -1089,17 +1216,8 @@ export function useProjectStore({
       generated.code + '\n',
       'text/plain;charset=utf-8',
     );
-    setIsDirty(false);
     notify(`已导出干净脚本 ${outFile}`);
   }, [language, activeHandle.name, activeScript.name, generated.code, notify]);
-
-  const restoreBridgeAfterBundleExport = useCallback((hdl: RuntimeHandle) => {
-    setActiveHandleSharedVariables(collectHandleSharedVariableNames(hdl));
-    setActiveHandleSharedVarInitials(hdl.variableInitialValues ?? {});
-    setActiveScriptVarInitials(getActiveScript(hdl).variableInitialValues ?? {});
-    setActiveHandleSharedFunctions(hdl.sharedFunctions ?? []);
-    setActiveHandleScripts(buildHandleScriptsMeta(hdl), getActiveScript(hdl).id);
-  }, []);
 
   const handleExportHandleBundle = useCallback(() => {
     const flushed = flushActiveCanvasIntoStore(storeRef.current);
@@ -1109,9 +1227,8 @@ export function useProjectStore({
     try {
       const bundle = buildSingleHandleTargetBundle(proj, hdl);
       triggerBinaryDownload(bundle.fileName, bundle.zipBytes, 'application/zip');
-      setIsDirty(false);
       notify(
-        `已打包导出当前句柄真机包 ${bundle.fileName}（共 ${bundle.entries.length} 个文件，已剥离 ${bundle.strippedSandboxMocks.length} 个沙箱假桩）`,
+        `已打包导出当前句柄部署包 ${bundle.fileName}（共 ${bundle.entries.length} 个文件，已剥离 ${bundle.strippedSandboxMocks.length} 个沙箱假桩）`,
       );
     } catch (err) {
       if (err instanceof ModuleConflictExportError) {
@@ -1124,14 +1241,11 @@ export function useProjectStore({
       } else {
         notify(`打包导出失败：${err instanceof Error ? err.message : String(err)}`);
       }
-    } finally {
-      restoreBridgeAfterBundleExport(hdl);
     }
   }, [
     executionBridgeRef,
     flushActiveCanvasIntoStore,
     notify,
-    restoreBridgeAfterBundleExport,
     setShowConsole,
   ]);
 
@@ -1139,13 +1253,11 @@ export function useProjectStore({
     const flushed = flushActiveCanvasIntoStore(storeRef.current);
     setStore(flushed);
     const proj = getActiveProject(flushed);
-    const hdl = getActiveHandle(proj);
     try {
       const bundle = buildProjectTargetBundle(proj);
       triggerBinaryDownload(bundle.fileName, bundle.zipBytes, 'application/zip');
-      setIsDirty(false);
       notify(
-        `已打包导出整工程真机包 ${bundle.fileName}（${proj.handles.length} 句柄 · 共 ${bundle.entries.length} 个文件，已剥离沙箱假桩）`,
+        `已打包导出全部句柄部署包 ${bundle.fileName}（${proj.handles.length} 句柄 · 共 ${bundle.entries.length} 个文件，已剥离沙箱假桩）`,
       );
     } catch (err) {
       if (err instanceof ModuleConflictExportError) {
@@ -1156,16 +1268,13 @@ export function useProjectStore({
         );
         notify(`存在 ${err.conflicts.length} 处同层级模块名冲突，已阻止导出（请查看日志）`);
       } else {
-        notify(`整工程打包导出失败：${err instanceof Error ? err.message : String(err)}`);
+        notify(`全部句柄部署包导出失败：${err instanceof Error ? err.message : String(err)}`);
       }
-    } finally {
-      restoreBridgeAfterBundleExport(hdl);
     }
   }, [
     executionBridgeRef,
     flushActiveCanvasIntoStore,
     notify,
-    restoreBridgeAfterBundleExport,
     setShowConsole,
   ]);
 
@@ -1187,16 +1296,8 @@ export function useProjectStore({
   );
 
   /* ========================================================================
-     Derived Initial Workspace & Live Variable/Function Name Lists
+     Derived Live Variable/Function Name Lists
      ======================================================================== */
-  const initialScriptWorkspace = useMemo(() => {
-    const initialHandle = getActiveHandle(getActiveProject(initialStoreRef.current));
-    return syncHandleVariablesIntoWorkspaceJson(
-      getActiveScript(initialHandle).workspace,
-      collectHandleSharedVariableNames(initialHandle),
-    );
-  }, []);
-
   const activeHandleSharedVarNames = useMemo(
     () => collectHandleSharedVariableNames(activeHandle),
     [activeHandle, dialogRefreshKey],
@@ -1307,6 +1408,7 @@ export function useProjectStore({
     handleDuplicateProject,
     handleDeleteProject,
     handleSaveProjectFile,
+    handleSaveProjectArchive,
     handleImportProject,
     handleResetWorkspace,
     handleSelectLanguage,

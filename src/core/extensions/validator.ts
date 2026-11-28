@@ -159,7 +159,7 @@ function validateHandleConfigs(raw: unknown): HandleConfigSpec[] | undefined {
       ? Math.max(1, Math.trunc(Number(obj.min)))
       : 1;
     const max = Number.isFinite(Number(obj.max))
-      ? Math.max(min, Math.min(32, Math.trunc(Number(obj.max))))
+      ? Math.max(min, Math.min(64, Math.trunc(Number(obj.max))))
       : 32;
     const defaultCount = Number.isFinite(Number(obj.defaultCount))
       ? Math.max(min, Math.min(max, Math.trunc(Number(obj.defaultCount))))
@@ -193,7 +193,7 @@ function validateHandleConfigs(raw: unknown): HandleConfigSpec[] | undefined {
 function validateImports(raw: unknown): ExtensionPackImports | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('imports 必须是按语言 ID 映射的对象（如 { lua: [...], python: [...] }）');
+    throw new Error('imports 必须是按语言 ID 映射的对象（如 { lua: [...], python: [...], js: [...] }）');
   }
   const obj = raw as Record<string, unknown>;
   const out: ExtensionPackImports = {};
@@ -227,7 +227,7 @@ function validateModuleSource(
   }
   if (!obj.sources || typeof obj.sources !== 'object' || Array.isArray(obj.sources)) {
     throw new Error(
-      `${fieldLabel}.sources 必填，且须为按语言 ID 映射的源码对象（如 { lua: "..." }）`,
+      `${fieldLabel}.sources 必填，且须为按语言 ID 映射的源码对象（如 { lua: "...", python: "...", js: "..." }）`,
     );
   }
   const rawSources = obj.sources as Record<string, unknown>;
@@ -312,7 +312,7 @@ function validateBlockDef(
     const rawCode = blk.code as Record<string, unknown> | undefined;
     if (!rawCode || typeof rawCode !== 'object' || Array.isArray(rawCode)) {
       throw new Error(
-        `积木 ${blk.type} 缺少 code 对象（需按语言映射至少提供一个 template，如 { lua: { template: "..." } }）`,
+        `积木 ${blk.type} 缺少 code 对象（需按语言映射至少提供一个 template，如 { lua: { template: "..." }, python: { template: "..." }, js: { template: "..." } }）`,
       );
     }
     let validLangCount = 0;

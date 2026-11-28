@@ -1,7 +1,7 @@
-import type { RegisteredLanguageId } from '../core/backends/registry';
 import type { PolyExtensionPack } from '../core/extensions/types';
 
-export type ScriptLanguageId = RegisteredLanguageId;
+/** Open extensible target language identifier registered by a `LanguagePlugin`. */
+export type ScriptLanguageId = string;
 
 export type PageId = 'blocks' | 'projects' | 'devices' | 'extensions' | 'settings';
 
@@ -34,11 +34,6 @@ export interface DiagnosticItem {
 export interface SourceLineRange {
   startLine: number;
   endLine: number;
-}
-
-export interface VariableSnapshotItem {
-  name: string;
-  value: string;
 }
 
 /** Static + runtime scope classification for tree-structured variable watching. */
@@ -106,7 +101,7 @@ export interface RuntimeTelemetry {
   timers: RuntimeTimerTelemetry[];
 }
 
-/** Explicit initial value for handle-shared or file-scoped variables (Lua & Python symmetric). */
+/** Explicit initial value for handle-shared or file-scoped variables (language-agnostic). */
 export type VariableInitialValue =
   | { kind: 'null' }
   | { kind: 'number'; value: number }
@@ -137,15 +132,15 @@ export interface RuntimeHandle {
   capabilityConfigs: Record<string, unknown>;
   /**
    * Explicit handle-wide cross-file shared variable names.
-   * Both Lua (`shared.lua`) and Python (`shared.py`) auto-generate a read-only `shared` module
+   * Every language backend auto-generates a read-only `shared.<ext>` module
    * accessed uniformly as `shared.<var>`.
    */
   sharedVariables?: string[];
-  /** Explicit initial values for cross-file shared variables in `shared.lua` / `shared.py`. */
+  /** Explicit initial values for cross-file shared variables in `shared.<ext>`. */
   variableInitialValues?: Record<string, VariableInitialValue>;
   /**
    * Explicit handle-wide cross-file shared custom function names.
-   * Exported centrally into read-only `shared.lua` / `shared.py` and called uniformly as `shared.<fn>(...)`.
+   * Exported centrally into read-only `shared.<ext>` and called uniformly as `shared.<fn>(...)`.
    */
   sharedFunctions?: string[];
   entryScriptId: string;
@@ -167,17 +162,17 @@ export interface ProjectModel {
   /** Unified list of enabled runtime capabilities & peripheral/extension pack IDs for this project. */
   enabledCapabilities: string[];
   /**
-   * Project-embedded custom extension packs (.polyext.json imported inside this project).
-   * Scoped strictly to this project (never pollutes the global Extensions page), exported with
-   * .polyblock.json, and overrides global packs of the same ID when active.
+   * Project-scoped / version-locked extension packs (in-workspace mirror of `<project>/extensions/*.polyext.json`).
+   * Strictly excluded from pure `project.polyblock.json` files and packaged as standalone
+   * `extensions/<id>.polyext.json` files inside `.polyblock.zip` archives.
    */
   localExtensions?: PolyExtensionPack[];
   /**
-   * Export-only portability snapshot: non-builtin global packs used by this project are
-   * auto-snapshotted here when exporting .polyblock.json so recipients get out-of-the-box
-   * loading without polluting their global library.
+   * Project-scoped / version-locked target board profile (in-workspace mirror of `<project>/boards/<id>.polyboard.json`).
+   * Strictly excluded from pure `project.polyblock.json` files and packaged as a standalone
+   * `boards/<id>.polyboard.json` file inside `.polyblock.zip` archives.
    */
-  bundledExtensions?: PolyExtensionPack[];
+  localTargetProfile?: TargetProfile;
   activeHandleId: string;
   handles: RuntimeHandle[];
   createdAt: string;

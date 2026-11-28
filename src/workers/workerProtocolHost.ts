@@ -176,9 +176,7 @@ export class WorkerProtocolHost {
     this.currentMockInputs = { ...(mockInputs ?? {}) };
     const startedAt = performance.now();
     const resolvedTimerCount =
-      (timerPoolKey ? channelCounts?.[timerPoolKey] : undefined) ??
-      (channelCounts ? Object.values(channelCounts)[0] : undefined) ??
-      8;
+      (timerPoolKey ? channelCounts?.[timerPoolKey] : undefined) ?? 8;
     const scheduler = new WorkerRuntimeScheduler({
       runId,
       timerCount: resolvedTimerCount,

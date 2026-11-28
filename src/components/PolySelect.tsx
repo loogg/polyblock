@@ -80,7 +80,8 @@ export function PolySelect<T extends string = string>({
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const gap = 5;
-    const estItemHeight = 32;
+    const hasDescriptions = options.some((o) => Boolean(o.description));
+    const estItemHeight = hasDescriptions ? 44 : 32;
     const estHeight = Math.min(268, options.length * estItemHeight + 12);
     const spaceBelow = window.innerHeight - rect.bottom - 12;
     const spaceAbove = rect.top - 12;
@@ -89,9 +90,10 @@ export function PolySelect<T extends string = string>({
       120,
       Math.min(268, openUpward ? spaceAbove - gap : spaceBelow - gap),
     );
-    const minW = Math.max(
-      rect.width,
-      minPopoverWidth ?? (size === 'xs' ? 116 : 136),
+    const maxViewportW = Math.max(120, window.innerWidth - 16);
+    const minW = Math.min(
+      maxViewportW,
+      Math.max(rect.width, minPopoverWidth ?? (size === 'xs' ? 116 : 136)),
     );
     const clampedLeft = Math.max(
       8,
@@ -108,16 +110,27 @@ export function PolySelect<T extends string = string>({
       maxHeight,
       openUpward,
     });
-  }, [options.length, minPopoverWidth, size]);
+  }, [options, minPopoverWidth, size]);
+
+  useEffect(() => {
+    if (disabled && open) {
+      setOpen(false);
+    }
+  }, [disabled, open]);
 
   useLayoutEffect(() => {
     if (!open) return;
     computeCoords();
   }, [open, computeCoords]);
 
+  const optionsRef = useRef(options);
+  const valueRef = useRef(value);
+  optionsRef.current = options;
+  valueRef.current = value;
+
   useEffect(() => {
     if (!open) return;
-    const idx = options.findIndex((o) => o.value === value);
+    const idx = optionsRef.current.findIndex((o) => o.value === valueRef.current);
     setActiveIndex(idx >= 0 ? idx : 0);
 
     const onPointerDown = (e: MouseEvent) => {
@@ -149,7 +162,7 @@ export function PolySelect<T extends string = string>({
       window.removeEventListener('resize', onViewportChange);
       window.removeEventListener('scroll', onViewportChange, true);
     };
-  }, [open, options, value, computeCoords]);
+  }, [open, computeCoords]);
 
   useEffect(() => {
     if (!open || !listRef.current) return;
@@ -197,10 +210,16 @@ export function PolySelect<T extends string = string>({
       }
     } else if (e.key === 'Home' && open) {
       e.preventDefault();
-      setActiveIndex(0);
+      const firstEnabled = options.findIndex((o) => !o.disabled);
+      if (firstEnabled >= 0) setActiveIndex(firstEnabled);
     } else if (e.key === 'End' && open) {
       e.preventDefault();
-      setActiveIndex(Math.max(0, options.length - 1));
+      for (let i = options.length - 1; i >= 0; i--) {
+        if (!options[i].disabled) {
+          setActiveIndex(i);
+          break;
+        }
+      }
     } else if ((e.key === 'Enter' || e.key === ' ') && open) {
       e.preventDefault();
       commitIndex(activeIndex);
@@ -249,6 +268,7 @@ export function PolySelect<T extends string = string>({
               left: coords.left,
               top: coords.top,
               minWidth: coords.minWidth,
+              maxWidth: Math.max(coords.minWidth, Math.min(360, window.innerWidth - 16)),
               maxHeight: coords.maxHeight,
             }}
           >
@@ -266,7 +286,9 @@ export function PolySelect<T extends string = string>({
                   className={`poly-select-option ${isSelected ? 'selected' : ''} ${
                     isHighlighted ? 'highlighted' : ''
                   }`}
-                  onMouseEnter={() => setActiveIndex(idx)}
+                  onMouseEnter={() => {
+                    if (!opt.disabled) setActiveIndex(idx);
+                  }}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => commitIndex(idx)}
                 >

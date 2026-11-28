@@ -1,6 +1,7 @@
 import { backendRegistry } from '../core/backends/registry';
 import { runnerManager } from '../core/runners/manager';
 import type { RunnerStatus } from '../core/runners/types';
+import { useLanguagePluginsRevision } from '../hooks/useLanguagePlugins';
 import type { ScriptLanguageId } from '../types/project';
 
 interface StatusBarProps {
@@ -12,6 +13,7 @@ interface StatusBarProps {
   language: ScriptLanguageId;
   runnerStatus: RunnerStatus;
   multiHandleRunning?: boolean;
+  runningHandleCount?: number;
   blockCount: number;
   diagnosticCount: number;
   diagnosticErrorCount?: number;
@@ -28,22 +30,26 @@ export function StatusBar({
   language,
   runnerStatus,
   multiHandleRunning = false,
+  runningHandleCount,
   blockCount,
   diagnosticCount,
   diagnosticErrorCount = 0,
   breakpointCount,
   selectedBlockId,
 }: StatusBarProps) {
-  const backend = backendRegistry.get(language);
+  useLanguagePluginsRevision();
+  const dialect = backendRegistry.tryGetDialect(language);
+  const ext = dialect?.extension ?? language;
   const runner = runnerManager.findForLanguage(language);
 
+  const activeRunCount = runningHandleCount || handleCount;
   const statusText = !runner
-    ? '仅代码生成与导出（无内置沙箱）'
+    ? '仅代码生成与导出（无浏览器沙箱）'
     : runnerStatus === 'paused'
       ? `已暂停（断点 / 单步）· ${runner.shortLabel}`
       : runnerStatus === 'running'
         ? multiHandleRunning
-          ? `${handleCount} 句柄并发仿真中 (${runner.shortLabel})...`
+          ? `${activeRunCount} 句柄并发仿真中 (${runner.shortLabel})...`
           : `正在运行 [${activeHandleName}] (${runner.shortLabel})...`
         : runnerStatus === 'error'
           ? `上次运行出错 · ${runner.shortLabel}`
@@ -73,7 +79,7 @@ export function StatusBar({
         </span>
         <span>
           当前: {activeHandleName}/
-          {activeFileLabel ?? `${activeScriptName}.${backend.extension}`}
+          {activeFileLabel ?? `${activeScriptName}.${ext}`}
         </span>
         <span>积木数: {blockCount}</span>
         {breakpointCount > 0 && (

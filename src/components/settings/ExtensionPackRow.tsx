@@ -28,6 +28,7 @@ interface ExtensionPackRowProps {
   pack: PolyExtensionPack;
   variant: ExtensionPackRowVariant;
   enabledCapabilities: string[];
+  editingLocked?: boolean;
   overridesGlobal?: boolean;
   overriddenByLocal?: boolean;
   onViewSource: () => void;
@@ -42,6 +43,7 @@ export function ExtensionPackRow({
   pack,
   variant,
   enabledCapabilities,
+  editingLocked = false,
   overridesGlobal = false,
   overriddenByLocal = false,
   onViewSource,
@@ -111,7 +113,9 @@ export function ExtensionPackRow({
                 }}
               >
                 <span>{pack.name}</span>
-                <span className="count-badge">项目内嵌</span>
+                <span className="count-badge">
+                  {overridesGlobal ? '项目锁定' : '项目私有'}
+                </span>
                 {overridesGlobal && (
                   <span
                     className="count-badge"
@@ -132,7 +136,7 @@ export function ExtensionPackRow({
               v{pack.packVersion} · {getAllPackBlocks(pack).length} 个积木 ·{' '}
               {placementLabel} · ID: {pack.id}
               {variant === 'global' && overriddenByLocal
-                ? ' · 已被本项目内嵌包覆盖'
+                ? ' · 已被本项目锁定包覆盖'
                 : ''}
             </div>
 
@@ -190,7 +194,12 @@ export function ExtensionPackRow({
               type="button"
               className="btn-ghost"
               style={{ padding: '4px 6px' }}
-              title={`附加或替换此包的真实库源码 (${formatSupportedExtensionsLabel()} -> libs[])`}
+              disabled={editingLocked}
+              title={
+                editingLocked
+                  ? '请先停止当前运行再修改库源码'
+                  : `附加或替换此包的真实库源码 (${formatSupportedExtensionsLabel()} -> libs[])`
+              }
               aria-label={`为 ${pack.name} 附加库源码`}
               onClick={onAttachLibs}
             >
@@ -203,7 +212,12 @@ export function ExtensionPackRow({
               type="button"
               className="btn-ghost"
               style={{ padding: '4px 6px' }}
-              title="复制一份保存到全局扩展库（供其他项目复用）"
+              disabled={editingLocked}
+              title={
+                editingLocked
+                  ? '请先停止当前运行再保存到全局库'
+                  : '复制一份保存到全局扩展库（供其他项目复用）'
+              }
               aria-label={`将 ${pack.name} 保存到全局扩展库`}
               onClick={onPromoteToGlobal}
             >
@@ -229,8 +243,19 @@ export function ExtensionPackRow({
               type="button"
               className="btn-ghost"
               style={{ padding: '4px 6px', color: 'var(--danger)' }}
-              title="从当前项目移除此内嵌包"
-              aria-label={`移除项目内嵌包 ${pack.name}`}
+              disabled={editingLocked}
+              title={
+                editingLocked
+                  ? '请先停止当前运行再移除锁定包'
+                  : overridesGlobal
+                    ? '移出项目锁定（回退使用全局版本）'
+                    : '从当前项目移除此私有包'
+              }
+              aria-label={
+                overridesGlobal
+                  ? `移出项目锁定 ${pack.name}`
+                  : `移除项目私有包 ${pack.name}`
+              }
               onClick={onRemoveLocal}
             >
               <Trash2 size={13} />
@@ -241,11 +266,13 @@ export function ExtensionPackRow({
             type="button"
             className={`ext-toggle-btn ${toggleBtnClass}`}
             style={{ padding: '4px 10px', fontSize: 11.5, flexShrink: 0 }}
-            disabled={overriddenByLocal}
+            disabled={editingLocked || overriddenByLocal}
             title={
-              overriddenByLocal
-                ? '已被上方同名项目内嵌包覆盖，请操作上方条目'
-                : undefined
+              editingLocked
+                ? '请先停止当前运行再切换扩展开关'
+                : overriddenByLocal
+                  ? '已被上方同名项目锁定包覆盖，可移除上方锁定以回退使用全局版'
+                  : undefined
             }
             onClick={() => onToggleCapability(pack.id)}
           >
@@ -268,7 +295,7 @@ export function ExtensionPackRow({
               <button
                 key={sec.capId}
                 type="button"
-                disabled={overriddenByLocal}
+                disabled={editingLocked || overriddenByLocal}
                 aria-pressed={secOn}
                 className={`pack-section-chip ${secOn ? 'active' : ''}`}
                 style={
@@ -276,7 +303,11 @@ export function ExtensionPackRow({
                     ? ({ '--chip-accent': sec.color } as CSSProperties)
                     : undefined
                 }
-                title={`${sec.label}（${posText}）${sec.description ? `：${sec.description}` : ''} · 点击单独${secOn ? '取消勾选' : '勾选启用'}`}
+                title={
+                  editingLocked
+                    ? '请先停止当前运行再修改启用组件'
+                    : `${sec.label}（${posText}）${sec.description ? `：${sec.description}` : ''} · 点击单独${secOn ? '取消勾选' : '勾选启用'}`
+                }
                 onClick={() => onToggleCapability(sec.capId)}
               >
                 {secOn ? (

@@ -73,11 +73,6 @@ const BLOCK_STYLES: Record<string, Partial<Blockly.Theme.BlockStyle>> = {
     colourSecondary: '#4338ca',
     colourTertiary: '#3730a3',
   },
-  loop_blocks: {
-    colourPrimary: '#d97706',
-    colourSecondary: '#b45309',
-    colourTertiary: '#9a4408',
-  },
 };
 
 export const polyblockLightTheme = Blockly.Theme.defineTheme('polyblockLight', {

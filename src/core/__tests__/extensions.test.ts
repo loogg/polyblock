@@ -34,11 +34,14 @@ import {
   DISCOVERED_PACK_IDS,
   PACKS_MANIFEST,
   SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
-} from '../extensions/builtinPacks';
+} from '../extensions/defaultPacks';
 import {
   DEMOS_MANIFEST,
   DISCOVERED_DEMO_IDS,
-} from '../projects/builtinDemos';
+} from '../projects/defaultDemos';
+import {
+  resolveProjectModules,
+} from '../extensions/moduleResolver';
 import {
   derivePackBadges,
   extensionRegistry,
@@ -59,11 +62,17 @@ import {
   resolveWidgetEventArgs,
 } from '../extensions/simState';
 import {
-  buildExportableProjectJson,
+  buildProjectArchiveBundle,
+  buildPureProjectJson,
+  parseImportedProjectArchive,
+  parseImportedPureProjectFile,
+} from '../export/projectArchive';
+import { buildZipBytes } from '../export/zipWriter';
+import {
   DEMO_PROJECTS,
   getAllHandleChannelPoolConfigs,
   instantiateProjectFromTemplate,
-  parseImportedProject,
+  resolveProjectTargetProfile,
 } from '../projects/store';
 
 describe('Declarative Extension Pack & Capability-Driven Target Profile System', () => {
@@ -254,10 +263,17 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(cats[1].label).toBe('计时');
     expect(cats[1].order).toBe(120);
 
-    const mocks = extensionRegistry.getSandboxMocks(['virtual-board', 'clock-timer']);
-    expect(mocks).toHaveLength(2);
-    expect(mocks.map((m) => m.moduleName)).toEqual(['board', 'poly_clock']);
-    expect(mocks[0].packId).toBe('virtual-board');
+    const resolved = resolveProjectModules({
+      handleScripts: [],
+      enabledCapabilities: ['virtual-board', 'clock-timer'],
+      localExtensions: [],
+    });
+    expect(resolved.sandboxMountOrder).toHaveLength(2);
+    expect(resolved.sandboxMountOrder.map((m) => m.moduleName)).toEqual([
+      'board',
+      'poly_clock',
+    ]);
+    expect(resolved.sandboxMountOrder[0].packId).toBe('virtual-board');
   });
 
   it('generates clean deduplicated Lua & Python board code for virtual_board_demo project', () => {
@@ -291,7 +307,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     ws.dispose();
   });
 
-  it('treats all .polyext.json packs with equal rights (override default, auto-bundle modified default, remove, reset, and generate code)', () => {
+  it('treats all .polyext.json packs with equal rights (override default, snapshot in .polyblock.zip, remove, reset, and generate code)', async () => {
     expect(() => validateExtensionPack({})).toThrow();
     try {
       // Equal rights: importing a pack with an existing default ID (`virtual-board`) upgrades/overrides it cleanly
@@ -306,15 +322,25 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       expect(extensionRegistry.isSameAsDefault(upgradedVb)).toBe(false);
       expect(extensionRegistry.hasCatalogChanges()).toBe(true);
 
-      // Exporting a project that uses a modified default pack MUST snapshot it into bundledExtensions
+      // Pure .polyblock.json MUST stay 100% reference-only (ZERO inline packs/boards)
       const vbProj = instantiateProjectFromTemplate('virtual_board_demo');
-      const exportedModified = buildExportableProjectJson(
-        vbProj,
-        extensionRegistry.listAll(),
+      const pureJson = buildPureProjectJson(vbProj);
+      expect('localExtensions' in pureJson).toBe(false);
+      expect('localTargetProfile' in pureJson).toBe(false);
+
+      // Self-contained .polyblock.zip snapshots ALL referenced packs (incl. modified virtual-board + clock-timer) + board
+      const archive = buildProjectArchiveBundle(vbProj, extensionRegistry.listAll());
+      expect(archive.includedPackIds).toEqual(['clock-timer', 'virtual-board']);
+      expect(archive.includedBoardId).toBe('virtual-board-basic');
+      const reimported = await parseImportedProjectArchive(
+        archive.zipBytes,
+        'vb_archive',
+        [],
       );
-      expect(exportedModified.bundledExtensions?.map((p) => `${p.id}@${p.packVersion}`)).toContain(
-        'virtual-board@2.5.0',
-      );
+      expect(
+        reimported.project.localExtensions?.map((p) => `${p.id}@${p.packVersion}`),
+      ).toEqual(['clock-timer@1.0.0', 'virtual-board@2.5.0']);
+      expect(reimported.lockedBoardName).toBeTruthy();
 
       // Equal rights: removing a default pack succeeds and resetToDefaults() restores it cleanly
       expect(extensionRegistry.removePack('virtual-board')).toBe(true);
@@ -381,7 +407,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     }
   });
 
-  it('isolates project-local packs from global library, overrides same-ID global packs, and auto-bundles on export', () => {
+  it('isolates project-local packs from global library, exports pure .polyblock.json, and round-trips .polyblock.zip with Strategy 1 strict version locking', async () => {
     const baseSec = SAMPLE_CUSTOM_EXTENSION_TEMPLATE.sections[0];
     const globalV2 = extensionRegistry.importPack({
       ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
@@ -517,40 +543,76 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
 
     const projUsingGlobal = {
       ...instantiateProjectFromTemplate('blank_project'),
-      enabledCapabilities: [globalV2.id],
+      enabledCapabilities: [RT_PACK_ID, globalV2.id],
       localExtensions: [],
     };
-    const exported = buildExportableProjectJson(
+    // 1. Pure .polyblock.json never embeds packs
+    const pureExport = buildPureProjectJson(projUsingGlobal);
+    expect('localExtensions' in pureExport).toBe(false);
+    expect(pureExport.enabledCapabilities).toEqual([RT_PACK_ID, globalV2.id]);
+
+    // 2. .polyblock.zip bundles ALL referenced packs (both rt and globalV2, zero default-pack special-casing) + board
+    const archiveGlobal = buildProjectArchiveBundle(
       projUsingGlobal,
       extensionRegistry.listAll(),
     );
-    expect(exported.bundledExtensions).toHaveLength(1);
-    expect(exported.bundledExtensions![0].id).toBe(globalV2.id);
-
-    const importedClean = parseImportedProject(exported, 'fallback', []);
-    expect(importedClean.localExtensions?.map((p) => p.id)).toEqual([globalV2.id]);
-    expect(importedClean.localExtensions?.map((p) => p.packVersion)).toEqual(['2.0.0']);
-
-    expect(extensionRegistry.get(globalV2.id)?.packVersion).toBe('2.0.0');
-    const importedWithExistingGlobal = parseImportedProject(exported, 'fallback', []);
-    expect(importedWithExistingGlobal.localExtensions?.map((p) => p.id)).toEqual([
-      globalV2.id,
+    expect(archiveGlobal.entries.map((e) => e.path)).toEqual([
+      'project.polyblock.json',
+      'extensions/my-robot-api.polyext.json',
+      'extensions/rt.polyext.json',
+      'boards/generic-script.polyboard.json',
     ]);
 
+    // Strategy 1: importing .polyblock.zip strictly locks ALL bundled packs + board into the project
+    // without mutating global registries, and survives subsequent removal/upgrade of global packs!
+    const importedArchive = await parseImportedProjectArchive(
+      archiveGlobal.zipBytes,
+      'fallback',
+      [],
+    );
+    expect(importedArchive.project.localExtensions?.map((p) => `${p.id}@${p.packVersion}`)).toEqual([
+      'my-robot-api@2.0.0',
+      'rt@1.0.0',
+    ]);
+    expect(resolveProjectTargetProfile(importedArchive.project).id).toBe('generic-script');
+    expect(importedArchive.missingPackIds).toEqual([]);
+
+    // Wrapper-directory ZIP (as created by OS Finder/Explorer "Compress Folder") also unwraps cleanly!
+    const wrappedZip = buildZipBytes(
+      archiveGlobal.entries.map((e) => ({
+        path: `my_robot_folder/${e.path}`,
+        content: e.content,
+      })),
+    );
+    const unwrappedImport = await parseImportedProjectArchive(wrappedZip, 'wrapped', []);
+    expect(unwrappedImport.project.localExtensions?.map((p) => p.id)).toEqual([
+      'my-robot-api',
+      'rt',
+    ]);
+
+    // Project-local pack wins over global when exporting .polyblock.zip
     const projWithLocal = {
       ...instantiateProjectFromTemplate('blank_project'),
       enabledCapabilities: [localV1.id],
       localExtensions: [localV1],
     };
-    const exportedLocal = buildExportableProjectJson(
+    const archiveLocal = buildProjectArchiveBundle(
       projWithLocal,
       extensionRegistry.listAll(),
     );
-    expect(exportedLocal.bundledExtensions).toBeUndefined();
-    const importedLocal = parseImportedProject(exportedLocal, 'fallback', []);
-    expect(importedLocal.localExtensions?.map((p) => p.packVersion)).toEqual(['1.0.0']);
+    const importedLocal = await parseImportedProjectArchive(
+      archiveLocal.zipBytes,
+      'fallback',
+      [],
+    );
+    expect(importedLocal.project.localExtensions?.map((p) => p.packVersion)).toEqual(['1.0.0']);
 
+    // Pure .polyblock.json import flags missing packs cleanly once global pack is removed
     extensionRegistry.removePack(globalV2.id);
+    const importedPureMissing = parseImportedPureProjectFile(pureExport, 'pure_missing', []);
+    expect(importedPureMissing.project.localExtensions).toEqual([]);
+    expect(importedPureMissing.missingPackIds).toEqual([globalV2.id]);
+
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
 
@@ -1265,16 +1327,41 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     ).toHaveLength(0);
 
     // Sandbox runs BOTH sandboxMock & libs[]; target export bundles ONLY libs[]!
-    const sandboxMods = extensionRegistry.getSandboxMocks(
-      ['custom-mcu-sdk', 'crc16-lib'],
-      [sdkPackA, crcPack],
-    );
-    expect(sandboxMods.map((m) => m.moduleName)).toEqual(['my_sdk', 'crc16']);
-    const exportBundleMods = extensionRegistry.getBundleModules(
-      ['custom-mcu-sdk', 'crc16-lib'],
-      [sdkPackA, crcPack],
-    );
-    expect(exportBundleMods.map((m) => m.moduleName)).toEqual(['crc16']);
+    const resolvedSdk = resolveProjectModules({
+      handleScripts: [],
+      enabledCapabilities: ['custom-mcu-sdk', 'crc16-lib'],
+      localExtensions: [sdkPackA, crcPack],
+    });
+    expect(resolvedSdk.sandboxMountOrder.map((m) => m.moduleName)).toEqual([
+      'my_sdk',
+      'crc16',
+    ]);
+    expect(resolvedSdk.exportLibs.map((m) => m.moduleName)).toEqual(['crc16']);
+
+    // Scoped withLocalPacks restores prior local packs cleanly and shadows global packs in findOwnerForBlockType
+    const shadowedVb = validateExtensionPack({
+      ...getVbPack(),
+      sections: [
+        {
+          id: 'main',
+          label: '精简硬件',
+          blocks: [getVbPack().sections[0].blocks[0]],
+        },
+      ],
+    });
+    extensionRegistry.withLocalPacks([shadowedVb], () => {
+      // Block kept in local override resolves to local pack
+      expect(
+        extensionRegistry.findOwnerForBlockType(
+          getVbPack().sections[0].blocks[0].type,
+        )?.pack.id,
+      ).toBe('virtual-board');
+      // Block removed in local override must NOT leak from shadowed global pack
+      const removedType = getVbPack().sections[0].blocks[1].type;
+      expect(
+        extensionRegistry.findOwnerForBlockType(removedType),
+      ).toBeUndefined();
+    });
 
     // Generic content-based import deduplication across two distinct packs
     const ws = new Blockly.Workspace();
@@ -1322,8 +1409,10 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
 
-  it('compiles every handle and script across all 4 built-in .polyblock.json demo projects cleanly in BOTH Lua 5.4 and Python 3 with 0 diagnostics (including handle-wide uniqueness checks!)', () => {
+  it('compiles every handle and script across all 4 built-in demo projects cleanly in ALL registered language backends with 0 diagnostics (including handle-wide uniqueness checks!)', () => {
     expect(DEMO_PROJECTS).toHaveLength(4);
+    const allBackends = backendRegistry.list();
+    expect(allBackends.length).toBeGreaterThanOrEqual(3);
 
     for (const demo of DEMO_PROJECTS) {
       const proj = instantiateProjectFromTemplate(demo.id);
@@ -1345,28 +1434,22 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
           const ws = new Blockly.Workspace();
           Blockly.serialization.workspaces.load(scr.workspace, ws);
 
-          const luaRes = backendRegistry.get('lua').generate(ws);
-          const pyRes = backendRegistry.get('python').generate(ws);
+          for (const adapter of allBackends) {
+            const res = adapter.generate(ws);
+            expect(
+              res.diagnostics,
+              `${demo.id}/${hdl.name}/${scr.name} (${adapter.id}) diagnostics`,
+            ).toHaveLength(0);
 
-          expect(
-            luaRes.diagnostics,
-            `${demo.id}/${hdl.name}/${scr.name} Lua diagnostics`,
-          ).toHaveLength(0);
-          expect(
-            pyRes.diagnostics,
-            `${demo.id}/${hdl.name}/${scr.name} Python diagnostics`,
-          ).toHaveLength(0);
-
-          if (
-            demo.id === 'multi_handle_robot' &&
-            hdl.name === 'drive_ctrl' &&
-            scr.name === 'main'
-          ) {
-            expect(luaRes.code).toContain('function on_drive_estop(active)');
-            expect(luaRes.code).toContain('-- PWM0: 云台偏航');
-            expect(luaRes.code).toContain('-- T0: 云台扫描');
-            expect(pyRes.code).toContain('def on_drive_estop(active):');
-            expect(pyRes.code).toContain('# PWM0: 云台偏航');
+            if (
+              demo.id === 'multi_handle_robot' &&
+              hdl.name === 'drive_ctrl' &&
+              scr.name === 'main'
+            ) {
+              expect(res.code).toContain('on_drive_estop(active)');
+              expect(res.code).toContain('PWM0: 云台偏航');
+              expect(res.code).toContain('T0: 云台扫描');
+            }
           }
 
           ws.dispose();
@@ -1834,5 +1917,121 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       schedulerSrc,
       'src/workers/runtimeScheduler.ts must use language-agnostic async turn naming (no Python-specific names)',
     ).not.toMatch(/\b(waitPython|resumePython|pyTurn|pySlice|resolvePySlice)\b/);
+
+    // 10. Standard project directory & zero nested-JSON guardrail:
+    //     - Zero flat `src/demos/*.polyblock.json` files
+    //     - Every `src/demos/<id>/project.polyblock.json` has ZERO inline `localExtensions`/`bundledExtensions`/`localTargetProfile`
+    //     - Every `src/demos/<id>/extensions/*.polyext.json` validates against polyext validator AND schema
+    //     - Zero `bundledExtensions` references anywhere in runtime code
+    const demosDir = path.join(repoRoot, 'src/demos');
+    for (const entry of fs.readdirSync(demosDir, { withFileTypes: true })) {
+      if (entry.isFile()) {
+        expect(
+          entry.name,
+          `src/demos/${entry.name} must not be a flat .polyblock.json (use src/demos/<id>/project.polyblock.json)`,
+        ).not.toMatch(/\.polyblock\.json$/i);
+      } else if (entry.isDirectory()) {
+        const demoSubDir = path.join(demosDir, entry.name);
+        const subEntries = fs.readdirSync(demoSubDir, { withFileTypes: true });
+        expect(
+          subEntries.some((s) => s.isFile() && s.name === 'project.polyblock.json'),
+          `${demoSubDir}/project.polyblock.json must exist`,
+        ).toBe(true);
+        const projPath = path.join(demoSubDir, 'project.polyblock.json');
+        const projJson = JSON.parse(fs.readFileSync(projPath, 'utf8')) as Record<string, unknown>;
+        expect('localExtensions' in projJson, `${projPath} must not inline localExtensions`).toBe(false);
+        expect('bundledExtensions' in projJson, `${projPath} must not inline bundledExtensions`).toBe(false);
+        expect('localTargetProfile' in projJson, `${projPath} must not inline localTargetProfile`).toBe(false);
+
+        if (subEntries.some((s) => s.isDirectory() && s.name === 'extensions')) {
+          const demoExtDir = path.join(demoSubDir, 'extensions');
+          const extFiles = fs
+            .readdirSync(demoExtDir, { withFileTypes: true })
+            .filter((e) => e.isFile() && e.name.endsWith('.polyext.json'))
+            .map((e) => e.name);
+          for (const extFile of extFiles) {
+            const rawExt = JSON.parse(
+              fs.readFileSync(path.join(demoExtDir, extFile), 'utf8'),
+            ) as Record<string, unknown>;
+            const validated = validateExtensionPack(rawExt);
+            expect('builtin' in validated).toBe(false);
+            for (const key of Object.keys(rawExt)) {
+              expect(
+                allowedPackKeys.has(key),
+                `unexpected pack key "${key}" in src/demos/${entry.name}/extensions/${extFile}`,
+              ).toBe(true);
+            }
+          }
+        }
+      }
+    }
+    for (const filePath of nonTestSrcFiles) {
+      const src = fs.readFileSync(filePath, 'utf8');
+      expect(
+        src,
+        `${filePath} must not reintroduce legacy bundledExtensions inline snapshots`,
+      ).not.toMatch(/\bbundledExtensions\b/);
+    }
+
+    // 11. Unified LanguagePlugin guardrail:
+    //     - RunnerManager must NOT import concrete language runner files directly (syncs from backendRegistry)
+    //     - scopeAnalysis.ts must NOT hardcode language keyword or hat-param tables
+    //     - CodeInspector.tsx must NOT sniff target language syntax for breakpoints
+    const runnerManagerSrc = fs.readFileSync(
+      path.join(repoRoot, 'src/core/runners/manager.ts'),
+      'utf8',
+    );
+    expect(
+      runnerManagerSrc,
+      'RunnerManager must sync runners from LanguagePlugins via backendRegistry instead of importing concrete language runners',
+    ).not.toMatch(/wasmoonRunner|micropythonRunner|jsWorkerRunner/);
+
+    const scopeAnalysisSrc = fs.readFileSync(
+      path.join(repoRoot, 'src/core/backends/scopeAnalysis.ts'),
+      'utf8',
+    );
+    expect(
+      scopeAnalysisSrc,
+      'scopeAnalysis.ts must derive reserved keywords dynamically from backendRegistry',
+    ).not.toMatch(/\bRESERVED_IDENTS\b/);
+
+    const codeInspectorSrc = fs.readFileSync(
+      path.join(repoRoot, 'src/components/CodeInspector.tsx'),
+      'utf8',
+    );
+    expect(
+      codeInspectorSrc,
+      'CodeInspector.tsx must use structural generated.breakpointableLines instead of syntax sniffing',
+    ).not.toMatch(/function on_|def on_|elif id ==/);
+
+    // 12. Strict physical detachment of concrete language plugins from `src/core/` & `src/workers/`:
+    //     - `src/core/` (excluding `__tests__`) must contain ZERO concrete language files and ZERO imports from `src/plugins/`
+    //     - `src/workers/` must contain ONLY shared Layer 0.5 host infrastructure (zero concrete language workers)
+    const coreNonTestFiles = nonTestSrcFiles.filter((fp) =>
+      fp.replace(/\\/g, '/').includes('/src/core/'),
+    );
+    for (const filePath of coreNonTestFiles) {
+      const base = filePath.split(/[\\/]/).pop() ?? '';
+      expect(
+        base,
+        `${filePath}: concrete language implementations belong under src/plugins/languages/, not src/core/`,
+      ).not.toMatch(/^(lua|python|js)(Backend|Runner|Plugin)/i);
+      const src = fs.readFileSync(filePath, 'utf8');
+      expect(
+        src,
+        `${filePath}: src/core/ must never depend on src/plugins/ (plugins register inward into core)`,
+      ).not.toMatch(/from\s+['"][^'"]*plugins\//);
+    }
+
+    const workerFiles = nonTestSrcFiles.filter((fp) =>
+      fp.replace(/\\/g, '/').includes('/src/workers/'),
+    );
+    for (const filePath of workerFiles) {
+      const base = filePath.split(/[\\/]/).pop() ?? '';
+      expect(
+        base,
+        `${filePath}: language-specific workers belong under src/plugins/languages/<lang>/, not src/workers/`,
+      ).not.toMatch(/^(lua|python|js)(\.worker|Sandbox)/i);
+    }
   });
 });

@@ -9,7 +9,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
-import { buildHandleSharedModule } from '../core/backends/sharedModule';
+import { getHandleSharedSummary } from '../core/backends/sharedModule';
 import type { ResolvedHandleChannelPoolSpec } from '../core/extensions/types';
 import { formatHandleChannelPoolsSummary } from '../core/projects/store';
 import type { ProjectModel, ScriptLanguageId } from '../types/project';
@@ -99,6 +99,7 @@ export function ProjectExplorer({
                   }))
                 }
                 onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
                     setCollapsed((prev) => ({
@@ -199,11 +200,11 @@ export function ProjectExplorer({
                     );
                   })}
                   {(() => {
-                    const sharedMod = buildHandleSharedModule(handle, language);
-                    if (!sharedMod || !onSelectHandleSharedModule) return null;
+                    const sharedSummary = getHandleSharedSummary(handle, language);
+                    if (!sharedSummary || !onSelectHandleSharedModule) return null;
                     const isActiveShared = isActiveHandle && viewingSharedModule;
                     const totalItems =
-                      sharedMod.variables.length + sharedMod.functions.length;
+                      sharedSummary.varCount + sharedSummary.fnCount;
                     return (
                       <button
                         type="button"
@@ -211,11 +212,11 @@ export function ProjectExplorer({
                           isActiveShared ? 'active' : ''
                         }`}
                         onClick={() => onSelectHandleSharedModule(handle.id)}
-                        title={`只读自动生成模块 ${sharedMod.fileName}（${sharedMod.variables.length} 跨文件变量 · ${sharedMod.functions.length} 公共函数）`}
+                        title={`只读自动生成模块 ${sharedSummary.fileName}（${sharedSummary.varCount} 跨文件变量 · ${sharedSummary.fnCount} 公共函数）`}
                       >
                         <Lock size={11} style={{ flexShrink: 0, opacity: 0.75 }} />
                         <span className="explorer-script-name">
-                          {sharedMod.fileName}
+                          {sharedSummary.fileName}
                         </span>
                         <span className="count-badge" style={{ marginLeft: 'auto' }}>
                           {totalItems}

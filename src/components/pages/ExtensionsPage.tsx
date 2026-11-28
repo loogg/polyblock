@@ -28,16 +28,18 @@ import {
   SAMPLE_CUSTOM_BOARD_TEMPLATE,
   targetProfileRegistry,
 } from '../../core/capabilities/registry';
-import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../../core/extensions/builtinPacks';
+import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../../core/extensions/defaultPacks';
 import { inspectPackImportSourceMatch } from '../../core/extensions/moduleResolver';
-import { extensionRegistry } from '../../core/extensions/registry';
 import {
   derivePackBadges,
+  extensionRegistry,
+  formatExtensionBlockLabel,
   formatPackPlacementSummary,
   formatSectionPlacement,
   getAllPackBlocks,
   getPackEnableState,
   getPackSupportedLanguages,
+  parseExtensionBlockMessage,
   resolvePackSections,
 } from '../../core/extensions/registry';
 import {
@@ -45,6 +47,8 @@ import {
   type UploadedScriptLibFile,
 } from '../../core/extensions/scriptLibScanner';
 import type { PolyExtensionPack } from '../../core/extensions/types';
+import { triggerJsonDownload } from '../../hooks/fileDownload';
+import { useLanguagePluginsRevision } from '../../hooks/useLanguagePlugins';
 import type { ScriptLanguageId, TargetProfile } from '../../types/project';
 import { ExtensionSourceModal } from '../ExtensionSourceModal';
 import { ExtensionSpecModal } from '../ExtensionSpecModal';
@@ -71,20 +75,6 @@ interface ExtensionsPageProps {
   onResetDefaultCatalog: () => void;
   onReturnToBlocks: () => void;
   onNotify: (msg: string) => void;
-}
-
-function downloadJsonFile(fileName: string, data: unknown): void {
-  const blob = new Blob([JSON.stringify(data, null, 2)], {
-    type: 'application/json;charset=utf-8',
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 export function ExtensionsPage({
@@ -119,6 +109,7 @@ export function ExtensionsPage({
   const hasCatalogChanges =
     extensionRegistry.hasCatalogChanges() ||
     targetProfileRegistry.hasCatalogChanges();
+  useLanguagePluginsRevision();
   const backends = backendRegistry.list();
   const supportedExtAccept = getSupportedScriptAcceptAttr();
   const supportedExtLabel = formatSupportedExtensionsLabel();
@@ -163,13 +154,20 @@ export function ExtensionsPage({
     const picked = Array.from(e.target.files ?? []);
     e.target.value = '';
     if (picked.length === 0 || !attachTargetPackId) return;
-    const scanned: UploadedScriptLibFile[] = [];
-    for (const file of picked) {
-      const text = await file.text();
-      scanned.push(scanScriptLibraryFile(file.name, text, activeProjectLanguage));
+    try {
+      const scanned: UploadedScriptLibFile[] = [];
+      for (const file of picked) {
+        const text = await file.text();
+        scanned.push(scanScriptLibraryFile(file.name, text, activeProjectLanguage));
+      }
+      onAttachLibsToGlobalPack(attachTargetPackId, scanned);
+    } catch (err) {
+      onNotify(
+        `读取或解析脚本库文件失败：${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setAttachTargetPackId(null);
     }
-    onAttachLibsToGlobalPack(attachTargetPackId, scanned);
-    setAttachTargetPackId(null);
   };
 
   const renderPackCard = (pack: PolyExtensionPack) => {
@@ -302,17 +300,54 @@ export function ExtensionsPage({
           </div>
         )}
 
-        <div className="paused-var-chips">
-          {allBlocks.slice(0, 4).map((b) => (
-            <span key={b.type} className="var-chip" style={{ fontSize: 10.5 }}>
-              {b.message0.replace(/%\d/g, '▢')}
-            </span>
-          ))}
-          {allBlocks.length > 4 && (
-            <span className="var-chip" style={{ fontSize: 10.5 }}>
-              +{allBlocks.length - 4} 项
-            </span>
-          )}
+        <div className="pack-block-chips">
+          {(() => {
+            const entries = sections.flatMap((sec) =>
+              sec.blocks.map((block) => ({ block, section: sec })),
+            );
+            return (
+              <>
+                {entries.slice(0, 4).map(({ block: b, section: sec }) => {
+                  const segments = parseExtensionBlockMessage(b, sec);
+                  const plainLabel = formatExtensionBlockLabel(b, sec);
+                  return (
+                    <span
+                      key={b.type}
+                      className="pack-block-chip"
+                      style={{ '--chip-accent': sec.color || pack.color } as CSSProperties}
+                      title={b.tooltip ? `${plainLabel} — ${b.tooltip}` : plainLabel}
+                    >
+                      {segments.map((seg, idx) =>
+                        seg.kind === 'arg' ? (
+                          <span
+                            key={`arg-${seg.index}-${idx}`}
+                            className="pack-block-arg"
+                          >
+                            {seg.label}
+                          </span>
+                        ) : (
+                          <span key={`txt-${idx}`}>{seg.text}</span>
+                        ),
+                      )}
+                    </span>
+                  );
+                })}
+                {entries.length > 4 && (
+                  <span
+                    className="pack-block-chip more"
+                    title={`其余 ${entries.length - 4} 个积木：${entries
+                      .slice(4)
+                      .map(({ block, section }) =>
+                        formatExtensionBlockLabel(block, section),
+                      )
+                      .join('、')}`}
+                  >
+                    +{entries.length - 4} 个积木
+                  </span>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         <div className="card-footer">
@@ -361,7 +396,7 @@ export function ExtensionsPage({
               title="导出此全局扩展包 (.polyext.json) 分享或修改"
               aria-label={`导出扩展包 ${pack.name}`}
               onClick={() => {
-                downloadJsonFile(`${pack.id}.polyext.json`, pack);
+                triggerJsonDownload(`${pack.id}.polyext.json`, pack);
                 onNotify(`已导出全局扩展包 ${pack.id}.polyext.json`);
               }}
             >
@@ -412,8 +447,8 @@ export function ExtensionsPage({
             <h1 className="subpage-title">全局扩展库、能力模块与板型预设</h1>
             <p className="subpage-sub">
               此处管理<strong>跨项目共享的全局扩展库</strong>（可为当前项目{' '}
-              <strong>{activeProjectName}</strong> 整包开关，或直接点击多组件卡片中的勾选框按组件部分启用）。若外设包仅归属单个项目，请在「项目配置 → 能力与外设」导入为
-              <strong>项目内嵌包</strong>，不会污染此页。
+              <strong>{activeProjectName}</strong> 整包开关，或直接点击多组件卡片中的勾选框按组件部分启用）。若扩展包仅归属单个项目，请在「项目配置 → 能力与外设」导入为
+              <strong>项目私有包</strong>，不会污染此页。
             </p>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -459,7 +494,7 @@ export function ExtensionsPage({
               type="button"
               className="btn-outline"
               onClick={() => {
-                downloadJsonFile(
+                triggerJsonDownload(
                   'my-robot-api.polyext.json',
                   SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
                 );
@@ -473,7 +508,7 @@ export function ExtensionsPage({
               type="button"
               className="btn-outline"
               onClick={() => {
-                downloadJsonFile(
+                triggerJsonDownload(
                   `${SAMPLE_CUSTOM_BOARD_TEMPLATE.id}.polyboard.json`,
                   SAMPLE_CUSTOM_BOARD_TEMPLATE,
                 );
@@ -599,17 +634,17 @@ export function ExtensionsPage({
                   </span>
                 </div>
                 <p className="card-desc">{prof.description}</p>
-                <div className="paused-var-chips">
-                  <span className="var-chip" style={{ fontSize: 10.5 }}>
+                <div className="meta-chip-list">
+                  <span className="meta-chip">
                     上限 {prof.maxHandles} 句柄
                   </span>
                   {prof.capabilities.length === 0 ? (
-                    <span className="var-chip" style={{ fontSize: 10.5 }}>
+                    <span className="meta-chip">
                       零附加能力（纯语言）
                     </span>
                   ) : (
                     prof.capabilities.map((cid) => (
-                      <span key={cid} className="var-chip" style={{ fontSize: 10.5 }}>
+                      <span key={cid} className="meta-chip code-id">
                         {cid}
                       </span>
                     ))
@@ -627,7 +662,7 @@ export function ExtensionsPage({
                       title="导出此目标板型规格 (.polyboard.json)"
                       aria-label={`导出板型规格 ${prof.name}`}
                       onClick={() => {
-                        downloadJsonFile(`${prof.id}.polyboard.json`, prof);
+                        triggerJsonDownload(`${prof.id}.polyboard.json`, prof);
                         onNotify(`已导出板型规格 ${prof.id}.polyboard.json`);
                       }}
                     >

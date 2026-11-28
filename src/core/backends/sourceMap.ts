@@ -16,10 +16,14 @@ import {
   isCurrentHandleScriptEntry,
 } from '../blocks/workspaceContextBridge';
 import { hasCapability } from '../capabilities/matching';
-import { extensionRegistry } from '../extensions/registry';
+import {
+  extensionRegistry,
+  formatExtensionBlockLabel,
+} from '../extensions/registry';
 import { computeAsyncFunctionNames } from './codegenContext';
 import { getUnifiedHatSpec, isValidTopHatType } from './eventMode';
 import { getLanguageDialect } from './registry';
+import { getBlockVariableFieldIds, sanitizeLocalIdent } from './scopeAnalysis';
 
 export const SENTINEL_START_PREFIX = '__PB_S:';
 export const SENTINEL_END_PREFIX = '__PB_E:';
@@ -206,10 +210,13 @@ export function analyzeWorkspaceDiagnostics(
 
   // 4. Unified pack/capability gating, non-blocking callback checks & channel pool OOB diagnostics
   const activeCaps = getActiveProjectCapabilities();
+  const activeSharedFnSet = new Set(getActiveHandleSharedFunctions() ?? []);
   const externalAsyncSharedFns = new Set<string>();
   for (const s of handleScriptsAll) {
     for (const fn of s.declaredFunctions ?? []) {
-      if (fn.usesSleep) externalAsyncSharedFns.add(fn.name);
+      if (fn.usesSleep && activeSharedFnSet.has(fn.name)) {
+        externalAsyncSharedFns.add(fn.name);
+      }
     }
   }
   const asyncFnNames = computeAsyncFunctionNames(workspace, externalAsyncSharedFns);
@@ -217,15 +224,23 @@ export function analyzeWorkspaceDiagnostics(
   for (const blk of workspace.getAllBlocks(false)) {
     if (blk.isShadow() || !blk.isEnabled()) continue;
 
-    // Strict board alignment: `sleep_ms` (direct or via async helper) cannot block inside non-coroutine callbacks
+    // Strict board alignment: `sleep_ms` (direct or via async helper) cannot block inside non-coroutine callbacks or top-level floating stacks
     const rootBlk = blk.getRootBlock();
     const rootHatSpec = rootBlk ? getUnifiedHatSpec(rootBlk.type) : undefined;
-    if (rootHatSpec && !rootHatSpec.isCoroutine) {
+    const rootIsProc =
+      rootBlk?.type === 'procedures_defnoreturn' ||
+      rootBlk?.type === 'procedures_defreturn';
+    const rootDisallowsWait =
+      (rootHatSpec && !rootHatSpec.isCoroutine) || (!rootHatSpec && !rootIsProc);
+    const contextLabel = rootHatSpec
+      ? `事件回调「${rootHatSpec.eventName}」`
+      : '顶层游离积木';
+    if (rootDisallowsWait) {
       if (blk.type === 'poly_wait_ms') {
         diagnostics.push({
-          id: `wait-in-callback-${rootHatSpec.eventName}-${blk.id}`,
+          id: `wait-in-callback-${rootHatSpec?.eventName ?? 'floating'}-${blk.id}`,
           severity: 'error',
-          message: `禁止在事件回调「${rootHatSpec.eventName}」内使用「等待 ms」（sleep_ms）；实板同步回调不可阻塞，请移至「当程序启动」协程或改用定时器。`,
+          message: `禁止在${contextLabel}内使用「等待 ms」（sleep_ms）；请移至「当程序启动」协程或自定义函数内。`,
           blockId: blk.id,
         });
       } else if (
@@ -236,9 +251,9 @@ export function analyzeWorkspaceDiagnostics(
         const fnName = call.getProcedureCall?.()?.trim();
         if (fnName && asyncFnNames.has(fnName)) {
           diagnostics.push({
-            id: `async-call-in-callback-${rootHatSpec.eventName}-${fnName}-${blk.id}`,
+            id: `async-call-in-callback-${rootHatSpec?.eventName ?? 'floating'}-${fnName}-${blk.id}`,
             severity: 'error',
-            message: `事件回调「${rootHatSpec.eventName}」不可阻塞，禁止调用包含等待 (sleep_ms) 的函数「${fnName}」。`,
+            message: `${contextLabel}不可阻塞，禁止调用包含等待 (sleep_ms) 的函数「${fnName}」。`,
             blockId: blk.id,
           });
         }
@@ -251,12 +266,30 @@ export function analyzeWorkspaceDiagnostics(
         ).sharedFnMeta_;
         if (meta?.fnName && asyncFnNames.has(meta.fnName)) {
           diagnostics.push({
-            id: `async-shared-call-in-callback-${rootHatSpec.eventName}-${meta.fnName}-${blk.id}`,
+            id: `async-shared-call-in-callback-${rootHatSpec?.eventName ?? 'floating'}-${meta.fnName}-${blk.id}`,
             severity: 'error',
-            message: `事件回调「${rootHatSpec.eventName}」不可阻塞，禁止调用包含等待 (sleep_ms) 的跨文件函数「shared.${meta.fnName}」。`,
+            message: `${contextLabel}不可阻塞，禁止调用包含等待 (sleep_ms) 的跨文件函数「shared.${meta.fnName}」。`,
             blockId: blk.id,
           });
         }
+      }
+    }
+
+    // Check `poly_local_set` colliding with enclosing procedure formal parameter (prevents JS SyntaxError & Python/Lua ambiguity)
+    if (blk.type === 'poly_local_set' && rootIsProc && rootBlk) {
+      const proc = rootBlk as Blockly.Block & {
+        getProcedureDef?: () => [string, string[], boolean];
+      };
+      const params = proc.getProcedureDef?.()?.[1] ?? [];
+      const localIdent = sanitizeLocalIdent(String(blk.getFieldValue('NAME') || 'tmp'));
+      const collidesParam = params.find((p) => sanitizeLocalIdent(p) === localIdent);
+      if (collidesParam) {
+        diagnostics.push({
+          id: `local-param-collision-${localIdent}-${blk.id}`,
+          severity: 'error',
+          message: `局部变量「${String(blk.getFieldValue('NAME') || 'tmp')}」与当前函数参数「${collidesParam}」重名，请更换局部变量名称。`,
+          blockId: blk.id,
+        });
       }
     }
 
@@ -286,14 +319,27 @@ export function analyzeWorkspaceDiagnostics(
       }
     }
 
-    // Single-language extension block compatibility check (universal across all registered languages)
-    if (owner && targetLanguage && owner.block.kind !== 'hat') {
-      if (!owner.block.code?.[targetLanguage]?.template) {
-        const targetLabel = getLanguageDialect(targetLanguage).displayName;
+    // Single-language extension block & dispatch-hat compatibility check (universal across all registered languages)
+    if (owner && targetLanguage) {
+      const targetLabel = getLanguageDialect(targetLanguage).displayName;
+      if (owner.block.kind !== 'hat') {
+        if (!owner.block.code?.[targetLanguage]?.template) {
+          diagnostics.push({
+            id: `lang-unsupported-${targetLanguage}-${blk.id}`,
+            severity: 'error',
+            message: `积木「${formatExtensionBlockLabel(owner.block, owner.section)}」（所属「${owner.pack.name}」）未提供 ${targetLabel} 代码模板（code.${targetLanguage}.template），请切换项目语言或补全该语言模板。`,
+            blockId: blk.id,
+          });
+        }
+      } else if (
+        owner.block.hat?.mode === 'dispatch' &&
+        owner.block.hat.condition &&
+        !owner.block.hat.condition[targetLanguage]
+      ) {
         diagnostics.push({
-          id: `lang-unsupported-${targetLanguage}-${blk.id}`,
+          id: `hat-lang-unsupported-${targetLanguage}-${blk.id}`,
           severity: 'error',
-          message: `积木「${owner.block.message0.replace(/%\d/g, '▢')}」（所属「${owner.pack.name}」）未提供 ${targetLabel} 代码模板（code.${targetLanguage}.template），请切换项目语言或补全该语言模板。`,
+          message: `事件帽块「${formatExtensionBlockLabel(owner.block, owner.section)}」（所属「${owner.pack.name}」）未提供 ${targetLabel} 分发条件模板（hat.condition.${targetLanguage}），请切换项目语言或补全该语言模板。`,
           blockId: blk.id,
         });
       }
@@ -476,15 +522,55 @@ export function analyzeWorkspaceDiagnostics(
           }
         }
 
-        // 6b. Shared function isolation: exported inside `shared`, so it CANNOT reference single-file private variables!
+        // 6b. Shared function isolation: exported inside `shared`, so it CANNOT reference single-file private variables or call private functions!
         const proc = top as Blockly.Block & {
           getProcedureDef?: () => [string, string[], boolean];
         };
         const paramSet = new Set(proc.getProcedureDef?.()?.[1] ?? []);
         const flaggedPrivVars = new Set<string>();
+        const flaggedPrivFns = new Set<string>();
+        const isEnclosingLoopVar = (desc: Blockly.Block, varName: string): boolean => {
+          let prev: Blockly.Block = desc;
+          let cur = desc.getParent();
+          while (cur && cur !== top) {
+            if (
+              (cur.type === 'poly_for_range' ||
+                cur.type === 'controls_for' ||
+                cur.type === 'controls_forEach') &&
+              cur.getField('VAR') &&
+              cur.getInputWithBlock(prev)?.name === 'DO'
+            ) {
+              const loopVarId = String(cur.getFieldValue('VAR') || '');
+              const loopVarName = loopVarId
+                ? varMap.getVariableById(loopVarId)?.getName()
+                : undefined;
+              if (loopVarName === varName) return true;
+            }
+            prev = cur;
+            cur = cur.getParent();
+          }
+          return false;
+        };
         for (const desc of top.getDescendants(false)) {
           if (desc.isShadow() || !desc.isEnabled() || desc === top) continue;
-          if (!desc.getField('VAR')) continue;
+
+          if (
+            desc.type === 'procedures_callnoreturn' ||
+            desc.type === 'procedures_callreturn'
+          ) {
+            const callee = String(desc.getFieldValue('NAME') || '').trim();
+            if (callee && !sharedFnSet.has(callee) && !flaggedPrivFns.has(callee)) {
+              flaggedPrivFns.add(callee);
+              diagnostics.push({
+                id: `shared-fn-private-fn-${fnName}-${callee}-${desc.id}`,
+                severity: 'error',
+                message: `跨文件公共函数「shared.${fnName}」导出在 shared 模块中，不能调用本文件私有函数「${callee}」；请将「${callee}」提升为跨文件公共函数。`,
+                blockId: desc.id,
+              });
+            }
+            continue;
+          }
+
           if (
             desc.type === 'poly_for_range' ||
             desc.type === 'controls_for' ||
@@ -492,22 +578,24 @@ export function analyzeWorkspaceDiagnostics(
           ) {
             continue;
           }
-          const vId = String(desc.getFieldValue('VAR') || '');
-          const vModel = vId ? varMap.getVariableById(vId) : null;
-          const vName = vModel?.getName();
-          if (
-            vName &&
-            !paramSet.has(vName) &&
-            !sharedVarSet.has(vName) &&
-            !flaggedPrivVars.has(vName)
-          ) {
-            flaggedPrivVars.add(vName);
-            diagnostics.push({
-              id: `shared-fn-private-var-${fnName}-${vName}-${desc.id}`,
-              severity: 'error',
-              message: `跨文件公共函数「shared.${fnName}」导出在 shared 模块中，不能引用单文件私有变量「${vName}」；请改用跨文件变量、函数参数或局部临时变量。`,
-              blockId: desc.id,
-            });
+          for (const vId of getBlockVariableFieldIds(desc)) {
+            const vModel = vId ? varMap.getVariableById(vId) : null;
+            const vName = vModel?.getName();
+            if (
+              vName &&
+              !paramSet.has(vName) &&
+              !sharedVarSet.has(vName) &&
+              !isEnclosingLoopVar(desc, vName) &&
+              !flaggedPrivVars.has(vName)
+            ) {
+              flaggedPrivVars.add(vName);
+              diagnostics.push({
+                id: `shared-fn-private-var-${fnName}-${vName}-${desc.id}`,
+                severity: 'error',
+                message: `跨文件公共函数「shared.${fnName}」导出在 shared 模块中，不能引用单文件私有变量「${vName}」；请改用跨文件变量、函数参数或局部临时变量。`,
+                blockId: desc.id,
+              });
+            }
           }
         }
       }

@@ -343,6 +343,9 @@ export function App() {
           })
         }
         onSaveProjectFile={() => projectStore.handleSaveProjectFile(activeProject.id)}
+        onSaveProjectArchive={() =>
+          projectStore.handleSaveProjectArchive(activeProject.id)
+        }
         onOpenProjectsPage={() => navigateTo('projects')}
         onSelectLanguage={projectStore.handleSelectLanguage}
         onSelectSpeed={execution.handleSelectSpeed}
@@ -622,6 +625,7 @@ export function App() {
               onDuplicateProject={projectStore.handleDuplicateProject}
               onDeleteProject={projectStore.handleDeleteProject}
               onSaveProjectFile={projectStore.handleSaveProjectFile}
+              onSaveProjectArchive={projectStore.handleSaveProjectArchive}
               onImportProject={projectStore.handleImportProject}
               onOpenProjectSettings={(pid) =>
                 setSettingsModal({ projectId: pid, initialTab: 'general' })
@@ -680,7 +684,16 @@ export function App() {
                   execution.updateTimeSlice(patch.timeSliceMs);
                 }
               }}
-              onResetWorkspace={projectStore.handleResetWorkspace}
+              onResetWorkspace={() =>
+                setBlocklyDialogReq({
+                  kind: 'confirm',
+                  message:
+                    '确定要清除本地缓存并恢复全部出厂演示项目吗？未导出的自定义工程修改将会丢失。',
+                  callback: (ok) => {
+                    if (ok) projectStore.handleResetWorkspace();
+                  },
+                })
+              }
               onReturnToBlocks={() => navigateTo('blocks')}
             />
           )}
@@ -700,6 +713,7 @@ export function App() {
         language={language}
         runnerStatus={execution.runnerStatus}
         multiHandleRunning={execution.multiHandleRunning}
+        runningHandleCount={execution.runningHandleIds.length}
         blockCount={generated.blockCount}
         diagnosticCount={generated.diagnostics.length}
         diagnosticErrorCount={
@@ -716,9 +730,8 @@ export function App() {
           initialHandleId={settingsModal.initialHandleId}
           allExtensionPacks={extActions.allExtensionPacks}
           allTargetProfiles={extActions.allTargetProfiles}
-          disableLanguageSwitch={
-            settingsModalProject.id === activeProject.id && isRunningOrPaused
-          }
+          editingLocked={isRunningOrPaused}
+          suppressed={Boolean(scriptLibModal)}
           onClose={() => setSettingsModal(null)}
           onUpdateProjectMeta={projectStore.handleUpdateProjectMeta}
           onApplyTargetProfile={extActions.handleApplyTargetProfile}

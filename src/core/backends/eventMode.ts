@@ -157,9 +157,12 @@ export function inspectWorkspaceScriptMeta(
     ? blocksContainer.blocks
     : [];
 
-  topList.forEach((top, idx) => {
+  const perTypeIdx = new Map<string, number>();
+  topList.forEach((top) => {
     if (!top || top.enabled === false) return;
     const t = String(top.type ?? '');
+    const typeIdx = perTypeIdx.get(t) ?? 0;
+    perTypeIdx.set(t, typeIdx + 1);
     if (t === 'procedures_defnoreturn' || t === 'procedures_defreturn') {
       const fields =
         top.fields && typeof top.fields === 'object'
@@ -175,15 +178,16 @@ export function inspectWorkspaceScriptMeta(
               .map((p) => (typeof p?.name === 'string' ? p.name.trim() : ''))
               .filter(Boolean)
           : [];
-        const directWait = jsonSubtreeUsesWait(top.inputs);
+        const directWait = jsonSubtreeUsesWait(top);
         const callees = new Set<string>();
-        jsonSubtreeCalledProcedures(top.inputs, callees);
+        jsonSubtreeCalledProcedures(top, callees);
         fnCallGraph.set(fnName, callees);
         declaredFunctions.push({
           name: fnName,
           params,
           hasReturn: t === 'procedures_defreturn',
           usesSleep: directWait,
+          calledProcedures: Array.from(callees),
           scriptId,
           scriptName,
         });
@@ -206,7 +210,7 @@ export function inspectWorkspaceScriptMeta(
       const info = extensionRegistry.renderExtractedDispatchBranchFromFields(
         t,
         fields,
-        idx,
+        typeIdx,
       );
       if (info) {
         let fnName = info.baseFnName;
@@ -334,7 +338,7 @@ export function inspectWorkspaceScriptMeta(
 export function buildHandleScriptsMeta(
   handle: RuntimeHandle,
 ): ActiveHandleScriptMeta[] {
-  return handle.scripts.map((s) => {
+  const metas: ActiveHandleScriptMeta[] = handle.scripts.map((s) => {
     const meta = inspectWorkspaceScriptMeta(s.workspace, s.id, s.name);
     return {
       id: s.id,
@@ -348,6 +352,40 @@ export function buildHandleScriptsMeta(
       declaredFunctions: meta.declaredFunctions,
     };
   });
+
+  // Handle-wide transitive `usesSleep` fixed-point closure strictly across shared functions
+  const sharedFnSet = new Set(
+    (handle.sharedFunctions ?? []).map((n) => n.trim()).filter(Boolean),
+  );
+  const sleepSharedFnNames = new Set<string>();
+  for (const scr of metas) {
+    for (const fn of scr.declaredFunctions ?? []) {
+      if (fn.usesSleep && sharedFnSet.has(fn.name)) {
+        sleepSharedFnNames.add(fn.name);
+      }
+    }
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const scr of metas) {
+      for (const fn of scr.declaredFunctions ?? []) {
+        if (fn.usesSleep) continue;
+        for (const callee of fn.calledProcedures ?? []) {
+          if (sleepSharedFnNames.has(callee)) {
+            fn.usesSleep = true;
+            if (sharedFnSet.has(fn.name)) {
+              sleepSharedFnNames.add(fn.name);
+            }
+            changed = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return metas;
 }
 
 /**
@@ -477,12 +515,12 @@ function getHandleSiblingScripts() {
 }
 
 /**
- * Generates the handle-wide central dispatch router(s) (`on_timer`, `on_button`, etc.)
- * EXCLUSIVELY in the entry script (`main.lua` / `main.py`).
+ * Generates the handle-wide central dispatch router(s) (driven by `hat.mode === 'dispatch'`)
+ * EXCLUSIVELY in the entry script (`main.<ext>`).
  *
  * Strictly does NOT auto-import ordinary companion scripts at file top — companion scripts
  * must be loaded explicitly by the user via `poly_require_script` (verified by static diagnostics).
- * Only returns `import sys` in Python when routing to sibling branches via `sys.modules.get(...)`.
+ * Uses each language plugin's `adapter.formatDispatchRouter` hook to stay language-agnostic.
  */
 export function buildEntryDispatchRouters(
   workspace: Blockly.Workspace,
@@ -500,9 +538,12 @@ export function buildEntryDispatchRouters(
   const currentName = currentMeta?.name ?? 'main';
 
   const topBlocks = workspace.getTopBlocks(true);
-  topBlocks.forEach((blk, idx) => {
+  const perTypeIdx = new Map<string, number>();
+  topBlocks.forEach((blk) => {
     if (blk.isShadow() || !blk.isEnabled()) return;
-    const info = extensionRegistry.renderExtractedDispatchBranchFromBlock(blk, idx);
+    const typeIdx = perTypeIdx.get(blk.type) ?? 0;
+    perTypeIdx.set(blk.type, typeIdx + 1);
+    const info = extensionRegistry.renderExtractedDispatchBranchFromBlock(blk, typeIdx);
     if (!info) return;
     let fnName = info.baseFnName;
     let dupIdx = 2;

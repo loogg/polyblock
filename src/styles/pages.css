@@ -312,3 +312,88 @@
   color: var(--text-secondary);
 }
 
+.pack-block-chips,
+.meta-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pack-block-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--bg-panel-subtle);
+  border: 1px solid var(--border);
+  border-left: 2.5px solid color-mix(in srgb, var(--chip-accent, var(--accent)) 75%, transparent);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--text-primary);
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.pack-block-chip:hover {
+  border-color: color-mix(in srgb, var(--chip-accent, var(--accent)) 45%, var(--border-strong));
+  border-left-color: var(--chip-accent, var(--accent));
+  background: color-mix(in srgb, var(--chip-accent, var(--accent)) 6%, var(--bg-panel));
+}
+
+.pack-block-arg {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--chip-accent, var(--accent)) 11%, var(--bg-panel));
+  color: color-mix(in srgb, var(--chip-accent, var(--accent)) 82%, var(--text-primary));
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+[data-theme='dark'] .pack-block-arg {
+  background: color-mix(in srgb, var(--chip-accent, var(--accent)) 20%, var(--bg-panel));
+  color: color-mix(in srgb, var(--chip-accent, var(--accent)) 68%, #ffffff);
+}
+
+.pack-block-chip.more {
+  border-left: 1px dashed var(--border);
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.pack-block-chip.more:hover {
+  border-color: var(--border-strong);
+  border-left-color: var(--border-strong);
+  background: var(--bg-panel-subtle);
+  color: var(--text-secondary);
+}
+
+.meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2.5px 9px;
+  border-radius: 7px;
+  background: var(--bg-panel-subtle);
+  border: 1px solid var(--border);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.meta-chip.code-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+}
+

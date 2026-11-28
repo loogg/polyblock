@@ -222,7 +222,7 @@ export function registerPolyBlocks(): void {
       inputsInline: true,
       output: null,
       style: 'list_blocks',
-      tooltip: '读取列表第 N 项（从 1 开始计数：Lua 导出 lst[N]，Python 导出 lst[N - 1]）。',
+      tooltip: '读取列表第 N 项（从 1 开始计数，自动适配各目标语言的索引基数）。',
     },
     {
       type: 'poly_list_set',
@@ -249,7 +249,7 @@ export function registerPolyBlocks(): void {
       previousStatement: null,
       nextStatement: null,
       style: 'list_blocks',
-      tooltip: '移除列表第 N 项（从 1 开始计数：Lua 导出 table.remove，Python 导出 pop）。',
+      tooltip: '移除列表第 N 项（从 1 开始计数，自动生成目标语言原生删除语句）。',
     },
 
     // --- 字典核心原语（纯值槽、零外部依赖，支持跨文件/单文件/局部变量与嵌套字典） ---
@@ -258,7 +258,7 @@ export function registerPolyBlocks(): void {
       message0: '空字典 { }',
       output: null,
       style: 'dict_blocks',
-      tooltip: '创建一个空的键值字典（Lua table / Python dict），可用于变量赋值或嵌套子字典。',
+      tooltip: '创建一个空的键值字典（映射为各目标语言原生键值表/字典对象），可用于变量赋值或嵌套子字典。',
     },
     {
       type: 'poly_dict_set',
@@ -309,13 +309,13 @@ export function registerPolyBlocks(): void {
       previousStatement: null,
       nextStatement: null,
       style: 'dict_blocks',
-      tooltip: '从指定字典删除该键名（键不存在时静默跳过：Lua 导出 d[k] = nil，Python 导出 d.pop(k, None)）。',
+      tooltip: '从指定字典删除该键名（键不存在时静默跳过，自动生成目标语言原生删除语句）。',
     },
   ];
 
   Blockly.defineBlocksWithJsonArray(coreBlockDefs);
 
-  // Imperative core block: load sibling script in the same handle (`require("name")`)
+  // Imperative core block: load sibling script in the same handle
   Blockly.Blocks['poly_require_script'] = {
     init(this: Blockly.Block) {
       this.appendDummyInput()
@@ -326,7 +326,7 @@ export function registerPolyBlocks(): void {
       this.setInputsInline(true);
       this.setStyle('event_stmt_blocks');
       this.setTooltip(
-        '加载同句柄内的其他脚本（Lua 导出 require("名称")，Python 导出 import 名称）。可放在「当程序启动」或条件分支内实现按需加载。',
+        '显式加载同句柄内的其他伴随脚本（按当前目标语言自动生成模块导入语句）。可放在「当程序启动」或条件分支内实现按需加载。',
       );
     },
   };
@@ -488,6 +488,8 @@ export function registerPolyBlocks(): void {
       this: Blockly.Block & { getSurroundLoop?: () => Blockly.Block | null },
     ) {
       origFlowInit.call(this);
+      // Allow STATEMENT_PREFIX / STATEMENT_SUFFIX so break/continue participates cleanly in SourceMap & breakpoints
+      this.suppressPrefixSuffix = false;
       this.getSurroundLoop = function (this: Blockly.Block) {
         let cur: Blockly.Block | null = this;
         do {
@@ -499,7 +501,7 @@ export function registerPolyBlocks(): void {
     };
   }
 
-  // Register all built-in declarative extension packs (rt, virtual-board, clock-timer) & custom packs
+  // Initialize declarative extension packs from the equal-rights global catalog
   extensionRegistry.ensureInitialized();
 
   blocksRegistered = true;

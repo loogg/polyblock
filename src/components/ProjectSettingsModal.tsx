@@ -23,7 +23,8 @@ interface ProjectSettingsModalProps {
   initialHandleId?: string;
   allExtensionPacks: PolyExtensionPack[];
   allTargetProfiles: TargetProfile[];
-  disableLanguageSwitch?: boolean;
+  editingLocked?: boolean;
+  suppressed?: boolean;
   onClose: () => void;
   onUpdateProjectMeta: (
     projectId: string,
@@ -64,7 +65,8 @@ export function ProjectSettingsModal({
   initialHandleId,
   allExtensionPacks,
   allTargetProfiles,
-  disableLanguageSwitch = false,
+  editingLocked = false,
+  suppressed = false,
   onClose,
   onUpdateProjectMeta,
   onApplyTargetProfile,
@@ -93,15 +95,16 @@ export function ProjectSettingsModal({
   } | null>(null);
   const modalRef = useRef<HTMLDivElement | null>(null);
 
-  useModalFocusTrap(modalRef, !viewingPack);
+  const isOverlaySuppressed = Boolean(viewingPack) || suppressed;
+  useModalFocusTrap(modalRef, !isOverlaySuppressed);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !viewingPack) onClose();
+      if (e.key === 'Escape' && !isOverlaySuppressed) onClose();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose, viewingPack]);
+  }, [onClose, isOverlaySuppressed]);
 
   return (
     <div
@@ -166,7 +169,7 @@ export function ProjectSettingsModal({
               <GeneralProfileTab
                 project={project}
                 allTargetProfiles={allTargetProfiles}
-                disableLanguageSwitch={disableLanguageSwitch}
+                editingLocked={editingLocked}
                 onUpdateProjectMeta={onUpdateProjectMeta}
                 onApplyTargetProfile={onApplyTargetProfile}
                 onImportBoardProfileJson={onImportBoardProfileJson}
@@ -178,6 +181,7 @@ export function ProjectSettingsModal({
               <CapabilitiesTab
                 project={project}
                 allExtensionPacks={allExtensionPacks}
+                editingLocked={editingLocked}
                 onToggleCapabilityForProject={onToggleCapabilityForProject}
                 onImportLocalExtensionJson={onImportLocalExtensionJson}
                 onOpenScriptLibImportModal={onOpenScriptLibImportModal}
@@ -197,6 +201,7 @@ export function ProjectSettingsModal({
               <HandlesTab
                 project={project}
                 selectedHandleId={selectedHandleId}
+                editingLocked={editingLocked}
                 onSelectHandleId={setSelectedHandleId}
                 onAddHandle={onAddHandle}
                 onRenameHandle={onRenameHandle}

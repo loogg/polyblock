@@ -14,6 +14,7 @@ import { PolySelect } from '../PolySelect';
 interface HandlesTabProps {
   project: ProjectModel;
   selectedHandleId: string;
+  editingLocked?: boolean;
   onSelectHandleId: (handleId: string) => void;
   onAddHandle: (projectId: string) => void;
   onRenameHandle: (projectId: string, handleId: string, nextName: string) => void;
@@ -30,6 +31,7 @@ interface HandlesTabProps {
 export function HandlesTab({
   project,
   selectedHandleId,
+  editingLocked = false,
   onSelectHandleId,
   onAddHandle,
   onRenameHandle,
@@ -152,6 +154,8 @@ export function HandlesTab({
           type="button"
           className="btn-outline"
           style={{ height: 28, padding: '0 9px', fontSize: 11.5 }}
+          disabled={editingLocked}
+          title={editingLocked ? '请先停止当前运行再新建句柄' : undefined}
           onClick={() => onAddHandle(project.id)}
         >
           <Plus size={13} />
@@ -171,10 +175,12 @@ export function HandlesTab({
               aria-label="句柄名称"
               className="dropdown-rename-input"
               style={{ width: 170, height: 28 }}
+              disabled={editingLocked}
               value={handleNameDraft}
               onChange={(e) => setHandleNameDraft(e.target.value)}
               onBlur={() => {
                 if (
+                  !editingLocked &&
                   handleNameDraft.trim() &&
                   handleNameDraft.trim() !== selectedHandle.name
                 ) {
@@ -186,7 +192,7 @@ export function HandlesTab({
                 }
               }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && handleNameDraft.trim()) {
+                if (!editingLocked && e.key === 'Enter' && handleNameDraft.trim()) {
                   onRenameHandle(
                     project.id,
                     selectedHandle.id,
@@ -202,11 +208,12 @@ export function HandlesTab({
                 gap: 5,
                 fontSize: 12,
                 color: 'var(--text-secondary)',
-                cursor: 'pointer',
+                cursor: editingLocked ? 'not-allowed' : 'pointer',
               }}
             >
               <input
                 type="checkbox"
+                disabled={editingLocked}
                 checked={selectedHandle.autoStart}
                 onChange={(e) =>
                   onUpdateHandleConfig(project.id, selectedHandle.id, {
@@ -223,7 +230,8 @@ export function HandlesTab({
               type="button"
               className="btn-ghost"
               style={{ padding: '4px 6px' }}
-              title="复制此句柄"
+              disabled={editingLocked}
+              title={editingLocked ? '请先停止当前运行再复制句柄' : '复制此句柄'}
               onClick={() => onDuplicateHandle(project.id, selectedHandle.id)}
             >
               <Copy size={13} />
@@ -233,7 +241,8 @@ export function HandlesTab({
                 type="button"
                 className="btn-ghost"
                 style={{ padding: '4px 6px', color: 'var(--danger)' }}
-                title="删除此句柄"
+                disabled={editingLocked}
+                title={editingLocked ? '请先停止当前运行再删除句柄' : '删除此句柄'}
                 onClick={() => {
                   const remaining = project.handles.find(
                     (h) => h.id !== selectedHandle.id,
@@ -306,6 +315,7 @@ export function HandlesTab({
                           <button
                             key={preset}
                             type="button"
+                            disabled={editingLocked}
                             className={
                               poolCfg.count === preset
                                 ? 'btn-primary'
@@ -322,6 +332,7 @@ export function HandlesTab({
                           aria-label={`句柄自定义${pool.label}数`}
                           className="compact-num-input"
                           style={{ width: 58, height: 26, textAlign: 'center' }}
+                          disabled={editingLocked}
                           min={pool.min}
                           max={pool.max}
                           value={poolCfg.count}
@@ -348,6 +359,7 @@ export function HandlesTab({
                     >
                       <PolySelect
                         size="sm"
+                        disabled={editingLocked}
                         ariaLabel={`选择${pool.label}`}
                         value={curSlotId}
                         minPopoverWidth={140}
@@ -368,6 +380,7 @@ export function HandlesTab({
                         aria-label={`${pool.label}别名输入框`}
                         className="dropdown-rename-input"
                         style={{ width: 168, height: 28 }}
+                        disabled={editingLocked}
                         placeholder={`如：${pool.prefix}0 用途标注`}
                         maxLength={16}
                         value={curDraft}
@@ -378,12 +391,15 @@ export function HandlesTab({
                           }))
                         }
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleSavePoolAlias(pool);
+                          if (!editingLocked && e.key === 'Enter') {
+                            handleSavePoolAlias(pool);
+                          }
                         }}
                       />
                       <button
                         type="button"
                         className="btn-outline"
+                        disabled={editingLocked}
                         style={{ height: 28, padding: '0 10px', fontSize: 11.5 }}
                         onClick={() => handleSavePoolAlias(pool)}
                       >
@@ -413,6 +429,7 @@ export function HandlesTab({
                               <button
                                 type="button"
                                 className="script-tab-icon-btn"
+                                disabled={editingLocked}
                                 title={`移除 ${pool.prefix}${slotKey} 别名`}
                                 onClick={() =>
                                   handleRemovePoolAlias(pool, slotKey)

@@ -206,6 +206,11 @@
   box-shadow: 0 0 0 2.5px var(--accent-soft);
 }
 
+.compact-num-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .settings-ext-row.multi {
   flex-direction: column;
   align-items: stretch;
@@ -375,6 +380,10 @@
 
 [data-theme='dark'] .lib-warn-chip {
   color: #fbbf24;
+}
+
+.script-lib-backdrop {
+  z-index: 175;
 }
 
 .script-lib-modal {

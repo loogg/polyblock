@@ -1,11 +1,11 @@
 import boardsManifest from '../../boards/manifest.json';
 import sampleBoardRaw from '../../templates/sample-board.polyboard.json';
-import type { TargetProfile } from '../../types/project';
+import type { ScriptLanguageId, TargetProfile } from '../../types/project';
 import {
   applyAssetManifest,
   type AssetManifest,
 } from '../assets/manifestLoader';
-import { normalizeLanguageId } from '../backends/registry';
+import { backendRegistry } from '../backends/registry';
 
 export const STORAGE_GLOBAL_PROFILES_KEY = 'polyblock.profiles.global.v2';
 
@@ -48,6 +48,13 @@ export function validateTargetProfile(raw: unknown): TargetProfile {
       defaultChannelCounts = cleaned;
     }
   }
+  const rawLang =
+    typeof obj.defaultLanguage === 'string' ? obj.defaultLanguage.trim() : '';
+  const defaultLanguage: ScriptLanguageId = /^[a-z][a-z0-9_-]{0,23}$/.test(
+    rawLang,
+  )
+    ? rawLang
+    : (backendRegistry.listIds()[0] ?? 'lua');
   return {
     format: 'polyblock-board',
     version: 1,
@@ -55,7 +62,7 @@ export function validateTargetProfile(raw: unknown): TargetProfile {
     name: obj.name.trim(),
     description:
       typeof obj.description === 'string' ? obj.description : '目标板型规格',
-    defaultLanguage: normalizeLanguageId(obj.defaultLanguage),
+    defaultLanguage,
     maxHandles: Number.isFinite(maxHandlesNum)
       ? Math.max(1, Math.min(16, Math.trunc(maxHandlesNum)))
       : 8,
@@ -146,6 +153,11 @@ class TargetProfileRegistry {
   listAll(): TargetProfile[] {
     this.ensureInitialized();
     return Array.from(this.profiles.values());
+  }
+
+  tryGet(id: string): TargetProfile | undefined {
+    this.ensureInitialized();
+    return this.profiles.get(id);
   }
 
   get(id: string): TargetProfile {

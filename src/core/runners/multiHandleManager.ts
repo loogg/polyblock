@@ -7,12 +7,10 @@ import type {
 import { backendRegistry } from '../backends/registry';
 import {
   compileHandleArtifacts,
-  compileScriptHeadless,
+  type HandleCompiledArtifacts,
 } from '../compiler/handleBuilder';
 import { runnerManager } from './manager';
 import type { RunResult, RunnerStatus, ScriptRunner } from './types';
-
-export { compileScriptHeadless };
 
 export interface MultiHandleRunOptions {
   project: ProjectModel;
@@ -20,6 +18,8 @@ export interface MultiHandleRunOptions {
   timeSliceMs?: number;
   stepDelayMs: number;
   mockInputs: Record<string, unknown>;
+  /** Optional precompiled artifacts keyed by handle ID to avoid compiling handles twice. */
+  precompiledByHandleId?: Map<string, HandleCompiledArtifacts>;
 }
 
 export interface MultiHandleRunCallbacks {
@@ -46,17 +46,14 @@ export interface MultiHandleRunCallbacks {
  */
 export class MultiHandleRunnerOrchestrator {
   private activeRunners = new Map<string, ScriptRunner>();
-  private running = false;
-
-  isRunning(): boolean {
-    return this.running;
-  }
+  private runGeneration = 0;
 
   async runAllHandles(
     options: MultiHandleRunOptions,
     callbacks: MultiHandleRunCallbacks,
   ): Promise<Array<{ handle: RuntimeHandle; result: RunResult }>> {
     this.stopAll(true);
+    const myGeneration = ++this.runGeneration;
 
     const {
       project,
@@ -64,6 +61,7 @@ export class MultiHandleRunnerOrchestrator {
       timeSliceMs,
       stepDelayMs,
       mockInputs,
+      precompiledByHandleId,
     } = options;
     const targetHandles = project.handles.filter((h) => h.autoStart);
     const handlesToRun = (
@@ -89,15 +87,34 @@ export class MultiHandleRunnerOrchestrator {
       }));
     }
 
-    this.running = true;
     callbacks.onStatusChange('running');
 
     const tasks = handlesToRun.map(async (handle) => {
-      const built = compileHandleArtifacts({
-        project,
-        handle,
-        useDebugCompanion: true,
-      });
+      const built =
+        precompiledByHandleId?.get(handle.id) ??
+        compileHandleArtifacts({
+          project,
+          handle,
+          useDebugCompanion: true,
+        });
+
+      if (built.blockingErrors.length > 0) {
+        for (const err of built.blockingErrors) {
+          callbacks.onHandleLog(
+            handle,
+            'error',
+            `[${err.scriptName}] ${err.message}`,
+          );
+        }
+        return {
+          handle,
+          result: {
+            ok: false,
+            durationMs: 0,
+            errorMessage: built.blockingErrors.map((e) => e.message).join('\n'),
+          },
+        };
+      }
 
       if (built.resolution.conflicts.length > 0) {
         for (const conflict of built.resolution.conflicts) {
@@ -142,17 +159,20 @@ export class MultiHandleRunnerOrchestrator {
         },
       );
 
-      callbacks.onHandleTelemetry(handle.id, null);
+      if (this.activeRunners.get(handle.id) === runner) {
+        callbacks.onHandleTelemetry(handle.id, null);
+        this.activeRunners.delete(handle.id);
+      }
       runner.dispose();
-      this.activeRunners.delete(handle.id);
       return { handle, result };
     });
 
     try {
       return await Promise.all(tasks);
     } finally {
-      this.running = false;
-      callbacks.onStatusChange('ready');
+      if (this.runGeneration === myGeneration) {
+        callbacks.onStatusChange('ready');
+      }
     }
   }
 
@@ -194,7 +214,6 @@ export class MultiHandleRunnerOrchestrator {
         runner.dispose();
       }
       this.activeRunners.clear();
-      this.running = false;
     }
   }
 

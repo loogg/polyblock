@@ -1,47 +1,33 @@
 # PolyBlock Architecture Guardrails
 
-> **演进优先（防僵化总则）**：本文件只记录当前已验证的核心架构不变量，用于在新增语言后端（如 C / JS 等）或扩展功能时避免重踩旧坑。项目处于开发期，**默认零旧版/旧文件兼容**；若未来有更简洁正确的架构路线，直接彻底重构并同步更新本文件，严禁为兼容旧实现保留死代码或冗余兜底。
+> **演进优先（防僵化总则）**：项目处于开发期，**默认零旧版/旧文件兼容**；若出现更简洁正确的架构路线，直接彻底重构并同步更新文档，严禁保留死代码、废弃协议别名或过时历史文档。  
+> **职责边界**：本文件仅保留**最高层架构方向红线、文档路由与交付门禁**；详细开发规范归档于 [`docs/guidelines/`](./docs/guidelines/)，各语言实现手册归档于 [`docs/languages/`](./docs/languages/README.md)，未来演进路线统一记录在 [`docs/architecture/roadmap.md`](./docs/architecture/roadmap.md)。
 
-## 1. 声明式架构与核心边界
-- **元数据/包配置驱动（零硬编码扫描）**：扩展包的能力开关、帽块生命周期/保活（`hat.mode` / `hat.keepsAlive`）、模拟控件事件（`simWidgets[].emitEvent`）、句柄通道池（`handleConfigs`）、运行时监控（`sections[].runtimeMonitor`）统一由 `.polyext.json` / `.polyboard.json` 声明字段驱动。**严禁**在 IDE、编译器、Worker、调度器或 UI 中按具体包 ID / 积木名 / 事件名写硬编码扫描、专有事件通道或专用配置字段；若发现需要给某个默认包开特例，优先补协议字段。
-- **全资产成品 JSON 化与全包/板型彻底平权（零 `isBuiltin` 特权）**：
-  - `src/packs/*.polyext.json`、`src/boards/*.polyboard.json`、`src/demos/*.polyblock.json` 及 `src/templates/` 统一使用与用户导出 100% 同构的成品 JSON + `manifest.json` 顺序清单加载，仅作为**出厂默认种子清单**（`DEFAULT_EXTENSION_PACKS` / `DEFAULT_TARGET_PROFILES`）。
-  - **彻底禁止 `isBuiltin` 特权与硬编码包/板型 ID 常量**：便携 JSON 协议严禁出现 `builtin` 字段，运行时与 UI 亦严禁区分“内置包 vs 自定义包”或保留 `RT_PACK` / `VIRTUAL_BOARD_PACK` / `CAP_RT*` / `'generic-script'` 等硬编码 ID 常量。全局库中任意扩展包与板型均享有完全同等操作权（查看、附加源码库、同 ID 覆盖升级、导出、移除；板型仅限制至少保留 1 个），通过差分持久化 + **「恢复默认」** 还原出厂清单；工程导出仅按纯内容比对（`isSameAsDefault`）决定是否写入 `bundledExtensions` 快照。
-- **Layer 0 核心**：所有零外部模块依赖的纯语言原语（`on_start`、`require`/`import`、控制/运算/逻辑/文本含 `str_replace`、列表、字典 5 块、变量、函数）必须留在核心，不放进扩展包。
-- **扩展包（`.polyext.json`）**：仅承载带真实外部模块接口（`imports` + `libs` 或 `sandboxMock`）的运行时/外设/库能力（如 `rt`、`virtual-board`、`clock-timer`）；多语言声明按语言 ID 映射（`Record<ScriptLanguageId, ...>`），不写死二元语言字段。
-- **多语言后端单一入口**：每个目标语言后端（`src/core/backends/*Backend.ts`）独占声明自身完整 `LanguageDialect`（含语法字面量、关键字、`builtinFuncs`、`libBinding`、`extractErrorLine` 及可选 `exportToolchain`），统一经 `src/core/backends/registry.ts` 的 `BUILTIN_BACKEND_ENTRIES` 单一入口自动派生 `ScriptLanguageId` 与全部核心/UI 辅助函数；**严禁**在 `backends/types.ts`、`highlight.ts`、`scriptLibScanner.ts`、`moduleResolver.ts`、`logParser.ts` 等语言无关核心模块中维护硬编码的语言表。
-- **架构纯净度与防回流红线**：
-  - **零遗留协议别名与死导出**：重构后立即清理旧桥接别名（如 `emit_device`/`get_input`）和零引用的导出函数，不留“以防万一”的兼容层。
-  - **语言无关模块零单一语言命名**：共享调度器（`runtimeScheduler.ts`）、核心块提示语（`definitions.ts` / `handleVariables.ts`）与 UI 控件须使用语言无关术语（如 `waitAsyncStartTurn`，而非 `waitPythonStartTurn`），不假设仅存在 2 种语言。
-  - **纯值槽原则**：列表、字典等容器操作积木统一用 `input_value` 接收容器表达式，作用域自然随拖入的变量走；**禁止**用 `field_variable` 扫描推断作用域，**禁止**通过 Blockly `provideFunction_` 向导出代码注入隐藏辅助函数。
-  - **自动化架构门禁**：上述红线统一写入 `src/core/__tests__/extensions.test.ts` 的源码静态门禁测试，随 `npm test` 每次运行自动拦断回流。
+---
 
-## 2. 句柄、并发与作用域模型（新增语言后端必守）
-- **1 句柄 = 1 线程 / 单轨协程循环**：
-  - 同一句柄内所有脚本共享状态，但**不开多线程**（沙箱与未来 C 后端保持同一执行模型）。
-  - `on_start` 是唯一允许阻塞延时（`sleep_ms` / `await sleep_ms`）的主协程；所有事件回调（`on_run` / `on_timer` / `on_button` 等）均为非阻塞短回调，由单轨调度器在 `sleep_ms` 让出点或周期循环中派发。
-  - 若目标语言采用显式协程语法（如 Python `async/await`），须对含 `sleep_ms` 的自定义函数做传递性 `async`/`await` 传染，且纯净导出与沙箱保持同一 ABI。
-- **3 级变量作用域 + 显式初值**：
-  - `跨文件共享`（归集于 `shared`） / `单文件全局`（仅本文件顶层声明，且只声明实际用到的变量） / `局部`（`poly_local_*`，需在所属函数/回调顶部提升声明以避免分支作用域泄漏，如 Lua 顶部 `local x`、Python 顶部 `x = None`）。
-  - 新建变量支持显式初值（`null/number/boolean/string/list/dict`）；**禁止**在运算积木中插入隐式类型兜底（如 `math_change` 直接导出原生 `x = x + d` / `x += d`，绝不注入 `or 0` / `isinstance` 魔术代码，未初始化由业务层暴露报错）。
-- **2 级函数作用域 + Style A1 只读 `shared` 模块**：
-  - `跨文件公共函数` 与 `跨文件共享变量` 统一归集到自动生成的只读 `shared.<ext>` 模块，调用方顶部自动引入；`单文件私有函数` 严格限制在文件内（如 Lua `local function`）。
-  - 生成条件极简且无特判：只要句柄存在任一跨文件变量或函数（即使当前只有 `main`），即生成 `shared.<ext>`；全部删除后自动移除。
-- **同句柄伴随脚本显式加载**：非 `shared` 的同句柄普通脚本不自动导入，必须由用户显式拖入 `加载脚本`（`require`/`import`），未加载报静态错误；调试产物 `moduleDebugCode` 保留行号/断点桩但必须剥离顶层入口心跳。
+## 1. 最高层架构方向红线
 
-## 3. 主入口与顶层事件回调（Hat）
-- 所有顶层帽块（含核心 `on_start`）统一由 `hat.mode`（`'singleton'` | `'dispatch'`）元数据驱动，禁止按块名写特例。
-- 句柄唯一主入口（`entry`）自动限制 `singleton` 帽块仅主入口可用，并自动聚合本句柄全文件的 `dispatch` 分发路由；当某类分发回调全被删除时，主入口对应分发路由必须自动删除。
+1. **核心极简与单向无环（Layer 0 + Layer 0.5）**：`src/core/` 仅承载零外部依赖的纯语言原语（Layer 0）与语言无关、包无关的引擎抽象，`src/workers/` 仅承载跨语言共用的单句柄单轨协程宿主契约（Layer 0.5）；核心与宿主调度器严禁硬编码具体语言、扩展包 ID、板型 ID 或专有外设通道，注册表保持单向无环依赖。
+2. **包彻底外置且平权**：所有扩展包（`.polyext.json`）、板型（`.polyboard.json`）、演示工程（`src/demos/`）与模板均为同构成品 JSON 资产，严禁 `builtin` 特权字段与硬编码常量；工程文件 `project.polyblock.json` 严禁 JSON 套 JSON 内嵌包或板型正文。
+3. **目标语言彻底插件化且物理外置（`LanguagePlugin`）**：每种目标语言高内聚于独立的 `src/plugins/languages/<lang>/`（方言 + 后端 + 可选运行器与 Worker），由应用入口由外向内注册至 `backendRegistry`；`src/core/` 与 `src/workers/` 严禁出现具体语言文件或反向 `import src/plugins/`；全语言插件平权，UI 响应式消费，仅导出型语言自动优雅降级。
+4. **纯代码与无魔法生成**：严禁通过 Blockly `provideFunction_` 注入隐藏辅助函数或隐式类型兜底；原生积木引入必须通过全注册语言准入审查；上述架构红线同步固化在自动化门禁测试中随 `npm test` 拦断回流。
 
-## 4. 原生 Blockly 积木准入与后端防坑清单
-- **原生 Blockly 积木准入审查（硬门禁）**：每次把新的原生 Blockly 积木加入工具箱前，必须实测其全部目标语言默认生成器与交互校验源码，逐项核查（不满足即覆写生成器、打补丁或改用 `poly_*` 块）：
-  1. **作用域合规**：凡读写变量、循环变量或定义/调用函数，必须严格对齐 3 级变量与 2 级函数模型（覆写 `variables_get/set`、`math_change`、`text_append`、循环变量及 `procedures_*`，禁止默认 `global` 散弹声明或未用变量污染顶层）。
-  2. **零隐藏魔术代码**：禁止默认生成器通过 `provideFunction_` 注入隐藏函数或隐式类型兜底。
-  3. **语言语义与校验协同**：核查跨语言差异与 Blockly 内置校验（如 Lua `goto continue` 需循环块配套 `::continue::` 且 `controls_flow_statements.getSurroundLoop` 须识别自定义 `poly_*` 循环；列表 1-based/0-based 与标准库导入）。
-  4. **调试/协程兼容**：核查 `debugPass` 下与哨兵行号（`STATEMENT_PREFIX`）、空循环防卡死让出点是否冲突。
-  5. **链式优先级**：容器取键/取值与字面量须设准 `Order`（例如 Lua 索引返回 `Order.ATOMIC`、`{}` 返回 `Order.HIGH`），避免生成前导括号 `(a['b'])['val'] = 0` 触发语法歧义。
-- **禁止跨文件幽灵函数**：跨文件函数调用使用独立块（`poly_call_shared_*`），防止 Blockly 内置 `procedures_call*` 在调用方画布自动生成幽灵 `procedures_def*`。
+---
 
-## 5. 验证与发布红线
-- 每次架构/UI 改动须过 `npx tsc -b` + `npm test`（含真 WASM 运行）+ 真实浏览器 E2E 视觉核查。
-- **未经用户明确指令，严禁 `git push` 或线上发布**；`.agents/` 与 `skills-lock.json` 保持本地忽略。
+## 2. 按领域查阅详细规范（执行前必读对应文档）
+
+| 涉及改动领域 | 必读规范文档 |
+| --- | --- |
+| 工程目录、`.polyblock.zip` 锁定导入导出、全包/板型平权、3 层模块解析 | [`docs/guidelines/project-and-packaging.md`](./docs/guidelines/project-and-packaging.md) · [`docs/specs/extension-pack-spec.md`](./docs/specs/extension-pack-spec.md) |
+| 句柄并发、协程 `sleep_ms`、变量/循环/函数作用域、只读 `shared` 模块、帽块路由 | [`docs/guidelines/runtime-and-scope.md`](./docs/guidelines/runtime-and-scope.md) |
+| 原生 Blockly 积木准入、代码生成、语言插件物理边界与调试插桩 | [`docs/guidelines/blockly-and-codegen.md`](./docs/guidelines/blockly-and-codegen.md) |
+| 单语言具体作用域、协程 ABI 与防坑细节（Lua / Python / JS / 新增语言） | [`docs/languages/README.md`](./docs/languages/README.md) · [`lua.md`](./docs/languages/lua.md) · [`python.md`](./docs/languages/python.md) · [`javascript.md`](./docs/languages/javascript.md) |
+| UI 控件规范、只读锁、弹窗安全、排版验收与发版检查 | [`docs/guidelines/ui-and-delivery.md`](./docs/guidelines/ui-and-delivery.md) · [`docs/qa/gui-regression-checklist.md`](./docs/qa/gui-regression-checklist.md) |
+| 系统架构全貌与未来演进规划（**不含于本文件**） | [`docs/architecture/system-architecture.md`](./docs/architecture/system-architecture.md) · [`docs/architecture/roadmap.md`](./docs/architecture/roadmap.md) |
+
+---
+
+## 3. 交付与发布硬门禁
+
+- **每次架构或 UI 改动交付前必须全绿通过**：`npx tsc -b` → `npm test`（含真实 Lua WASM / MicroPython WASM / 原生 JS Worker 集成测试与架构门禁）→ `npx vite build` → 真实浏览器 E2E 与目视排版核查。
+- **严禁擅自发布**：未经用户明确指令，**严禁**执行 `git push` 或线上部署；`.agents/`、`skills-lock.json` 与 `.tmp-test/` 保持本地忽略。

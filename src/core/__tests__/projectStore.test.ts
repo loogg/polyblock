@@ -92,7 +92,7 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     expect(hasCapability(mh.enabledCapabilities, 'rt.lifecycle')).toBe(true);
     expect(hasCapability(mh.enabledCapabilities, 'rt.timers')).toBe(true);
     expect(hasCapability(mh.enabledCapabilities, 'rt.tick')).toBe(true);
-    expect(mh.localExtensions?.map((p) => p.id)).toEqual(['robot-drive', 'pwm-servo']);
+    expect(mh.localExtensions?.map((p) => p.id)).toEqual(['pwm-servo', 'robot-drive']);
     expect(mh.handles).toHaveLength(3);
     expect(mh.handles.map((h) => h.name)).toEqual([
       'drive_ctrl',

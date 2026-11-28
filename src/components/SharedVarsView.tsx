@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -60,6 +61,7 @@ export function SharedVarsView({
   onCopySource,
   onBackToCanvas,
 }: SharedVarsViewProps) {
+  const [numDrafts, setNumDrafts] = useState<Record<string, string>>({});
   const lines = source.replace(/\n$/, '').split('\n');
   const dialect = getLanguageDialect(language);
   const ext = dialect.extension;
@@ -212,17 +214,42 @@ export function SharedVarsView({
 
                       {entry.initialValue.kind === 'number' && (
                         <input
-                          type="number"
-                          step="any"
+                          type="text"
+                          inputMode="decimal"
                           className="shared-var-init-input"
                           aria-label={`修改 ${entry.name} 初始数值`}
                           disabled={disabled}
-                          value={entry.initialValue.value}
+                          value={
+                            numDrafts[entry.name] !== undefined
+                              ? numDrafts[entry.name]
+                              : String(entry.initialValue.value)
+                          }
                           onChange={(e) => {
-                            const n = Number(e.target.value);
+                            const raw = e.target.value;
+                            setNumDrafts((prev) => ({ ...prev, [entry.name]: raw }));
+                            const trimmed = raw.trim();
+                            if (trimmed !== '' && trimmed !== '-' && trimmed !== '.' && trimmed !== '-.') {
+                              const n = Number(trimmed);
+                              if (Number.isFinite(n)) {
+                                onUpdateVarInitialValue(entry.name, {
+                                  kind: 'number',
+                                  value: n,
+                                });
+                              }
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = numDrafts[entry.name];
+                            if (raw === undefined) return;
+                            const n = Number(raw.trim());
                             onUpdateVarInitialValue(entry.name, {
                               kind: 'number',
-                              value: Number.isFinite(n) ? n : 0,
+                              value: raw.trim() !== '' && Number.isFinite(n) ? n : 0,
+                            });
+                            setNumDrafts((prev) => {
+                              const next = { ...prev };
+                              delete next[entry.name];
+                              return next;
                             });
                           }}
                         />

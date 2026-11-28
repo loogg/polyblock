@@ -5,7 +5,12 @@ import type {
 } from '../../types/project';
 import type { ExtensionModuleSource } from '../extensions/types';
 
-export type RunnerKind = 'browser-wasm' | 'network-ws' | 'local-bridge' | 'web-serial';
+export type RunnerKind =
+  | 'browser-wasm'
+  | 'browser-worker'
+  | 'network-ws'
+  | 'local-bridge'
+  | 'web-serial';
 
 export type RunnerStatus = 'ready' | 'running' | 'paused' | 'planned' | 'error';
 
@@ -58,15 +63,17 @@ export interface RunResult {
 
 /**
  * Pluggable execution target contract.
- * Phase 1-2 provides Browser WASM Workers (Lua 5.4 & MicroPython) with async stepping & breakpoints.
- * Future hardware board runners simply consume `request.code` (clean script) and stream device logs.
+ * Language plugins optionally provide browser sandboxes (WASM or native Web Worker) with async stepping & breakpoints.
+ * External hardware/bridge runners simply consume `request.code` (clean script) and stream device logs.
  */
 export interface ScriptRunner {
   readonly id: string;
   readonly name: string;
   readonly shortLabel: string;
-  /** Optional short badge label rendered in DevicesPage runner cards (defaults to 'WASM'). */
+  /** Optional short badge label rendered in DevicesPage runner cards (defaults to '沙箱'). */
   readonly engineBadge?: string;
+  /** Optional human-readable transport subtitle shown in DevicesPage cards. */
+  readonly transportLabel?: string;
   readonly kind: RunnerKind;
   readonly supportedLanguages: ScriptLanguageId[];
   readonly description: string;

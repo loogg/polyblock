@@ -6,14 +6,14 @@ import type { ExtensionModuleSource, PolyExtensionPack } from './types';
 
 /**
  * Pure 3-tier scope-based module resolution priority (highest -> lowest):
- *   1. `handle`   — Sibling scripts in the active RuntimeHandle (`handle.scripts`, e.g. `timers.lua`)
- *   2. `project`  — Enabled project-local packs (`project.localExtensions[]`, regardless of `libs[]` or `sandboxMock`)
- *   3. `global`   — Enabled global packs (preinstalled `rt` / `board` / `poly_clock` + user-imported, treated uniformly)
+ *   1. `handle`   — Sibling scripts in the active RuntimeHandle (`handle.scripts`, e.g. `timers.<ext>`)
+ *   2. `project`  — Enabled project-local/locked packs (`project.localExtensions[]`, regardless of `libs[]` or `sandboxMock`)
+ *   3. `global`   — Enabled global packs (seed defaults + user-imported, treated uniformly with zero privilege)
  *
  * Orthogonal separation of concerns:
  * - **Resolution Priority** depends SOLELY on Scope (`handle > project > global`). Project ALWAYS beats Global!
  * - **Delivery Nature** (`delivery: 'handle-script' | 'lib' | 'sandbox-mock'`) is NOT a priority tier:
- *   - Browser WASM sandbox mounts the winning provider for every `moduleName` (real script OR mock).
+ *   - Browser sandbox workers mount the winning provider for every `moduleName` (real script OR mock).
  *   - Target `.zip` deployment export ONLY ships real sources (`handle-script` / `lib`) and strictly strips
  *     winning `sandbox-mock` modules (so a project-level hardware `sandboxMock` cleanly suppresses a global `lib`).
  * - **Same-tier Conflict**: two enabled packs in the SAME tier declaring the same `moduleName` trigger a blocking Error.
@@ -30,7 +30,7 @@ export const TIER_PRIORITY_ORDER: readonly ModuleResolutionTier[] = [
 
 export const TIER_LABEL_ZH: Record<ModuleResolutionTier, string> = {
   handle: '当前句柄脚本',
-  project: '项目内嵌包',
+  project: '项目私有/锁定包',
   global: '全局扩展包',
 };
 
@@ -79,9 +79,9 @@ export interface ModuleResolutionResult {
   /** Winning module entry per moduleName (keyed by moduleName). */
   resolvedByName: Map<string, ModuleProviderRecord>;
   /**
-   * Modules to mount into browser WASM workers in LOWEST-to-HIGHEST priority order
+   * Modules to mount into browser sandbox workers in LOWEST-to-HIGHEST priority order
    * (`global` -> `project` -> `handle`), with `helper` libs before `entry` libs inside each tier,
-   * so higher-priority scopes deterministically overwrite lower scopes (including preinstalled `rt`/`board`).
+   * so higher-priority scopes deterministically overwrite lower scopes.
    */
   sandboxMountOrder: ExtensionModuleSource[];
   /**
@@ -200,7 +200,7 @@ export function resolveProjectModules(
         delivery: 'lib',
         isRealLib: true,
         ownerId: `local:${pack.id}`,
-        ownerLabel: `项目内嵌包「${pack.name}」`,
+        ownerLabel: `项目包「${pack.name}」`,
         source: { ...lib, packId: pack.id },
       });
     }
@@ -211,7 +211,7 @@ export function resolveProjectModules(
         delivery: 'sandbox-mock',
         isRealLib: false,
         ownerId: `local:${pack.id}`,
-        ownerLabel: `项目内嵌包「${pack.name}」`,
+        ownerLabel: `项目包「${pack.name}」`,
         source: { ...pack.sandboxMock, packId: pack.id },
       });
     }

@@ -1,11 +1,10 @@
 import { Download, Upload } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { backendRegistry } from '../../core/backends/registry';
-import {
-  SAMPLE_CUSTOM_BOARD_TEMPLATE,
-  targetProfileRegistry,
-} from '../../core/capabilities/registry';
+import { SAMPLE_CUSTOM_BOARD_TEMPLATE } from '../../core/capabilities/registry';
+import { resolveProjectTargetProfile } from '../../core/projects/store';
 import { triggerJsonDownload } from '../../hooks/fileDownload';
+import { useLanguagePluginsRevision } from '../../hooks/useLanguagePlugins';
 import type {
   ProjectModel,
   ScriptLanguageId,
@@ -16,7 +15,7 @@ import { PolySelect } from '../PolySelect';
 interface GeneralProfileTabProps {
   project: ProjectModel;
   allTargetProfiles: TargetProfile[];
-  disableLanguageSwitch: boolean;
+  editingLocked: boolean;
   onUpdateProjectMeta: (
     projectId: string,
     patch: {
@@ -33,7 +32,7 @@ interface GeneralProfileTabProps {
 export function GeneralProfileTab({
   project,
   allTargetProfiles,
-  disableLanguageSwitch,
+  editingLocked,
   onUpdateProjectMeta,
   onApplyTargetProfile,
   onImportBoardProfileJson,
@@ -43,7 +42,33 @@ export function GeneralProfileTab({
   const [descDraft, setDescDraft] = useState(project.description ?? '');
   const profileFileRef = useRef<HTMLInputElement | null>(null);
 
-  const activeProfile = targetProfileRegistry.get(project.targetProfileId);
+  const activeProfile = resolveProjectTargetProfile(project);
+  const hasLockedBoard =
+    Boolean(project.localTargetProfile) &&
+    project.localTargetProfile?.id === project.targetProfileId;
+  const globalHasSameBoard = allTargetProfiles.some(
+    (p) => p.id === project.targetProfileId,
+  );
+  const selectOptions = [
+    ...(hasLockedBoard && !globalHasSameBoard
+      ? [
+          {
+            value: activeProfile.id,
+            label: `${activeProfile.name}（项目锁定）`,
+            badge: `${activeProfile.capabilities.length} 能力`,
+          },
+        ]
+      : []),
+    ...allTargetProfiles.map((prof) => ({
+      value: prof.id,
+      label:
+        hasLockedBoard && prof.id === project.targetProfileId
+          ? `${activeProfile.name}（项目锁定）`
+          : prof.name,
+      badge: `${prof.capabilities.length} 能力`,
+    })),
+  ];
+  useLanguagePluginsRevision();
   const backends = backendRegistry.list();
 
   useEffect(() => {
@@ -87,6 +112,7 @@ export function GeneralProfileTab({
             type="text"
             className="dropdown-rename-input"
             style={{ flex: 1, height: 32 }}
+            disabled={editingLocked}
             value={nameDraft}
             onChange={(e) => setNameDraft(e.target.value)}
           />
@@ -94,8 +120,10 @@ export function GeneralProfileTab({
             type="button"
             className="btn-primary"
             style={{ padding: '0 12px', height: 32 }}
+            disabled={editingLocked}
+            title={editingLocked ? '请先停止当前运行再修改项目信息' : undefined}
             onClick={() => {
-              if (nameDraft.trim()) {
+              if (!editingLocked && nameDraft.trim()) {
                 onUpdateProjectMeta(project.id, {
                   name: nameDraft.trim(),
                   description: descDraft.trim() || undefined,
@@ -114,6 +142,7 @@ export function GeneralProfileTab({
           type="text"
           className="dropdown-rename-input"
           style={{ width: '100%', height: 32 }}
+          disabled={editingLocked}
           placeholder="可选：描述设备用途或架构备注"
           value={descDraft}
           onChange={(e) => setDescDraft(e.target.value)}
@@ -136,6 +165,8 @@ export function GeneralProfileTab({
               type="button"
               className="btn-outline"
               style={{ padding: '3px 8px', fontSize: 11.5 }}
+              disabled={editingLocked}
+              title={editingLocked ? '请先停止当前运行再导入板型' : undefined}
               onClick={() => profileFileRef.current?.click()}
             >
               <Upload size={11} />
@@ -163,17 +194,49 @@ export function GeneralProfileTab({
         <PolySelect
           size="md"
           fullWidth
+          disabled={editingLocked}
           ariaLabel="选择目标板型规格"
           value={project.targetProfileId}
-          options={allTargetProfiles.map((prof) => ({
-            value: prof.id,
-            label: prof.name,
-            badge: `${prof.capabilities.length} 能力`,
-          }))}
-          onChange={(profileId) => onApplyTargetProfile(project.id, profileId)}
+          options={selectOptions}
+          onChange={(profileId) => {
+            if (profileId === project.targetProfileId && hasLockedBoard && !globalHasSameBoard) {
+              return;
+            }
+            onApplyTargetProfile(project.id, profileId);
+          }}
         />
         <p className="settings-hint">
-          {activeProfile.description} 切换板型会自动装配预设能力清单，你仍可在「能力与外设」中自由微调单一项开关。
+          {activeProfile.description}
+          {hasLockedBoard ? (
+            <>
+              {' '}
+              当前板型规格已随工程包锁定于本项目（不受全局板型升级影响）
+              {globalHasSameBoard && (
+                <>
+                  ，
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    disabled={editingLocked}
+                    style={{
+                      display: 'inline',
+                      padding: '0 4px',
+                      fontSize: 11.5,
+                      color: 'var(--accent)',
+                    }}
+                    onClick={() =>
+                      onApplyTargetProfile(project.id, project.targetProfileId)
+                    }
+                  >
+                    解除锁定并改用全局板型
+                  </button>
+                </>
+              )}
+              。
+            </>
+          ) : (
+            ' 切换板型会自动装配预设能力清单，你仍可在「能力与外设」中自由微调单一项开关。'
+          )}
         </p>
       </div>
 
@@ -188,10 +251,13 @@ export function GeneralProfileTab({
               key={b.id}
               type="button"
               className={`seg-btn ${project.language === b.id ? 'active' : ''}`}
-              disabled={disableLanguageSwitch}
-              onClick={() =>
-                onUpdateProjectMeta(project.id, { language: b.id })
-              }
+              disabled={editingLocked}
+              title={editingLocked ? '请先停止当前运行再切换目标语言' : undefined}
+              onClick={() => {
+                if (project.language !== b.id) {
+                  onUpdateProjectMeta(project.id, { language: b.id });
+                }
+              }}
             >
               <span
                 className="lang-dot"

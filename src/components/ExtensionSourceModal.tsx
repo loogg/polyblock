@@ -1,10 +1,10 @@
 import { Check, Copy, Download, FileCode2, FileJson, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { backendRegistry } from '../core/backends/registry';
-import type { LanguageDialect } from '../core/backends/types';
 import { getAllPackBlocks } from '../core/extensions/registry';
 import type { PolyExtensionPack } from '../core/extensions/types';
-import { triggerFileDownload } from '../hooks/fileDownload';
+import { highlightCodeLine } from '../core/highlight';
+import { triggerJsonDownload } from '../hooks/fileDownload';
 import { useModalFocusTrap } from '../hooks/useModalFocusTrap';
 import type { ScriptLanguageId } from '../types/project';
 
@@ -24,72 +24,25 @@ interface SourceTabItem {
   content: string;
 }
 
-const KEYWORD_REGEX_CACHE = new WeakMap<LanguageDialect, RegExp | null>();
-
-function getKeywordRegex(dialect: LanguageDialect | undefined): RegExp | null {
-  if (!dialect) return null;
-  let re = KEYWORD_REGEX_CACHE.get(dialect);
-  if (re === undefined) {
-    re =
-      dialect.keywords.length > 0
-        ? new RegExp(`\\b(${dialect.keywords.join('|')})\\b`, 'g')
-        : null;
-    KEYWORD_REGEX_CACHE.set(dialect, re);
-  }
-  return re ? new RegExp(re.source, 'g') : null;
-}
-
-/** Lightweight syntax highlighter reusing PolyBlock's existing token palette via backendRegistry dialects. */
-function renderHighlightedLine(line: string, kind: 'json' | ScriptLanguageId) {
-  if (kind === 'json') {
-    const parts: Array<{ text: string; cls?: string }> = [];
-    const re =
-      /("(?:\\.|[^"\\])*")\s*:|("(?:\\.|[^"\\])*")|\b(true|false|null)\b|(-?\d+(?:\.\d+)?)/g;
-    let last = 0;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(line)) !== null) {
-      if (m.index > last) parts.push({ text: line.slice(last, m.index) });
-      if (m[1]) {
-        parts.push({ text: m[1], cls: 'syn-fn' });
-        parts.push({ text: line.slice(m.index + m[1].length, m.index + m[0].length) });
-      } else if (m[2]) {
-        parts.push({ text: m[2], cls: 'syn-str' });
-      } else if (m[3]) {
-        parts.push({ text: m[3], cls: 'syn-kw' });
-      } else if (m[4]) {
-        parts.push({ text: m[4], cls: 'syn-num' });
-      }
-      last = m.index + m[0].length;
-    }
-    if (last < line.length) parts.push({ text: line.slice(last) });
-    return parts.map((p, idx) =>
-      p.cls ? (
-        <span key={idx} className={p.cls}>
-          {p.text}
-        </span>
-      ) : (
-        <span key={idx}>{p.text}</span>
-      ),
-    );
-  }
-
-  const dialect = backendRegistry.tryGetDialect(kind);
-  const trimmed = line.trimStart();
-  if (dialect && trimmed.startsWith(dialect.commentToken)) {
-    return <span className="syn-cmt">{line}</span>;
-  }
-
-  const kwRe = getKeywordRegex(dialect);
-  if (!kwRe) {
-    return line;
-  }
-
+/** Highlights JSON lines safely as React nodes; script languages delegate to unified `highlightCodeLine`. */
+function renderJsonHighlightedLine(line: string) {
   const parts: Array<{ text: string; cls?: string }> = [];
+  const re =
+    /("(?:\\.|[^"\\])*")\s*:|("(?:\\.|[^"\\])*")|\b(true|false|null)\b|(-?\d+(?:\.\d+)?)/g;
   let last = 0;
   let m: RegExpExecArray | null;
-  while ((m = kwRe.exec(line)) !== null) {
+  while ((m = re.exec(line)) !== null) {
     if (m.index > last) parts.push({ text: line.slice(last, m.index) });
-    parts.push({ text: m[0], cls: 'syn-kw' });
+    if (m[1]) {
+      parts.push({ text: m[1], cls: 'syn-fn' });
+      parts.push({ text: line.slice(m.index + m[1].length, m.index + m[0].length) });
+    } else if (m[2]) {
+      parts.push({ text: m[2], cls: 'syn-str' });
+    } else if (m[3]) {
+      parts.push({ text: m[3], cls: 'syn-kw' });
+    } else if (m[4]) {
+      parts.push({ text: m[4], cls: 'syn-num' });
+    }
     last = m.index + m[0].length;
   }
   if (last < line.length) parts.push({ text: line.slice(last) });
@@ -126,7 +79,7 @@ export function ExtensionSourceModal({
         ? `纯原生语法模板包（${pack.sections.length} 个组件 · ${blockCount} 个积木）：积木通过 code.<lang>.template 直接展开为原生语言语法，无需额外模块文件。`
         : `标准单轨声明式协议（${pack.sections.length} 个组件 · ${blockCount} 个积木${
             hasMock ? ` · 含沙箱假桩 ${pack.sandboxMock!.moduleName}` : ''
-          }${libCount > 0 ? ` · 含 ${libCount} 个真实脚本库` : ''}）。可点击右上角导出后修改并导入为项目内嵌覆写包。`;
+          }${libCount > 0 ? ` · 含 ${libCount} 个真实脚本库` : ''}）。可点击右上角导出后修改并导入为项目私有/锁定扩展包。`;
 
     list.push({
       id: 'json',
@@ -178,6 +131,9 @@ export function ExtensionSourceModal({
   }, [pack]);
 
   const [activeTabId, setActiveTabId] = useState<string>('json');
+  useEffect(() => {
+    setActiveTabId('json');
+  }, [pack.id]);
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
   const lines = useMemo(() => activeTab.content.split('\n'), [activeTab.content]);
 
@@ -204,12 +160,8 @@ export function ExtensionSourceModal({
   };
 
   const handleDownloadJson = () => {
-    triggerFileDownload(
-      `${pack.id}.polyext.json`,
-      `${JSON.stringify(pack, null, 2)}\n`,
-      'application/json;charset=utf-8',
-    );
-    onNotify(`已导出 ${pack.id}.polyext.json（修改后可导入为项目内嵌覆写包）`);
+    triggerJsonDownload(`${pack.id}.polyext.json`, pack);
+    onNotify(`已导出 ${pack.id}.polyext.json（修改后可导入为项目私有/锁定包）`);
   };
 
   return (
@@ -260,7 +212,7 @@ export function ExtensionSourceModal({
               type="button"
               className="btn-outline"
               style={{ padding: '4px 9px', fontSize: 11.5 }}
-              title="导出完整 .polyext.json 供参考或修改为项目内嵌覆写包"
+              title="导出完整 .polyext.json 供参考或修改为项目私有/锁定扩展包"
               onClick={handleDownloadJson}
             >
               <Download size={12} />
@@ -313,7 +265,16 @@ export function ExtensionSourceModal({
           {lines.map((line, idx) => (
             <div key={idx} className="code-line readonly">
               <span className="ln">{idx + 1}</span>
-              <span className="lc">{renderHighlightedLine(line, activeTab.kind)}</span>
+              {activeTab.kind === 'json' ? (
+                <span className="lc">{renderJsonHighlightedLine(line)}</span>
+              ) : (
+                <span
+                  className="lc"
+                  dangerouslySetInnerHTML={{
+                    __html: highlightCodeLine(line, activeTab.kind),
+                  }}
+                />
+              )}
             </div>
           ))}
         </div>

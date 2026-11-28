@@ -1,0 +1,148 @@
+{
+  "format": "polyblock-extension",
+  "version": 1,
+  "id": "pwm-servo",
+  "name": "云台 PWM 舵机通道包",
+  "packVersion": "1.0.0",
+  "iconLabel": "云台",
+  "color": "#14b8a6",
+  "tags": [
+    "云台",
+    "PWM通道"
+  ],
+  "description": "项目私有自定义通道池外设包：演示独立每句柄 PWM 舵机通道（PWM0~PWM7，与定时器 T0~T7 彻底隔离）以及自定义工具箱序号（#35）。",
+  "imports": {
+    "lua": [
+      "local servo = require(\"servo\")"
+    ],
+    "python": [
+      "import servo"
+    ],
+    "js": [
+      "const servo = require(\"servo\");"
+    ]
+  },
+  "sections": [
+    {
+      "id": "main",
+      "label": "云台",
+      "toolboxOrder": 35,
+      "handleConfigs": [
+        {
+          "kind": "channel-pool",
+          "label": "PWM 舵机通道",
+          "prefix": "PWM",
+          "min": 1,
+          "max": 8,
+          "defaultCount": 4,
+          "presets": [
+            2,
+            4,
+            8
+          ],
+          "hint": "独立存储在 capabilityConfigs[\"pwm-servo\"]，与多路编号定时器 T0~T7 完全隔离；右键积木可就地标注轴名称。"
+        }
+      ],
+      "blocks": [
+        {
+          "type": "ext_servo_set_angle",
+          "kind": "statement",
+          "message0": "设置舵机 %1 角度 %2 °",
+          "args0": [
+            {
+              "type": "field_channel_id",
+              "name": "PWM_ID"
+            },
+            {
+              "type": "input_value",
+              "name": "ANGLE",
+              "check": "Number"
+            }
+          ],
+          "inputsInline": true,
+          "fields": {
+            "PWM_ID": "0"
+          },
+          "shadows": {
+            "ANGLE": {
+              "type": "math_number",
+              "value": 90
+            }
+          },
+          "tooltip": "设置指定 PWM 舵机通道的目标角度（0~180°）。",
+          "keywords": "舵机 云台 pwm 角度 servo set_angle",
+          "simWidgetKeys": [
+            "pan_deg",
+            "tilt_deg"
+          ],
+          "code": {
+            "lua": {
+              "template": "servo.set_angle({{PWM_ID:int}}, {{ANGLE}}){{PWM_ID:channel_comment}}"
+            },
+            "python": {
+              "template": "servo.set_angle({{PWM_ID:int}}, {{ANGLE}}){{PWM_ID:channel_comment}}"
+            },
+            "js": {
+              "template": "servo.set_angle({{PWM_ID:int}}, {{ANGLE}});{{PWM_ID:channel_comment}}"
+            }
+          }
+        },
+        {
+          "type": "ext_servo_center_all",
+          "kind": "statement",
+          "message0": "云台全部舵机归中 (90°)",
+          "inputsInline": true,
+          "tooltip": "将偏航（PWM0）与俯仰（PWM1）舵机同步归中至 90°。",
+          "keywords": "云台 舵机 归中 center servo",
+          "simWidgetKeys": [
+            "pan_deg",
+            "tilt_deg"
+          ],
+          "code": {
+            "lua": {
+              "template": "servo.center_all()"
+            },
+            "python": {
+              "template": "servo.center_all()"
+            },
+            "js": {
+              "template": "servo.center_all();"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "sandboxMock": {
+    "moduleName": "servo",
+    "sources": {
+      "lua": "\nlocal M = {}\nfunction M.set_angle(ch, deg)\n  local cid = math.floor(tonumber(ch) or 0)\n  local d = math.max(0, math.min(180, math.floor(tonumber(deg) or 90)))\n  if cid == 1 then\n    __poly_sim_set(\"tilt_deg\", d)\n  else\n    __poly_sim_set(\"pan_deg\", d)\n  end\nend\nfunction M.center_all()\n  __poly_sim_set(\"pan_deg\", 90)\n  __poly_sim_set(\"tilt_deg\", 90)\nend\nreturn M\n",
+      "python": "\nimport _poly\ndef set_angle(ch, deg):\n    cid = int(float(ch))\n    d = max(0, min(180, int(float(deg))))\n    if cid == 1:\n        _poly.sim_set(\"tilt_deg\", d)\n    else:\n        _poly.sim_set(\"pan_deg\", d)\ndef center_all():\n    _poly.sim_set(\"pan_deg\", 90)\n    _poly.sim_set(\"tilt_deg\", 90)\n",
+      "js": "const _poly = require(\"_poly\");\nmodule.exports = {\n  set_angle(ch, deg) {\n    const cid = Math.floor(Number(ch) || 0);\n    const d = Math.max(0, Math.min(180, Math.floor(Number(deg) || 90)));\n    if (cid === 1) {\n      _poly.sim_set(\"tilt_deg\", d);\n    } else {\n      _poly.sim_set(\"pan_deg\", d);\n    }\n  },\n  center_all() {\n    _poly.sim_set(\"pan_deg\", 90);\n    _poly.sim_set(\"tilt_deg\", 90);\n  },\n};"
+    }
+  },
+  "simWidgets": [
+    {
+      "kind": "bar",
+      "key": "pan_deg",
+      "label": "云台偏航角 (PWM0)",
+      "hint": "servo.set_angle(0)",
+      "min": 0,
+      "max": 180,
+      "unit": "°",
+      "color": "#14b8a6",
+      "default": 90
+    },
+    {
+      "kind": "bar",
+      "key": "tilt_deg",
+      "label": "云台俯仰角 (PWM1)",
+      "hint": "servo.set_angle(1)",
+      "min": 0,
+      "max": 180,
+      "unit": "°",
+      "color": "#8b5cf6",
+      "default": 90
+    }
+  ]
+}

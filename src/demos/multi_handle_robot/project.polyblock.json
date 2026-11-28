@@ -1,0 +1,1752 @@
+{
+  "format": "polyblock-project",
+  "version": 3,
+  "id": "proj_multi_handle_robot",
+  "name": "智能双轮机器人全栈仿真",
+  "description": "旗舰全栈综合（3 隔离句柄并发 + 2 个项目私有外设包 + 3 个全局核心外设包）：展示多卡片模拟面板、自定义声明式急停中断（on_drive_estop）、双独立通道池（T0~T7 与 PWM0~PWM3）、自定义工具箱序号（#35）及秒表字典遥测。",
+  "language": "lua",
+  "targetProfileId": "virtual-board-rt",
+  "enabledCapabilities": [
+    "rt",
+    "virtual-board",
+    "clock-timer",
+    "robot-drive",
+    "pwm-servo"
+  ],
+  "activeHandleId": "hdl_multi_handle_robot_drive_ctrl",
+  "handles": [
+    {
+      "id": "hdl_multi_handle_robot_drive_ctrl",
+      "name": "drive_ctrl",
+      "description": "运动、云台与急停控制句柄（独立 lua_State #1）",
+      "color": "#4f46e5",
+      "autoStart": true,
+      "capabilityConfigs": {
+        "rt.timers": {
+          "count": 8,
+          "aliases": {
+            "0": "云台扫描",
+            "1": "疾速倒计时"
+          }
+        },
+        "pwm-servo": {
+          "count": 4,
+          "aliases": {
+            "0": "云台偏航",
+            "1": "云台俯仰"
+          }
+        }
+      },
+      "sharedVariables": [],
+      "sharedFunctions": [],
+      "entryScriptId": "scr_multi_handle_robot_drive_ctrl_main_0",
+      "activeScriptId": "scr_multi_handle_robot_drive_ctrl_main_0",
+      "scripts": [
+        {
+          "id": "scr_multi_handle_robot_drive_ctrl_main_0",
+          "name": "main",
+          "workspace": {
+            "blocks": {
+              "languageVersion": 0,
+              "blocks": [
+                {
+                  "type": "poly_on_start",
+                  "id": "fg_d_start",
+                  "x": 36,
+                  "y": 28,
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "variables_set",
+                        "id": "fg_d_init_spd",
+                        "fields": {
+                          "VAR": {
+                            "id": "var_fg_spd"
+                          }
+                        },
+                        "inputs": {
+                          "VALUE": {
+                            "block": {
+                              "type": "math_number",
+                              "id": "fg_d_60",
+                              "fields": {
+                                "NUM": 60
+                              }
+                            }
+                          }
+                        },
+                        "next": {
+                          "block": {
+                            "type": "variables_set",
+                            "id": "fg_d_init_pan",
+                            "fields": {
+                              "VAR": {
+                                "id": "var_fg_pan"
+                              }
+                            },
+                            "inputs": {
+                              "VALUE": {
+                                "block": {
+                                  "type": "math_number",
+                                  "id": "fg_d_45",
+                                  "fields": {
+                                    "NUM": 45
+                                  }
+                                }
+                              }
+                            },
+                            "next": {
+                              "block": {
+                                "type": "ext_servo_center_all",
+                                "id": "fg_d_center",
+                                "next": {
+                                  "block": {
+                                    "type": "ext_drive_set_wheels",
+                                    "id": "fg_d_go",
+                                    "inputs": {
+                                      "LEFT": {
+                                        "block": {
+                                          "type": "variables_get",
+                                          "id": "fg_d_gl1",
+                                          "fields": {
+                                            "VAR": {
+                                              "id": "var_fg_spd"
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "RIGHT": {
+                                        "block": {
+                                          "type": "variables_get",
+                                          "id": "fg_d_gr1",
+                                          "fields": {
+                                            "VAR": {
+                                              "id": "var_fg_spd"
+                                            }
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "next": {
+                                      "block": {
+                                        "type": "poly_set_run_period",
+                                        "id": "fg_d_set_period",
+                                        "inputs": {
+                                          "MS": {
+                                            "shadow": {
+                                              "type": "math_number",
+                                              "id": "fg_d_250",
+                                              "fields": {
+                                                "NUM": 250
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "next": {
+                                          "block": {
+                                            "type": "poly_start_timer",
+                                            "id": "fg_d_start_t0",
+                                            "fields": {
+                                              "TIMER_ID": "0"
+                                            },
+                                            "inputs": {
+                                              "PERIOD_MS": {
+                                                "block": {
+                                                  "type": "math_number",
+                                                  "id": "fg_d_700",
+                                                  "fields": {
+                                                    "NUM": 700
+                                                  }
+                                                }
+                                              },
+                                              "REPEAT": {
+                                                "block": {
+                                                  "type": "math_number",
+                                                  "id": "fg_d_inf",
+                                                  "fields": {
+                                                    "NUM": 0
+                                                  }
+                                                }
+                                              }
+                                            },
+                                            "next": {
+                                              "block": {
+                                                "type": "poly_log",
+                                                "id": "fg_d_boot_log",
+                                                "fields": {
+                                                  "LEVEL": "INFO"
+                                                },
+                                                "inputs": {
+                                                  "MESSAGE": {
+                                                    "block": {
+                                                      "type": "text",
+                                                      "id": "fg_d_boot_txt",
+                                                      "fields": {
+                                                        "TEXT": "底盘与云台控制启动：60% 巡航 + T0 扫描"
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "poly_on_run",
+                  "id": "fg_d_on_run",
+                  "x": 36,
+                  "y": 620,
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "poly_local_set",
+                        "id": "fg_d_loc_bat",
+                        "fields": {
+                          "NAME": "bat"
+                        },
+                        "inputs": {
+                          "VALUE": {
+                            "block": {
+                              "type": "ext_drive_battery",
+                              "id": "fg_d_rd_bat"
+                            }
+                          }
+                        },
+                        "next": {
+                          "block": {
+                            "type": "controls_if",
+                            "id": "fg_d_if_not_estop",
+                            "inputs": {
+                              "IF0": {
+                                "block": {
+                                  "type": "logic_negate",
+                                  "id": "fg_d_not_es",
+                                  "inputs": {
+                                    "BOOL": {
+                                      "block": {
+                                        "type": "ext_drive_is_estop",
+                                        "id": "fg_d_es_chk"
+                                      }
+                                    }
+                                  }
+                                }
+                              },
+                              "DO0": {
+                                "block": {
+                                  "type": "controls_if",
+                                  "id": "fg_d_if_lowbat",
+                                  "extraState": {
+                                    "hasElse": true
+                                  },
+                                  "inputs": {
+                                    "IF0": {
+                                      "block": {
+                                        "type": "logic_compare",
+                                        "id": "fg_d_cmp_bat",
+                                        "fields": {
+                                          "OP": "LT"
+                                        },
+                                        "inputs": {
+                                          "A": {
+                                            "block": {
+                                              "type": "poly_local_get",
+                                              "id": "fg_d_gbat",
+                                              "fields": {
+                                                "NAME": "bat"
+                                              }
+                                            }
+                                          },
+                                          "B": {
+                                            "block": {
+                                              "type": "math_number",
+                                              "id": "fg_d_25",
+                                              "fields": {
+                                                "NUM": 25
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "DO0": {
+                                      "block": {
+                                        "type": "ext_drive_set_wheels",
+                                        "id": "fg_d_slow",
+                                        "inputs": {
+                                          "LEFT": {
+                                            "block": {
+                                              "type": "math_number",
+                                              "id": "fg_d_25l",
+                                              "fields": {
+                                                "NUM": 25
+                                              }
+                                            }
+                                          },
+                                          "RIGHT": {
+                                            "block": {
+                                              "type": "math_number",
+                                              "id": "fg_d_25r",
+                                              "fields": {
+                                                "NUM": 25
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "ELSE": {
+                                      "block": {
+                                        "type": "ext_drive_set_wheels",
+                                        "id": "fg_d_norm",
+                                        "inputs": {
+                                          "LEFT": {
+                                            "block": {
+                                              "type": "variables_get",
+                                              "id": "fg_d_gl2",
+                                              "fields": {
+                                                "VAR": {
+                                                  "id": "var_fg_spd"
+                                                }
+                                              }
+                                            }
+                                          },
+                                          "RIGHT": {
+                                            "block": {
+                                              "type": "variables_get",
+                                              "id": "fg_d_gr2",
+                                              "fields": {
+                                                "VAR": {
+                                                  "id": "var_fg_spd"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "poly_on_timer",
+                  "id": "fg_d_on_t0",
+                  "x": 720,
+                  "y": 28,
+                  "fields": {
+                    "TIMER_ID": "0"
+                  },
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "controls_if",
+                        "id": "fg_d_if_pan",
+                        "extraState": {
+                          "hasElse": true
+                        },
+                        "inputs": {
+                          "IF0": {
+                            "block": {
+                              "type": "logic_compare",
+                              "id": "fg_d_cmp_pan",
+                              "fields": {
+                                "OP": "LT"
+                              },
+                              "inputs": {
+                                "A": {
+                                  "block": {
+                                    "type": "variables_get",
+                                    "id": "fg_d_gp1",
+                                    "fields": {
+                                      "VAR": {
+                                        "id": "var_fg_pan"
+                                      }
+                                    }
+                                  }
+                                },
+                                "B": {
+                                  "block": {
+                                    "type": "math_number",
+                                    "id": "fg_d_90",
+                                    "fields": {
+                                      "NUM": 90
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "DO0": {
+                            "block": {
+                              "type": "variables_set",
+                              "id": "fg_d_pan_hi",
+                              "fields": {
+                                "VAR": {
+                                  "id": "var_fg_pan"
+                                }
+                              },
+                              "inputs": {
+                                "VALUE": {
+                                  "block": {
+                                    "type": "math_number",
+                                    "id": "fg_d_135",
+                                    "fields": {
+                                      "NUM": 135
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "ELSE": {
+                            "block": {
+                              "type": "variables_set",
+                              "id": "fg_d_pan_lo",
+                              "fields": {
+                                "VAR": {
+                                  "id": "var_fg_pan"
+                                }
+                              },
+                              "inputs": {
+                                "VALUE": {
+                                  "block": {
+                                    "type": "math_number",
+                                    "id": "fg_d_45b",
+                                    "fields": {
+                                      "NUM": 45
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "next": {
+                          "block": {
+                            "type": "ext_servo_set_angle",
+                            "id": "fg_d_pwm0",
+                            "fields": {
+                              "PWM_ID": "0"
+                            },
+                            "inputs": {
+                              "ANGLE": {
+                                "block": {
+                                  "type": "variables_get",
+                                  "id": "fg_d_gp2",
+                                  "fields": {
+                                    "VAR": {
+                                      "id": "var_fg_pan"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "next": {
+                              "block": {
+                                "type": "ext_servo_set_angle",
+                                "id": "fg_d_pwm1",
+                                "fields": {
+                                  "PWM_ID": "1"
+                                },
+                                "inputs": {
+                                  "ANGLE": {
+                                    "block": {
+                                      "type": "math_number",
+                                      "id": "fg_d_tilt90",
+                                      "fields": {
+                                        "NUM": 95
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "poly_on_timer",
+                  "id": "fg_d_on_t1",
+                  "x": 720,
+                  "y": 500,
+                  "fields": {
+                    "TIMER_ID": "1"
+                  },
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "variables_set",
+                        "id": "fg_d_rst_spd",
+                        "fields": {
+                          "VAR": {
+                            "id": "var_fg_spd"
+                          }
+                        },
+                        "inputs": {
+                          "VALUE": {
+                            "block": {
+                              "type": "math_number",
+                              "id": "fg_d_60b",
+                              "fields": {
+                                "NUM": 60
+                              }
+                            }
+                          }
+                        },
+                        "next": {
+                          "block": {
+                            "type": "poly_log",
+                            "id": "fg_d_t1_log",
+                            "fields": {
+                              "LEVEL": "INFO"
+                            },
+                            "inputs": {
+                              "MESSAGE": {
+                                "block": {
+                                  "type": "text",
+                                  "id": "fg_d_t1_txt",
+                                  "fields": {
+                                    "TEXT": "T1 疾速倒计时结束，恢复 60% 巡航"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "poly_on_button",
+                  "id": "fg_d_btn_a",
+                  "x": 720,
+                  "y": 780,
+                  "fields": {
+                    "KEY": "A",
+                    "EDGE": "press"
+                  },
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "variables_set",
+                        "id": "fg_d_turbo_spd",
+                        "fields": {
+                          "VAR": {
+                            "id": "var_fg_spd"
+                          }
+                        },
+                        "inputs": {
+                          "VALUE": {
+                            "block": {
+                              "type": "math_number",
+                              "id": "fg_d_92",
+                              "fields": {
+                                "NUM": 92
+                              }
+                            }
+                          }
+                        },
+                        "next": {
+                          "block": {
+                            "type": "poly_start_timer",
+                            "id": "fg_d_start_t1",
+                            "fields": {
+                              "TIMER_ID": "1"
+                            },
+                            "inputs": {
+                              "PERIOD_MS": {
+                                "block": {
+                                  "type": "math_number",
+                                  "id": "fg_d_2000",
+                                  "fields": {
+                                    "NUM": 2000
+                                  }
+                                }
+                              },
+                              "REPEAT": {
+                                "block": {
+                                  "type": "math_number",
+                                  "id": "fg_d_1x",
+                                  "fields": {
+                                    "NUM": 1
+                                  }
+                                }
+                              }
+                            },
+                            "next": {
+                              "block": {
+                                "type": "poly_log",
+                                "id": "fg_d_btn_log",
+                                "fields": {
+                                  "LEVEL": "WARN"
+                                },
+                                "inputs": {
+                                  "MESSAGE": {
+                                    "block": {
+                                      "type": "text",
+                                      "id": "fg_d_btn_txt",
+                                      "fields": {
+                                        "TEXT": "按键 A：开启 2 秒 92% 疾速模式"
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "ext_drive_on_estop",
+                  "id": "fg_d_estop_on",
+                  "x": 1380,
+                  "y": 28,
+                  "fields": {
+                    "STATE": "press"
+                  },
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "ext_drive_stop",
+                        "id": "fg_d_es_stop",
+                        "next": {
+                          "block": {
+                            "type": "ext_board_rgb",
+                            "id": "fg_d_es_red",
+                            "fields": {
+                              "COLOR": "#ef4444"
+                            },
+                            "next": {
+                              "block": {
+                                "type": "ext_board_oled",
+                                "id": "fg_d_es_oled",
+                                "inputs": {
+                                  "TEXT": {
+                                    "block": {
+                                      "type": "text",
+                                      "id": "fg_d_es_otxt",
+                                      "fields": {
+                                        "TEXT": "ESTOP LOCKED!"
+                                      }
+                                    }
+                                  }
+                                },
+                                "next": {
+                                  "block": {
+                                    "type": "poly_log",
+                                    "id": "fg_d_es_log",
+                                    "fields": {
+                                      "LEVEL": "WARN"
+                                    },
+                                    "inputs": {
+                                      "MESSAGE": {
+                                        "block": {
+                                          "type": "text",
+                                          "id": "fg_d_es_ltxt",
+                                          "fields": {
+                                            "TEXT": "自定义中断 on_drive_estop：急停触发已刹停"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "ext_drive_on_estop",
+                  "id": "fg_d_estop_off",
+                  "x": 1380,
+                  "y": 420,
+                  "fields": {
+                    "STATE": "release"
+                  },
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "ext_board_rgb",
+                        "id": "fg_d_es_grn",
+                        "fields": {
+                          "COLOR": "#10b981"
+                        },
+                        "next": {
+                          "block": {
+                            "type": "ext_board_oled",
+                            "id": "fg_d_es_clr",
+                            "inputs": {
+                              "TEXT": {
+                                "block": {
+                                  "type": "text",
+                                  "id": "fg_d_es_ctxt",
+                                  "fields": {
+                                    "TEXT": "ESTOP CLEARED"
+                                  }
+                                }
+                              }
+                            },
+                            "next": {
+                              "block": {
+                                "type": "poly_log",
+                                "id": "fg_d_es_rlog",
+                                "fields": {
+                                  "LEVEL": "OK"
+                                },
+                                "inputs": {
+                                  "MESSAGE": {
+                                    "block": {
+                                      "type": "text",
+                                      "id": "fg_d_es_rltxt",
+                                      "fields": {
+                                        "TEXT": "急停已解除，恢复自动巡航"
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "poly_on_stop",
+                  "id": "fg_d_on_stop",
+                  "x": 1380,
+                  "y": 760,
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "ext_drive_stop",
+                        "id": "fg_d_stop_drv",
+                        "next": {
+                          "block": {
+                            "type": "ext_servo_center_all",
+                            "id": "fg_d_stop_srv",
+                            "next": {
+                              "block": {
+                                "type": "poly_log",
+                                "id": "fg_d_stop_log",
+                                "fields": {
+                                  "LEVEL": "OK"
+                                },
+                                "inputs": {
+                                  "MESSAGE": {
+                                    "block": {
+                                      "type": "text",
+                                      "id": "fg_d_stop_txt",
+                                      "fields": {
+                                        "TEXT": "drive_ctrl 已安全刹停并归中云台"
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "variables": [
+              {
+                "name": "target_speed",
+                "id": "var_fg_spd"
+              },
+              {
+                "name": "pan_angle",
+                "id": "var_fg_pan"
+              }
+            ]
+          },
+          "breakpoints": [],
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "scr_multi_handle_robot_drive_ctrl_patrol_test_1",
+          "name": "patrol_test",
+          "workspace": {
+            "blocks": {
+              "languageVersion": 0,
+              "blocks": [
+                {
+                  "type": "procedures_defnoreturn",
+                  "id": "fg_p_fn",
+                  "x": 36,
+                  "y": 28,
+                  "fields": {
+                    "NAME": "run_patrol_check"
+                  },
+                  "inputs": {
+                    "STACK": {
+                      "block": {
+                        "type": "ext_servo_set_angle",
+                        "id": "fg_p_s1",
+                        "fields": {
+                          "PWM_ID": "0"
+                        },
+                        "inputs": {
+                          "ANGLE": {
+                            "block": {
+                              "type": "math_number",
+                              "id": "fg_p_30",
+                              "fields": {
+                                "NUM": 30
+                              }
+                            }
+                          }
+                        },
+                        "next": {
+                          "block": {
+                            "type": "ext_drive_set_wheels",
+                            "id": "fg_p_go",
+                            "inputs": {
+                              "LEFT": {
+                                "block": {
+                                  "type": "math_number",
+                                  "id": "fg_p_70l",
+                                  "fields": {
+                                    "NUM": 70
+                                  }
+                                }
+                              },
+                              "RIGHT": {
+                                "block": {
+                                  "type": "math_number",
+                                  "id": "fg_p_50r",
+                                  "fields": {
+                                    "NUM": 50
+                                  }
+                                }
+                              }
+                            },
+                            "next": {
+                              "block": {
+                                "type": "poly_wait_ms",
+                                "id": "fg_p_wait",
+                                "inputs": {
+                                  "MS": {
+                                    "shadow": {
+                                      "type": "math_number",
+                                      "id": "fg_p_300",
+                                      "fields": {
+                                        "NUM": 300
+                                      }
+                                    }
+                                  }
+                                },
+                                "next": {
+                                  "block": {
+                                    "type": "ext_drive_stop",
+                                    "id": "fg_p_stop",
+                                    "next": {
+                                      "block": {
+                                        "type": "ext_servo_center_all",
+                                        "id": "fg_p_ctr",
+                                        "next": {
+                                          "block": {
+                                            "type": "poly_log",
+                                            "id": "fg_p_done",
+                                            "fields": {
+                                              "LEVEL": "OK"
+                                            },
+                                            "inputs": {
+                                              "MESSAGE": {
+                                                "block": {
+                                                  "type": "text",
+                                                  "id": "fg_p_ok",
+                                                  "fields": {
+                                                    "TEXT": "底盘差速与云台自检函数执行完成！"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "breakpoints": [],
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "hdl_multi_handle_robot_sensor_guard",
+      "name": "sensor_guard",
+      "description": "安防温控告警句柄（独立 lua_State #2，独享 T0）",
+      "color": "#0ea5e9",
+      "autoStart": true,
+      "capabilityConfigs": {
+        "rt.timers": {
+          "count": 8,
+          "aliases": {
+            "0": "温度巡检"
+          }
+        }
+      },
+      "sharedVariables": [],
+      "sharedFunctions": [],
+      "entryScriptId": "scr_multi_handle_robot_sensor_guard_main_0",
+      "activeScriptId": "scr_multi_handle_robot_sensor_guard_main_0",
+      "scripts": [
+        {
+          "id": "scr_multi_handle_robot_sensor_guard_main_0",
+          "name": "main",
+          "workspace": {
+            "blocks": {
+              "languageVersion": 0,
+              "blocks": [
+                {
+                  "type": "poly_on_start",
+                  "id": "fg_s_start",
+                  "x": 32,
+                  "y": 28,
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "variables_set",
+                        "id": "fg_s_init_cnt",
+                        "fields": {
+                          "VAR": {
+                            "id": "var_fg_alarms"
+                          }
+                        },
+                        "inputs": {
+                          "VALUE": {
+                            "block": {
+                              "type": "math_number",
+                              "id": "fg_s_0",
+                              "fields": {
+                                "NUM": 0
+                              }
+                            }
+                          }
+                        },
+                        "next": {
+                          "block": {
+                            "type": "variables_set",
+                            "id": "fg_s_init_led",
+                            "fields": {
+                              "VAR": {
+                                "id": "var_fg_led"
+                              }
+                            },
+                            "inputs": {
+                              "VALUE": {
+                                "block": {
+                                  "type": "logic_boolean",
+                                  "id": "fg_s_f",
+                                  "fields": {
+                                    "BOOL": "FALSE"
+                                  }
+                                }
+                              }
+                            },
+                            "next": {
+                              "block": {
+                                "type": "ext_board_oled_clear",
+                                "id": "fg_s_clr",
+                                "next": {
+                                  "block": {
+                                    "type": "ext_board_oled",
+                                    "id": "fg_s_oled0",
+                                    "inputs": {
+                                      "TEXT": {
+                                        "block": {
+                                          "type": "text",
+                                          "id": "fg_s_otxt",
+                                          "fields": {
+                                            "TEXT": "Robot Guard Online"
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "next": {
+                                      "block": {
+                                        "type": "poly_start_timer",
+                                        "id": "fg_s_t0",
+                                        "fields": {
+                                          "TIMER_ID": "0"
+                                        },
+                                        "inputs": {
+                                          "PERIOD_MS": {
+                                            "block": {
+                                              "type": "math_number",
+                                              "id": "fg_s_600",
+                                              "fields": {
+                                                "NUM": 600
+                                              }
+                                            }
+                                          },
+                                          "REPEAT": {
+                                            "block": {
+                                              "type": "math_number",
+                                              "id": "fg_s_inf",
+                                              "fields": {
+                                                "NUM": 0
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "next": {
+                                          "block": {
+                                            "type": "poly_log",
+                                            "id": "fg_s_log",
+                                            "fields": {
+                                              "LEVEL": "INFO"
+                                            },
+                                            "inputs": {
+                                              "MESSAGE": {
+                                                "block": {
+                                                  "type": "text",
+                                                  "id": "fg_s_ltxt",
+                                                  "fields": {
+                                                    "TEXT": "安防温控句柄就绪（独立 T0 巡检 600ms）"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "poly_on_timer",
+                  "id": "fg_s_on_t0",
+                  "x": 720,
+                  "y": 28,
+                  "fields": {
+                    "TIMER_ID": "0"
+                  },
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "poly_local_set",
+                        "id": "fg_s_ltemp",
+                        "fields": {
+                          "NAME": "cur_temp"
+                        },
+                        "inputs": {
+                          "VALUE": {
+                            "block": {
+                              "type": "ext_board_temp",
+                              "id": "fg_s_rtemp"
+                            }
+                          }
+                        },
+                        "next": {
+                          "block": {
+                            "type": "variables_set",
+                            "id": "fg_s_tog",
+                            "fields": {
+                              "VAR": {
+                                "id": "var_fg_led"
+                              }
+                            },
+                            "inputs": {
+                              "VALUE": {
+                                "block": {
+                                  "type": "logic_negate",
+                                  "id": "fg_s_not_led",
+                                  "inputs": {
+                                    "BOOL": {
+                                      "block": {
+                                        "type": "variables_get",
+                                        "id": "fg_s_gled",
+                                        "fields": {
+                                          "VAR": {
+                                            "id": "var_fg_led"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "next": {
+                              "block": {
+                                "type": "controls_if",
+                                "id": "fg_s_if_led",
+                                "extraState": {
+                                  "hasElse": true
+                                },
+                                "inputs": {
+                                  "IF0": {
+                                    "block": {
+                                      "type": "variables_get",
+                                      "id": "fg_s_gled2",
+                                      "fields": {
+                                        "VAR": {
+                                          "id": "var_fg_led"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "DO0": {
+                                    "block": {
+                                      "type": "ext_board_led",
+                                      "id": "fg_s_lon",
+                                      "fields": {
+                                        "STATE": "true"
+                                      }
+                                    }
+                                  },
+                                  "ELSE": {
+                                    "block": {
+                                      "type": "ext_board_led",
+                                      "id": "fg_s_loff",
+                                      "fields": {
+                                        "STATE": "false"
+                                      }
+                                    }
+                                  }
+                                },
+                                "next": {
+                                  "block": {
+                                    "type": "controls_if",
+                                    "id": "fg_s_if_hot",
+                                    "extraState": {
+                                      "hasElse": true
+                                    },
+                                    "inputs": {
+                                      "IF0": {
+                                        "block": {
+                                          "type": "logic_compare",
+                                          "id": "fg_s_cmp",
+                                          "fields": {
+                                            "OP": "GT"
+                                          },
+                                          "inputs": {
+                                            "A": {
+                                              "block": {
+                                                "type": "poly_local_get",
+                                                "id": "fg_s_gt",
+                                                "fields": {
+                                                  "NAME": "cur_temp"
+                                                }
+                                              }
+                                            },
+                                            "B": {
+                                              "block": {
+                                                "type": "math_number",
+                                                "id": "fg_s_35",
+                                                "fields": {
+                                                  "NUM": 35
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "DO0": {
+                                        "block": {
+                                          "type": "math_change",
+                                          "id": "fg_s_inc",
+                                          "fields": {
+                                            "VAR": {
+                                              "id": "var_fg_alarms"
+                                            }
+                                          },
+                                          "inputs": {
+                                            "DELTA": {
+                                              "block": {
+                                                "type": "math_number",
+                                                "id": "fg_s_1",
+                                                "fields": {
+                                                  "NUM": 1
+                                                }
+                                              }
+                                            }
+                                          },
+                                          "next": {
+                                            "block": {
+                                              "type": "ext_board_rgb",
+                                              "id": "fg_s_red",
+                                              "fields": {
+                                                "COLOR": "#ef4444"
+                                              },
+                                              "next": {
+                                                "block": {
+                                                  "type": "ext_board_oled",
+                                                  "id": "fg_s_ohot",
+                                                  "inputs": {
+                                                    "TEXT": {
+                                                      "block": {
+                                                        "type": "text",
+                                                        "id": "fg_s_htxt",
+                                                        "fields": {
+                                                          "TEXT": "THERMAL ALARM >35C"
+                                                        }
+                                                      }
+                                                    }
+                                                  },
+                                                  "next": {
+                                                    "block": {
+                                                      "type": "poly_print_kv",
+                                                      "id": "fg_s_palarm",
+                                                      "fields": {
+                                                        "LABEL": "高温告警累计"
+                                                      },
+                                                      "inputs": {
+                                                        "VALUE": {
+                                                          "block": {
+                                                            "type": "variables_get",
+                                                            "id": "fg_s_gal",
+                                                            "fields": {
+                                                              "VAR": {
+                                                                "id": "var_fg_alarms"
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "ELSE": {
+                                        "block": {
+                                          "type": "ext_board_rgb",
+                                          "id": "fg_s_grn",
+                                          "fields": {
+                                            "COLOR": "#10b981"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "poly_on_stop",
+                  "id": "fg_s_stop",
+                  "x": 36,
+                  "y": 540,
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "ext_board_led",
+                        "id": "fg_s_st_led",
+                        "fields": {
+                          "STATE": "false"
+                        },
+                        "next": {
+                          "block": {
+                            "type": "ext_board_rgb",
+                            "id": "fg_s_st_rgb",
+                            "fields": {
+                              "COLOR": "#1e293b"
+                            },
+                            "next": {
+                              "block": {
+                                "type": "poly_log",
+                                "id": "fg_s_st_log",
+                                "fields": {
+                                  "LEVEL": "OK"
+                                },
+                                "inputs": {
+                                  "MESSAGE": {
+                                    "block": {
+                                      "type": "text",
+                                      "id": "fg_s_st_txt",
+                                      "fields": {
+                                        "TEXT": "sensor_guard 已安全熄灯停机"
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "variables": [
+              {
+                "name": "alarm_count",
+                "id": "var_fg_alarms"
+              },
+              {
+                "name": "led_blink",
+                "id": "var_fg_led"
+              }
+            ]
+          },
+          "breakpoints": [],
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "hdl_multi_handle_robot_telemetry_hub",
+      "name": "telemetry_hub",
+      "description": "字典与秒表遥测统计句柄（独立 lua_State #3，独享 T0）",
+      "color": "#10b981",
+      "autoStart": true,
+      "capabilityConfigs": {
+        "rt.timers": {
+          "count": 8,
+          "aliases": {
+            "0": "遥测上报"
+          }
+        }
+      },
+      "sharedVariables": [],
+      "sharedFunctions": [],
+      "entryScriptId": "scr_multi_handle_robot_telemetry_hub_main_0",
+      "activeScriptId": "scr_multi_handle_robot_telemetry_hub_main_0",
+      "scripts": [
+        {
+          "id": "scr_multi_handle_robot_telemetry_hub_main_0",
+          "name": "main",
+          "workspace": {
+            "blocks": {
+              "languageVersion": 0,
+              "blocks": [
+                {
+                  "type": "poly_on_start",
+                  "id": "fg_t_start",
+                  "x": 32,
+                  "y": 28,
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "variables_set",
+                        "id": "fg_t_seq0",
+                        "fields": {
+                          "VAR": {
+                            "id": "var_fg_seq"
+                          }
+                        },
+                        "inputs": {
+                          "VALUE": {
+                            "block": {
+                              "type": "math_number",
+                              "id": "fg_t_0",
+                              "fields": {
+                                "NUM": 0
+                              }
+                            }
+                          }
+                        },
+                        "next": {
+                          "block": {
+                            "type": "variables_set",
+                            "id": "fg_t_rep0",
+                            "fields": {
+                              "VAR": {
+                                "id": "var_fg_report"
+                              }
+                            },
+                            "inputs": {
+                              "VALUE": {
+                                "block": {
+                                  "type": "poly_dict_new",
+                                  "id": "fg_t_dnew"
+                                }
+                              }
+                            },
+                            "next": {
+                              "block": {
+                                "type": "ext_clock_reset",
+                                "id": "fg_t_crst",
+                                "next": {
+                                  "block": {
+                                    "type": "poly_start_timer",
+                                    "id": "fg_t_t0",
+                                    "fields": {
+                                      "TIMER_ID": "0"
+                                    },
+                                    "inputs": {
+                                      "PERIOD_MS": {
+                                        "block": {
+                                          "type": "math_number",
+                                          "id": "fg_t_1200",
+                                          "fields": {
+                                            "NUM": 1200
+                                          }
+                                        }
+                                      },
+                                      "REPEAT": {
+                                        "block": {
+                                          "type": "math_number",
+                                          "id": "fg_t_inf",
+                                          "fields": {
+                                            "NUM": 0
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "next": {
+                                      "block": {
+                                        "type": "poly_log",
+                                        "id": "fg_t_log",
+                                        "fields": {
+                                          "LEVEL": "INFO"
+                                        },
+                                        "inputs": {
+                                          "MESSAGE": {
+                                            "block": {
+                                              "type": "text",
+                                              "id": "fg_t_ltxt",
+                                              "fields": {
+                                                "TEXT": "遥测统计句柄就绪（秒表 + 字典打包上报）"
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "poly_on_timer",
+                  "id": "fg_t_on_t0",
+                  "x": 720,
+                  "y": 28,
+                  "fields": {
+                    "TIMER_ID": "0"
+                  },
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "math_change",
+                        "id": "fg_t_inc",
+                        "fields": {
+                          "VAR": {
+                            "id": "var_fg_seq"
+                          }
+                        },
+                        "inputs": {
+                          "DELTA": {
+                            "block": {
+                              "type": "math_number",
+                              "id": "fg_t_1",
+                              "fields": {
+                                "NUM": 1
+                              }
+                            }
+                          }
+                        },
+                        "next": {
+                          "block": {
+                            "type": "poly_local_set",
+                            "id": "fg_t_up",
+                            "fields": {
+                              "NAME": "uptime_ms"
+                            },
+                            "inputs": {
+                              "VALUE": {
+                                "block": {
+                                  "type": "ext_clock_millis",
+                                  "id": "fg_t_ms"
+                                }
+                              }
+                            },
+                            "next": {
+                              "block": {
+                                "type": "poly_dict_set",
+                                "id": "fg_t_d1",
+                                "inputs": {
+                                  "DICT": {
+                                    "block": {
+                                      "type": "variables_get",
+                                      "id": "fg_t_dref1",
+                                      "fields": {
+                                        "VAR": {
+                                          "id": "var_fg_report"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "KEY": {
+                                    "block": {
+                                      "type": "text",
+                                      "id": "fg_t_k1",
+                                      "fields": {
+                                        "TEXT": "uptime_ms"
+                                      }
+                                    }
+                                  },
+                                  "VAL": {
+                                    "block": {
+                                      "type": "poly_local_get",
+                                      "id": "fg_t_gup",
+                                      "fields": {
+                                        "NAME": "uptime_ms"
+                                      }
+                                    }
+                                  }
+                                },
+                                "next": {
+                                  "block": {
+                                    "type": "poly_dict_set",
+                                    "id": "fg_t_d2",
+                                    "inputs": {
+                                      "DICT": {
+                                        "block": {
+                                          "type": "variables_get",
+                                          "id": "fg_t_dref2",
+                                          "fields": {
+                                            "VAR": {
+                                              "id": "var_fg_report"
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "KEY": {
+                                        "block": {
+                                          "type": "text",
+                                          "id": "fg_t_k2",
+                                          "fields": {
+                                            "TEXT": "temp"
+                                          }
+                                        }
+                                      },
+                                      "VAL": {
+                                        "block": {
+                                          "type": "ext_board_temp",
+                                          "id": "fg_t_rt"
+                                        }
+                                      }
+                                    },
+                                    "next": {
+                                      "block": {
+                                        "type": "poly_dict_set",
+                                        "id": "fg_t_d3",
+                                        "inputs": {
+                                          "DICT": {
+                                            "block": {
+                                              "type": "variables_get",
+                                              "id": "fg_t_dref3",
+                                              "fields": {
+                                                "VAR": {
+                                                  "id": "var_fg_report"
+                                                }
+                                              }
+                                            }
+                                          },
+                                          "KEY": {
+                                            "block": {
+                                              "type": "text",
+                                              "id": "fg_t_k3",
+                                              "fields": {
+                                                "TEXT": "battery"
+                                              }
+                                            }
+                                          },
+                                          "VAL": {
+                                            "block": {
+                                              "type": "ext_drive_battery",
+                                              "id": "fg_t_rb"
+                                            }
+                                          }
+                                        },
+                                        "next": {
+                                          "block": {
+                                            "type": "poly_print_kv",
+                                            "id": "fg_t_pseq",
+                                            "fields": {
+                                              "LABEL": "遥测帧 #"
+                                            },
+                                            "inputs": {
+                                              "VALUE": {
+                                                "block": {
+                                                  "type": "variables_get",
+                                                  "id": "fg_t_gseq",
+                                                  "fields": {
+                                                    "VAR": {
+                                                      "id": "var_fg_seq"
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            },
+                                            "next": {
+                                              "block": {
+                                                "type": "poly_print_kv",
+                                                "id": "fg_t_pms",
+                                                "fields": {
+                                                  "LABEL": "累计运行 ms"
+                                                },
+                                                "inputs": {
+                                                  "VALUE": {
+                                                    "block": {
+                                                      "type": "poly_dict_get",
+                                                      "id": "fg_t_gms",
+                                                      "inputs": {
+                                                        "DICT": {
+                                                          "block": {
+                                                            "type": "variables_get",
+                                                            "id": "fg_t_dref4",
+                                                            "fields": {
+                                                              "VAR": {
+                                                                "id": "var_fg_report"
+                                                              }
+                                                            }
+                                                          }
+                                                        },
+                                                        "KEY": {
+                                                          "block": {
+                                                            "type": "text",
+                                                            "id": "fg_t_gk1",
+                                                            "fields": {
+                                                              "TEXT": "uptime_ms"
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "poly_on_stop",
+                  "id": "fg_t_stop",
+                  "x": 36,
+                  "y": 500,
+                  "inputs": {
+                    "BODY": {
+                      "block": {
+                        "type": "poly_log",
+                        "id": "fg_t_st_log",
+                        "fields": {
+                          "LEVEL": "OK"
+                        },
+                        "inputs": {
+                          "MESSAGE": {
+                            "block": {
+                              "type": "text",
+                              "id": "fg_t_st_txt",
+                              "fields": {
+                                "TEXT": "telemetry_hub 遥测上报已停止"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "variables": [
+              {
+                "name": "seq",
+                "id": "var_fg_seq"
+              },
+              {
+                "name": "report",
+                "id": "var_fg_report"
+              }
+            ]
+          },
+          "breakpoints": [],
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "updatedAt": "2026-01-01T00:00:00.000Z"
+}

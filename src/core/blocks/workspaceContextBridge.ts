@@ -7,7 +7,7 @@ import type { ModuleConflictItem } from '../extensions/moduleResolver';
 
 export const DEFAULT_CHANNEL_COUNT = 8;
 export const MIN_CHANNEL_COUNT = 1;
-export const MAX_CHANNEL_COUNT = 32;
+export const MAX_CHANNEL_COUNT = 64;
 export const EDIT_CHANNEL_ALIAS_SENTINEL = '__EDIT_CHANNEL_ALIAS__';
 
 export interface ChannelAliasPromptRequest {
@@ -42,6 +42,8 @@ export interface DeclaredFunctionMeta {
   hasReturn: boolean;
   /** True when the function body directly or transitively calls `poly_wait_ms` (`sleep_ms`). */
   usesSleep?: boolean;
+  /** Raw procedure names called directly by this procedure body (used for handle-wide async closure). */
+  calledProcedures?: string[];
   scriptId: string;
   scriptName: string;
 }
@@ -75,7 +77,6 @@ export interface CompileContext {
   handleScripts?: ActiveHandleScriptMeta[];
   currentScriptId?: string | null;
   sharedVariables?: string[] | null;
-  sharedVarInitials?: Record<string, VariableInitialValue> | null;
   scriptVarInitials?: Record<string, VariableInitialValue> | null;
   sharedFunctions?: string[] | null;
   moduleConflicts?: ModuleConflictItem[];
@@ -123,7 +124,6 @@ let activeCapabilities: string[] | null = null;
 let activeHandleScripts: ActiveHandleScriptMeta[] = [];
 let activeHandleScriptId: string | null = null;
 let activeHandleSharedVariables: string[] | null = null;
-let activeHandleSharedVarInitials: Record<string, VariableInitialValue> = {};
 let activeScriptVarInitials: Record<string, VariableInitialValue> = {};
 let activeHandleSharedFunctions: string[] | null = null;
 let activeModuleConflicts: ModuleConflictItem[] = [];
@@ -148,7 +148,6 @@ export function withCompileContext<T>(
   const prevSharedVars = activeHandleSharedVariables
     ? [...activeHandleSharedVariables]
     : null;
-  const prevSharedVarInitials = { ...activeHandleSharedVarInitials };
   const prevScriptVarInitials = { ...activeScriptVarInitials };
   const prevSharedFns = activeHandleSharedFunctions
     ? [...activeHandleSharedFunctions]
@@ -173,9 +172,6 @@ export function withCompileContext<T>(
     if (ctx.sharedVariables !== undefined) {
       setActiveHandleSharedVariables(ctx.sharedVariables);
     }
-    if (ctx.sharedVarInitials !== undefined) {
-      setActiveHandleSharedVarInitials(ctx.sharedVarInitials);
-    }
     if (ctx.scriptVarInitials !== undefined) {
       setActiveScriptVarInitials(ctx.scriptVarInitials);
     }
@@ -195,7 +191,6 @@ export function withCompileContext<T>(
     activeHandleScripts = prevScripts;
     activeHandleScriptId = prevScriptId;
     activeHandleSharedVariables = prevSharedVars;
-    activeHandleSharedVarInitials = prevSharedVarInitials;
     activeScriptVarInitials = prevScriptVarInitials;
     activeHandleSharedFunctions = prevSharedFns;
     activeModuleConflicts = prevConflicts;
@@ -208,19 +203,6 @@ export function setActiveHandleSharedVariables(names: string[] | null): void {
 
 export function getActiveHandleSharedVariables(): string[] | null {
   return activeHandleSharedVariables;
-}
-
-export function setActiveHandleSharedVarInitials(
-  initials?: Record<string, VariableInitialValue> | null,
-): void {
-  activeHandleSharedVarInitials = initials ? { ...initials } : {};
-}
-
-export function getActiveHandleSharedVarInitials(): Record<
-  string,
-  VariableInitialValue
-> {
-  return activeHandleSharedVarInitials;
 }
 
 export function setActiveScriptVarInitials(

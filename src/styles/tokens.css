@@ -4,7 +4,7 @@
 :root {
   color-scheme: light;
   --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, "PingFang SC", "Microsoft YaHei", "Segoe UI", monospace;
 
   --bg-app: #eef1f6;
   --bg-chrome: #ffffff;

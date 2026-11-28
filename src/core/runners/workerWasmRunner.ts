@@ -1,5 +1,5 @@
 import type { RuntimeTelemetry, ScriptLanguageId } from '../../types/project';
-import { getLanguageDialect } from '../backends/registry';
+import { backendRegistry } from '../backends/registry';
 import { extractErrorLine, parseStdoutLine } from './logParser';
 import type { RunCallbacks, RunRequest, RunResult, ScriptRunner } from './types';
 
@@ -36,6 +36,8 @@ export interface WorkerWasmRunnerConfig {
   name: string;
   shortLabel: string;
   engineBadge?: string;
+  kind?: 'browser-wasm' | 'browser-worker';
+  transportLabel?: string;
   language: ScriptLanguageId;
   description: string;
   wasmAssetUrl?: string;
@@ -52,7 +54,8 @@ export class WorkerWasmRunner implements ScriptRunner {
   readonly name: string;
   readonly shortLabel: string;
   readonly engineBadge: string;
-  readonly kind = 'browser-wasm' as const;
+  readonly transportLabel: string;
+  readonly kind: 'browser-wasm' | 'browser-worker';
   readonly supportedLanguages: ScriptLanguageId[];
   readonly description: string;
   readonly availability = 'builtin' as const;
@@ -77,6 +80,12 @@ export class WorkerWasmRunner implements ScriptRunner {
     this.name = config.name;
     this.shortLabel = config.shortLabel;
     this.engineBadge = config.engineBadge ?? 'WASM';
+    this.kind = config.kind ?? (config.wasmAssetUrl ? 'browser-wasm' : 'browser-worker');
+    this.transportLabel =
+      config.transportLabel ??
+      (this.kind === 'browser-wasm'
+        ? '浏览器 WASM Worker · 离线可运行'
+        : '原生 Web Worker · 零 WASM 体积');
     this.language = config.language;
     this.supportedLanguages = [config.language];
     this.description = config.description;
@@ -85,7 +94,7 @@ export class WorkerWasmRunner implements ScriptRunner {
   }
 
   private get langLabel(): string {
-    return getLanguageDialect(this.language).shortLabel;
+    return backendRegistry.tryGetDialect(this.language)?.shortLabel ?? this.language;
   }
 
   private resolveWasmUrl(): string {

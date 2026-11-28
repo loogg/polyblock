@@ -71,9 +71,9 @@
   "sandboxMock": {
     "moduleName": "poly_clock",
     "sources": {
-      "lua": "\nlocal M = {}\nlocal base_ms = __poly_now_ms()\nfunction M.millis()\n  return math.floor(__poly_now_ms() - base_ms)\nend\nfunction M.reset()\n  base_ms = __poly_now_ms()\nend\nreturn M\n",
-      "python": "\nimport _poly\n_base_ms = _poly.now_ms()\ndef millis():\n    return int(_poly.now_ms() - _base_ms)\ndef reset():\n    global _base_ms\n    _base_ms = _poly.now_ms()\n",
-      "js": "const _poly = require(\"_poly\");\nlet baseMs = _poly.now_ms();\nmodule.exports = {\n  millis() {\n    return Math.floor(_poly.now_ms() - baseMs);\n  },\n  reset() {\n    baseMs = _poly.now_ms();\n  },\n};"
+      "lua": "\nlocal M = {}\nlocal base_ms = __poly_logic_now_ms()\nfunction M.millis()\n  return math.floor(__poly_logic_now_ms() - base_ms)\nend\nfunction M.reset()\n  base_ms = __poly_logic_now_ms()\nend\nreturn M\n",
+      "python": "\nimport _poly\n_base_ms = _poly.logic_now_ms()\ndef millis():\n    return int(_poly.logic_now_ms() - _base_ms)\ndef reset():\n    global _base_ms\n    _base_ms = _poly.logic_now_ms()\n",
+      "js": "const _poly = require(\"_poly\");\nlet baseMs = _poly.logic_now_ms();\nmodule.exports = {\n  millis() {\n    return Math.floor(_poly.logic_now_ms() - baseMs);\n  },\n  reset() {\n    baseMs = _poly.logic_now_ms();\n  },\n};"
     }
   }
 }

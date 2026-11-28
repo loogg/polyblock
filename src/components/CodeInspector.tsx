@@ -166,6 +166,10 @@ export function CodeInspector({
   }, [showSimTab, activeTab]);
 
   const lines = useMemo(() => generated.code.split('\n'), [generated.code]);
+  const highlightedLines = useMemo(
+    () => lines.map((line) => highlightCodeLine(line, language)),
+    [lines, language],
+  );
 
   const activeRange = selectedBlockId
     ? generated.sourceMap[selectedBlockId]
@@ -177,27 +181,23 @@ export function CodeInspector({
 
   const lineBreakpointBlock = useMemo(() => {
     const map: Record<number, string> = {};
+    const allowedLines = generated.breakpointableLines;
+    if (allowedLines && allowedLines.length > 0) {
+      for (const lineNum of allowedLines) {
+        const blockId = generated.lineToBlock[lineNum];
+        if (blockId) {
+          map[lineNum] = blockId;
+        }
+      }
+      return map;
+    }
     for (const [blockId, range] of Object.entries(generated.sourceMap)) {
       if (generated.lineToBlock[range.startLine] === blockId) {
-        const lineText = (lines[range.startLine - 1] ?? '').trim();
-        if (
-          !lineText.startsWith('-- 当程序启动') &&
-          !lineText.startsWith('# 当程序启动') &&
-          !lineText.startsWith('function on_') &&
-          !lineText.startsWith('def on_') &&
-          !lineText.startsWith('if id ==') &&
-          !lineText.startsWith('elseif id ==') &&
-          !lineText.startsWith('elif id ==') &&
-          !lineText.startsWith('if key ==') &&
-          !lineText.startsWith('elseif key ==') &&
-          !lineText.startsWith('elif key ==')
-        ) {
-          map[range.startLine] = blockId;
-        }
+        map[range.startLine] = blockId;
       }
     }
     return map;
-  }, [generated.sourceMap, generated.lineToBlock, lines]);
+  }, [generated.breakpointableLines, generated.sourceMap, generated.lineToBlock]);
 
   const scopeNodes = generated.variableScopes ?? [];
   const totalScopedVarCount = useMemo(() => {
@@ -352,7 +352,7 @@ export function CodeInspector({
       {activeTab === 'code' && (
         <>
           <div className="code-body" ref={codeScrollRef}>
-            {lines.map((line, idx) => {
+            {lines.map((_line, idx) => {
               const lineNum = idx + 1;
               const isExec =
                 execRange !== undefined &&
@@ -392,9 +392,7 @@ export function CodeInspector({
                 >
                   <button
                     type="button"
-                    className={`bp-gutter ${bpBlockId ? 'can-bp' : ''} ${
-                      hasBp ? 'has-bp' : ''
-                    }`}
+                    className={`bp-gutter ${hasBp ? 'has-bp' : ''}`}
                     disabled={!bpBlockId}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -425,7 +423,7 @@ export function CodeInspector({
                   <span
                     className="lc"
                     dangerouslySetInnerHTML={{
-                      __html: highlightCodeLine(line, language),
+                      __html: highlightedLines[idx] ?? '',
                     }}
                   />
                 </div>
@@ -569,7 +567,7 @@ export function CodeInspector({
                       className="vboard-mini-item"
                       style={{ color: 'var(--text-secondary)' }}
                     >
-                      {hasTimerMonitor ? 'RT 周期与多路定时器' : 'RT 周期调度'}
+                      {hasTimerMonitor ? '周期循环与多路定时器' : '周期循环调度'}
                     </span>
                   )}
                 {anyEventLoopRunning && (
@@ -754,7 +752,7 @@ export function CodeInspector({
                       </div>
                     ) : (
                       <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                        暂无活跃定时器；启动 <code>rt.start_timer</code> 后在此实时显示各通道进度。
+                        暂无活跃定时器；启动定时器通道后在此实时显示各路进度。
                       </div>
                     ))}
                 </div>

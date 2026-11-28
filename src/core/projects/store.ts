@@ -8,11 +8,11 @@ import {
   MIN_CHANNEL_COUNT,
   normalizeChannelPoolConfig,
 } from '../blocks/workspaceContextBridge';
-import { targetProfileRegistry } from '../capabilities/registry';
 import {
-  extensionRegistry,
-  validateExtensionPack,
-} from '../extensions/registry';
+  targetProfileRegistry,
+  validateTargetProfile,
+} from '../capabilities/registry';
+import { validateExtensionPack } from '../extensions/registry';
 import type {
   PolyExtensionPack,
   ResolvedHandleChannelPoolSpec,
@@ -22,8 +22,8 @@ import {
   createBlankWorkspace,
   DEMO_PROJECTS,
   getDemoProjectById,
-  type BuiltinDemoEntry,
-} from './builtinDemos';
+  type DefaultDemoEntry,
+} from './defaultDemos';
 import type {
   ChannelPoolConfig,
   ProjectModel,
@@ -38,7 +38,7 @@ export {
   createBlankWorkspace,
   DEMO_PROJECTS,
   getDemoProjectById,
-  type BuiltinDemoEntry,
+  type DefaultDemoEntry,
 };
 
 export const STORAGE_STORE_V9_KEY = 'polyblock.store.v9';
@@ -76,10 +76,14 @@ export function sanitizeScriptName(raw: string): string {
   const withoutExt = stripScriptExtension(
     raw.trim().replace(/\.(?:polyblock\.json|json)$/i, ''),
   );
-  const cleaned = withoutExt
-    .replace(/[\\/:*?"<>|\s]+/g, '_')
+  let cleaned = withoutExt
+    .replace(/[^A-Za-z0-9_]+/g, '_')
     .replace(/^_+|_+$/g, '');
-  return cleaned || 'script';
+  if (!cleaned) return 'script';
+  if (/^[0-9]/.test(cleaned)) {
+    cleaned = `s_${cleaned}`;
+  }
+  return cleaned;
 }
 
 export function sanitizeHandleName(raw: string): string {
@@ -227,63 +231,29 @@ function normalizeLocalExtensions(raw: unknown): PolyExtensionPack[] {
   return Array.from(map.values());
 }
 
-/**
- * Prepares a portable .polyblock.json export payload:
- * - Preserves project-embedded `localExtensions`.
- * - Auto-snapshots any non-builtin GLOBAL packs referenced in `enabledCapabilities`
- *   into `bundledExtensions` so recipients open the project out-of-the-box.
- */
-export function buildExportableProjectJson(
-  project: ProjectModel,
-  globalPacks: PolyExtensionPack[] = extensionRegistry.listAll(),
-): ProjectModel {
-  const localPacks = project.localExtensions ?? [];
-  const localIds = new Set(localPacks.map((p) => p.id));
-  const seenBundled = new Set<string>();
-  const bundled: PolyExtensionPack[] = [];
-
-  for (const capId of project.enabledCapabilities) {
-    const dotIdx = capId.indexOf('.');
-    const basePackId = dotIdx > 0 ? capId.slice(0, dotIdx) : capId;
-    if (localIds.has(basePackId) || seenBundled.has(basePackId)) continue;
-    const globalPack = globalPacks.find((p) => p.id === basePackId);
-    if (globalPack && !extensionRegistry.isSameAsDefault(globalPack)) {
-      seenBundled.add(basePackId);
-      bundled.push(cloneJson(globalPack));
-    }
+function normalizeLocalTargetProfile(raw: unknown): TargetProfile | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  try {
+    return validateTargetProfile(raw);
+  } catch {
+    return undefined;
   }
-
-  const base: ProjectModel = cloneJson(project);
-  delete base.bundledExtensions;
-  if (localPacks.length > 0) {
-    base.localExtensions = cloneJson(localPacks);
-  } else {
-    delete base.localExtensions;
-  }
-  if (bundled.length > 0) {
-    base.bundledExtensions = bundled;
-  }
-  return base;
 }
 
 /**
- * Computes which bundled global snapshots in an imported JSON should be absorbed
- * unconditionally as project-local embedded packs:
- * - Always absorb every bundled pack not already present in `localExtensions`
- *   (regardless of whether the recipient's global library has the same ID/version,
- *   because two files with the same ID+version can still have different block definitions).
- * - Guarantees 100% deterministic reproduction with zero global-library pollution;
- *   the user can remove the local override at any time to fall back to their global pack.
+ * Resolves the effective TargetProfile for a project:
+ * checks the project's version-locked `localTargetProfile` first, then falls back to the global registry.
  */
-export function getAbsorbedBundledExtensions(
-  raw: unknown,
-): PolyExtensionPack[] {
-  if (!raw || typeof raw !== 'object') return [];
-  const obj = raw as Record<string, unknown>;
-  const localIds = new Set(normalizeLocalExtensions(obj.localExtensions).map((p) => p.id));
-  return normalizeLocalExtensions(obj.bundledExtensions).filter(
-    (p) => !localIds.has(p.id),
-  );
+export function resolveProjectTargetProfile(
+  project: Pick<ProjectModel, 'targetProfileId' | 'localTargetProfile'>,
+): TargetProfile {
+  if (
+    project.localTargetProfile &&
+    project.localTargetProfile.id === project.targetProfileId
+  ) {
+    return project.localTargetProfile;
+  }
+  return targetProfileRegistry.get(project.targetProfileId);
 }
 
 export function applyTargetProfileToProject(
@@ -291,12 +261,14 @@ export function applyTargetProfileToProject(
   profile: TargetProfile,
 ): ProjectModel {
   const now = new Date().toISOString();
-  return {
+  const next: ProjectModel = {
     ...project,
     targetProfileId: profile.id,
     enabledCapabilities: [...profile.capabilities],
     updatedAt: now,
   };
+  delete next.localTargetProfile;
+  return next;
 }
 
 function normalizeInitialValuesMap(
@@ -335,13 +307,22 @@ export function instantiateProjectFromTemplate(
     customName ?? demo.project.name,
     existingProjectNames,
   );
+  const demoLocalExts = normalizeLocalExtensions(demo.project.localExtensions);
+  const demoLocalBoard = normalizeLocalTargetProfile(
+    demo.project.localTargetProfile,
+  );
+  const instantiated: ProjectModel = {
+    ...base,
+    localExtensions: demoLocalExts,
+    ...(demoLocalBoard ? { localTargetProfile: demoLocalBoard } : {}),
+  };
   if (customName) {
     return {
-      ...base,
+      ...instantiated,
       name: makeUniqueProjectName(customName, existingProjectNames),
     };
   }
-  return base;
+  return instantiated;
 }
 
 /** Creates the clean initial workspace store preloaded with the built-in demos from `src/demos/`. */
@@ -354,6 +335,9 @@ export function createDefaultWorkspaceStore(): WorkspaceStoreState {
         projects.map((p) => p.name),
       ),
     );
+  }
+  if (projects.length === 0) {
+    projects.push(instantiateProjectFromTemplate('blank_project', []));
   }
   return {
     version: 3,
@@ -401,11 +385,11 @@ export function instantiateProjectFromProfile(
     version: 3,
     id: createId('proj'),
     name: makeUniqueProjectName(
-      customName ?? `${profile.name.split('（')[0]}工程`,
+      customName ?? `${profile.name.split(/[（(]/)[0]}工程`,
       existingProjectNames,
     ),
     description: profile.description,
-    language: profile.defaultLanguage,
+    language: normalizeLanguageId(profile.defaultLanguage),
     targetProfileId: profile.id,
     enabledCapabilities: [...profile.capabilities],
     localExtensions: [],
@@ -562,6 +546,8 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
       ? raw.activeHandleId
       : handles[0].id;
 
+  const localTargetProfile = normalizeLocalTargetProfile(raw.localTargetProfile);
+
   return {
     format: 'polyblock-project',
     version: 3,
@@ -572,6 +558,7 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
     targetProfileId: profileId,
     enabledCapabilities,
     localExtensions: normalizeLocalExtensions(raw.localExtensions),
+    ...(localTargetProfile ? { localTargetProfile } : {}),
     activeHandleId,
     handles,
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : now,
@@ -611,10 +598,6 @@ export function parseImportedProject(
       ? obj.targetProfileId
       : targetProfileRegistry.getDefaultProfileId();
 
-  const localPacks = normalizeLocalExtensions(obj.localExtensions);
-  const absorbedBundled = getAbsorbedBundledExtensions(obj);
-  const mergedLocalExtensions = [...localPacks, ...absorbedBundled];
-
   return {
     format: 'polyblock-project',
     version: 3,
@@ -627,7 +610,7 @@ export function parseImportedProject(
     language: normalizeLanguageId(obj.language),
     targetProfileId,
     enabledCapabilities,
-    localExtensions: mergedLocalExtensions,
+    localExtensions: [],
     activeHandleId,
     handles,
     createdAt: typeof obj.createdAt === 'string' ? obj.createdAt : now,
@@ -742,7 +725,7 @@ export function addHandleToProject(
     project.handles.map((h) => h.name),
   );
   const scriptId = createId('scr');
-  const profile = targetProfileRegistry.get(project.targetProfileId);
+  const profile = resolveProjectTargetProfile(project);
   const capabilityConfigs: Record<string, unknown> = {};
   if (profile.defaultChannelCounts) {
     for (const [cfgKey, cnt] of Object.entries(profile.defaultChannelCounts)) {
@@ -1019,6 +1002,9 @@ export function duplicateProjectInStore(
     ),
     enabledCapabilities: [...target.enabledCapabilities],
     localExtensions: cloneJson(target.localExtensions ?? []),
+    ...(target.localTargetProfile
+      ? { localTargetProfile: cloneJson(target.localTargetProfile) }
+      : {}),
     activeHandleId: handleIdMap.get(target.activeHandleId) ?? clonedHandles[0].id,
     handles: clonedHandles,
     createdAt: now,

@@ -19,6 +19,9 @@ import {
   codegenContext,
   computeAsyncFunctionNames,
   formatSharedVarRef,
+  isShadowedByEnclosingForLoop,
+  isShadowedByProcedureParam,
+  LOOP_SCOPED_FOR_TYPES,
   resetCodegenPassContext,
   type CodegenPassContextOptions,
 } from './codegenContext';
@@ -31,6 +34,8 @@ import {
 } from './eventMode';
 import {
   analyzeWorkspaceScopes,
+  getBlockVariableFieldIds,
+  resolveSharedFnIdent,
   sanitizeLocalIdent,
 } from './scopeAnalysis';
 import {
@@ -80,6 +85,8 @@ export interface WorkspaceVarEntry {
   ident: string;
   sharedAttr?: string;
   used: boolean;
+  /** True when a non-shared variable is ONLY used as a `for`-loop counter (safe to keep function/block-local). */
+  loopOnly?: boolean;
 }
 
 export interface WorkspacePassAnalysis {
@@ -131,6 +138,8 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
 
   /** True when shared variables inside `shared.<ext>` are referenced as bare `<attr>` rather than `<mod>.<attr>`. */
   protected readonly bareAttrInSharedModule: boolean = false;
+  /** True when `for` loop header variables shadow outer globals/shared variables (e.g. Lua). */
+  protected readonly loopScopedForVars: boolean = false;
   protected abstract readonly orderNone: number;
   protected abstract readonly orderAtomic: number;
   /** Regex matching top-level debug heartbeat lines stripped when building companion `moduleDebugCode`. */
@@ -191,7 +200,7 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
   }
 
   protected formatMissingTemplateValueExpr(_blockType: string): string {
-    return `${this.dialect.nullLiteral}${this.dialect.lineCommentPrefix}未提供 code.${this.id}.template`;
+    return this.dialect.nullLiteral;
   }
 
   protected formatMissingTemplateStatement(blockType: string): string {
@@ -205,6 +214,7 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
   ): string {
     return formatSharedVarRef(varId, generator, block, {
       bareAttrInSharedModule: this.bareAttrInSharedModule,
+      loopScopedForVars: this.loopScopedForVars,
     });
   }
 
@@ -268,6 +278,7 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
   private computeWorkspaceAsyncFunctions(
     workspace: Blockly.Workspace,
     handleScripts: ActiveHandleScriptMeta[],
+    sharedFnSet: Set<string>,
   ): Set<string> {
     if (!this.dialect.explicitAsyncCoroutine) {
       return new Set<string>();
@@ -275,7 +286,9 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
     const externalAsyncSharedFns = new Set<string>();
     for (const s of handleScripts) {
       for (const fn of s.declaredFunctions ?? []) {
-        if (fn.usesSleep) externalAsyncSharedFns.add(fn.name);
+        if (fn.usesSleep && sharedFnSet.has(fn.name)) {
+          externalAsyncSharedFns.add(fn.name);
+        }
       }
     }
     return computeAsyncFunctionNames(workspace, externalAsyncSharedFns);
@@ -307,12 +320,19 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
     };
 
     const usedVarIds = new Set<string>();
+    const nonLoopVarIds = new Set<string>();
     for (const blk of workspace.getAllBlocks(false)) {
       if (blk.isShadow() || !blk.isEnabled()) continue;
       if (isInsideSharedFunction(blk)) continue;
-      if (blk.getField('VAR')) {
-        const vId = blk.getFieldValue('VAR');
-        if (vId) usedVarIds.add(String(vId));
+      for (const vId of getBlockVariableFieldIds(blk)) {
+        if (isShadowedByProcedureParam(vId, blk)) continue;
+        usedVarIds.add(vId);
+        if (
+          !LOOP_SCOPED_FOR_TYPES.has(blk.type) &&
+          !isShadowedByEnclosingForLoop(vId, blk)
+        ) {
+          nonLoopVarIds.add(vId);
+        }
       }
     }
 
@@ -327,12 +347,15 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
         const sharedAttr = sharedInfo.moduleName
           ? sharedAttrByName.get(label)
           : undefined;
+        const used = usedVarIds.has(id);
+        const loopOnly = used && !sharedAttr && !nonLoopVarIds.has(id);
         variables.push({
           id,
           label,
           ident,
           ...(sharedAttr ? { sharedAttr } : {}),
-          used: usedVarIds.has(id),
+          used,
+          ...(loopOnly ? { loopOnly: true } : {}),
         });
       }
     } finally {
@@ -369,6 +392,7 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
       const asyncFnNames = this.computeWorkspaceAsyncFunctions(
         workspace,
         handleScripts,
+        sharedFnSet,
       );
 
       // --- Pre-pass: Variable & scope inventory ---
@@ -428,6 +452,21 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
         ? `${header}${mergedCleanBody}\n`
         : `${header}${this.formatEmptyPlaceholder()}`;
       const { code, sourceMap, lineToBlock } = extractSourceMap(combinedClean);
+      const breakpointableLineSet = new Set<number>();
+      for (const blk of workspace.getAllBlocks(false)) {
+        if (blk.isShadow() || !blk.isEnabled()) continue;
+        if (!blk.previousConnection) continue;
+        if (blk.type === 'poly_comment' || blk.type === 'poly_require_script') {
+          continue;
+        }
+        const range = sourceMap[blk.id];
+        if (range && lineToBlock[range.startLine] === blk.id) {
+          breakpointableLineSet.add(range.startLine);
+        }
+      }
+      const breakpointableLines = Array.from(breakpointableLineSet).sort(
+        (a, b) => a - b,
+      );
 
       // --- Pass 2: Instrumented single-track coroutine sandbox debug code ---
       const debugPrep = this.prepareDebugPass(
@@ -491,6 +530,7 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
         moduleDebugCode,
         sourceMap,
         lineToBlock,
+        breakpointableLines,
         diagnostics: analyzeWorkspaceDiagnostics(workspace, this.id),
         blockCount: workspace
           .getAllBlocks(false)
@@ -588,7 +628,8 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
       let cleanFnCode = '';
       let debugFnCode = '';
       let imports: string[] = [];
-      let procIdent = sanitizeLocalIdent(input.name);
+      let blocklyProcIdent = sanitizeLocalIdent(input.name);
+      const sharedFnIdent = resolveSharedFnIdent(input.name);
 
       try {
         resetCodegenPassContext({ debugPass: false, compilingSharedModule: true });
@@ -602,7 +643,7 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
             snapEntries.push({ label: v.getName(), attr });
           }
         }
-        procIdent = generator.getProcedureName(input.name);
+        blocklyProcIdent = generator.getProcedureName(input.name);
         generator.finish('');
 
         const asyncNames = this.dialect.explicitAsyncCoroutine
@@ -635,7 +676,7 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
           )
           .map(([, v]) => v.trim())
           .filter(Boolean);
-        cleanFnCode = (defs[`%${procIdent}`] ?? '').trim();
+        cleanFnCode = (defs[`%${blocklyProcIdent}`] ?? '').trim();
         generator.finish('');
 
         // Debug shared procedure pass
@@ -658,7 +699,7 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
         const debugDefs = (
           generator as unknown as { definitions_: Record<string, string> }
         ).definitions_;
-        debugFnCode = (debugDefs[`%${procIdent}`] ?? cleanFnCode).trim();
+        debugFnCode = (debugDefs[`%${blocklyProcIdent}`] ?? cleanFnCode).trim();
         generator.finish('');
       } finally {
         resetCodegenPassContext({
@@ -669,7 +710,7 @@ export abstract class BaseScriptBackend<TDebugMeta = void>
         generator.STATEMENT_SUFFIX = prevSuffix;
       }
 
-      return { ident: procIdent, imports, cleanFnCode, debugFnCode };
+      return { ident: sharedFnIdent, imports, cleanFnCode, debugFnCode };
     } finally {
       ws.dispose();
     }

@@ -5,33 +5,73 @@ import type {
 } from '../../types/project';
 import { getActiveHandleSharedVariables } from '../blocks/workspaceContextBridge';
 import { extensionRegistry } from '../extensions/registry';
+import { backendRegistry } from './registry';
 
-const RESERVED_IDENTS = new Set([
-  'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
-  'goto', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then',
-  'true', 'until', 'while',
-  'def', 'class', 'from', 'import', 'as', 'pass', 'None', 'True', 'False',
-  'lambda', 'global', 'nonlocal', 'try', 'except', 'finally', 'with', 'yield',
-  'async', 'await', 'id', 'key', 'pressed',
-]);
+function isReservedLocalIdent(ident: string): boolean {
+  for (const dialect of backendRegistry.listDialects()) {
+    if (dialect.keywords.includes(ident)) {
+      return true;
+    }
+  }
+  for (const pack of extensionRegistry.listAllWithLocal()) {
+    for (const sec of pack.sections) {
+      for (const blk of sec.blocks) {
+        if (blk.hat?.params?.includes(ident)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
 
-/** Converts any user local variable label into a safe Lua/Python identifier. */
+/** Returns all Blockly variable IDs referenced by any FieldVariable on `block` (regardless of field name). */
+export function getBlockVariableFieldIds(block: Blockly.Block): string[] {
+  const ids: string[] = [];
+  for (const input of block.inputList) {
+    for (const field of input.fieldRow) {
+      if (field instanceof Blockly.FieldVariable) {
+        const val = field.getValue();
+        if (val) ids.push(String(val));
+      }
+    }
+  }
+  return ids;
+}
+
+/** Deterministic cross-workspace attribute identifier for cross-file `shared.<fn>` functions. */
+export function resolveSharedFnIdent(rawName: string): string {
+  return sanitizeLocalIdent(rawName);
+}
+
+/** Converts any user local variable label into a cross-language safe identifier. */
 export function sanitizeLocalIdent(rawName: string): string {
   const trimmed = rawName.trim();
   if (!trimmed) return '_tmp';
+  const hasNonAsciiOrSpecial = /[^A-Za-z0-9_]/.test(trimmed);
   let cleaned = trimmed.replace(/[^A-Za-z0-9_]/g, '_');
   if (/^[0-9]/.test(cleaned)) {
     cleaned = `_${cleaned}`;
   }
   if (!cleaned || /^_+$/.test(cleaned)) {
-    // Deterministic ASCII hash for non-ASCII names (e.g. Chinese)
+    // Deterministic ASCII hash for pure non-ASCII names (e.g. Chinese)
     let hash = 0;
     for (let i = 0; i < trimmed.length; i++) {
       hash = (hash * 31 + trimmed.charCodeAt(i)) >>> 0;
     }
     return `_loc_${hash.toString(36)}`;
   }
-  if (RESERVED_IDENTS.has(cleaned)) {
+  if (hasNonAsciiOrSpecial && /[^\x20-\x7E]/.test(trimmed)) {
+    // Disambiguate mixed non-ASCII + ASCII labels (e.g. "温度1" vs "湿度1") deterministically
+    let hash = 0;
+    for (let i = 0; i < trimmed.length; i++) {
+      hash = (hash * 31 + trimmed.charCodeAt(i)) >>> 0;
+    }
+    const suffix = hash.toString(36).slice(0, 5);
+    cleaned = `${cleaned.replace(/^_+/, '_')}_${suffix}`;
+    if (/^[0-9]/.test(cleaned)) cleaned = `_${cleaned}`;
+  }
+  if (isReservedLocalIdent(cleaned)) {
     return `${cleaned}_v`;
   }
   return cleaned;

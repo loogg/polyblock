@@ -16,7 +16,6 @@ import {
   setActiveHandleScripts,
   setActiveHandleSharedFunctions,
   setActiveHandleSharedVariables,
-  setActiveHandleSharedVarInitials,
   setActiveModuleConflicts,
   setActiveProjectCapabilities,
   setActiveScriptVarInitials,
@@ -117,15 +116,23 @@ export function useExtensionActions({
     ],
   );
 
+  const activeHandleSharedVarNames = useMemo(
+    () => collectHandleSharedVariableNames(activeHandle),
+    [activeHandle],
+  );
+  const activeHandleScriptMetas = useMemo(
+    () => buildHandleScriptsMeta(activeHandle),
+    [activeHandle],
+  );
+
   // Synchronously sync active project/handle/script context into the Blockly bridge
   // during render so field dropdowns, toolbox builders, and code generators read fresh state.
   setActiveChannelPoolConfigs(activeChannelPoolConfigs);
   setActiveProjectCapabilities(activeProject.enabledCapabilities);
-  setActiveHandleSharedVariables(collectHandleSharedVariableNames(activeHandle));
-  setActiveHandleSharedVarInitials(activeHandle.variableInitialValues ?? {});
+  setActiveHandleSharedVariables(activeHandleSharedVarNames);
   setActiveScriptVarInitials(activeScript.variableInitialValues ?? {});
   setActiveHandleSharedFunctions(activeHandle.sharedFunctions ?? []);
-  setActiveHandleScripts(buildHandleScriptsMeta(activeHandle), activeScript.id);
+  setActiveHandleScripts(activeHandleScriptMetas, activeScript.id);
   setActiveModuleConflicts(activeModuleResolution.conflicts);
   extensionRegistry.setActiveProjectLocalPacks(activeProject.localExtensions ?? []);
 
@@ -136,7 +143,13 @@ export function useExtensionActions({
         language,
         activeChannelPoolConfigs,
       ),
-    [activeHandle, language, activeChannelPoolConfigs],
+    [
+      activeHandle,
+      language,
+      activeChannelPoolConfigs,
+      extRevision,
+      activeProject.localExtensions,
+    ],
   );
 
   const allExtensionPacks = useMemo(
@@ -273,11 +286,11 @@ export function useExtensionActions({
         }
 
         notify(
-          `已将「${pack.name}」内嵌到项目「${curProj.name}」（仅本项目可见，不写入全局扩展库）`,
+          `已将「${pack.name}」添加到项目「${curProj.name}」私有扩展（仅本项目生效，不污染全局扩展库）`,
         );
       } catch (err) {
         notify(
-          `项目内嵌外设包校验失败：${err instanceof Error ? err.message : String(err)}`,
+          `项目私有扩展包校验失败：${err instanceof Error ? err.message : String(err)}`,
         );
       }
     },
@@ -319,8 +332,8 @@ export function useExtensionActions({
 
       notify(
         hasGlobalFallback
-          ? '已移除项目内嵌覆盖包，自动恢复使用全局扩展库版本'
-          : '已从当前项目移除内嵌外设包',
+          ? '已移出项目锁定扩展包，自动回退使用全局扩展库版本'
+          : '已从当前项目移除私有扩展包',
       );
     },
     [
@@ -386,7 +399,7 @@ export function useExtensionActions({
           );
         }
         notify(
-          `已为项目内嵌包「${validated.name}」附加 ${files.length} 个源码模块（当前共 ${mergedLibs.length} 个 libs[]）`,
+          `已为项目私有包「${validated.name}」附加 ${files.length} 个源码模块（当前共 ${mergedLibs.length} 个 libs[]）`,
         );
       } catch (err) {
         notify(
@@ -442,7 +455,14 @@ export function useExtensionActions({
 
   const handleApplyTargetProfile = useCallback(
     (projectId: string, profileId: string) => {
-      const profile = targetProfileRegistry.get(profileId);
+      const globalMatch = targetProfileRegistry
+        .listAll()
+        .find((p) => p.id === profileId);
+      if (!globalMatch) {
+        // Strategy 1 guard: never overwrite a project-locked board absent from global registry with a fallback board
+        return;
+      }
+      const profile = globalMatch;
       const curProj = storeRef.current.projects.find((p) => p.id === projectId);
       if (!curProj) return;
 
@@ -453,21 +473,28 @@ export function useExtensionActions({
       );
 
       if (projectId === activeProjectIdRef.current) {
+        const nextPools = extensionRegistry
+          .getChannelPools(profile.capabilities, curProj.localExtensions)
+          .map((entry) => entry.pool);
+        setActiveChannelPoolConfigs(
+          getAllHandleChannelPoolConfigs(getActiveHandle(curProj), nextPools),
+        );
         setActiveProjectCapabilities(profile.capabilities);
-        const ws = workbenchRef.current?.getWorkspace();
-        if (ws) regenerateFromWorkspace(ws, languageRef.current);
+        syncModuleConflictsAndRegenerate(
+          curProj,
+          profile.capabilities,
+          curProj.localExtensions,
+        );
       }
 
       notify(`已为「${curProj.name}」应用板型规格「${profile.name}」`);
     },
     [
       activeProjectIdRef,
-      languageRef,
       notify,
-      regenerateFromWorkspace,
       setStore,
       storeRef,
-      workbenchRef,
+      syncModuleConflictsAndRegenerate,
     ],
   );
 
@@ -500,7 +527,8 @@ export function useExtensionActions({
       setStore((prev) => ({
         ...prev,
         projects: prev.projects.map((p) =>
-          p.targetProfileId === profileId
+          p.targetProfileId === profileId &&
+          p.localTargetProfile?.id !== profileId
             ? { ...p, targetProfileId: fallbackProfileId }
             : p,
         ),
@@ -515,14 +543,24 @@ export function useExtensionActions({
       try {
         const imported = extensionRegistry.importPack(raw);
         setExtRevision((r) => r + 1);
+        const curProj = getActiveProject(storeRef.current);
+        const nextCaps = curProj.enabledCapabilities.includes(imported.id)
+          ? curProj.enabledCapabilities
+          : [...curProj.enabledCapabilities, imported.id];
         setStore((prev) =>
-          updateProjectById(prev, activeProjectIdRef.current, (p) => ({
+          updateProjectById(prev, curProj.id, (p) => ({
             ...p,
             enabledCapabilities: p.enabledCapabilities.includes(imported.id)
               ? p.enabledCapabilities
               : [...p.enabledCapabilities, imported.id],
             updatedAt: new Date().toISOString(),
           })),
+        );
+        setActiveProjectCapabilities(nextCaps);
+        syncModuleConflictsAndRegenerate(
+          curProj,
+          nextCaps,
+          curProj.localExtensions,
         );
         notify(
           `已导入并启用全局扩展包「${imported.name}」（${getAllPackBlocks(imported).length} 个积木）`,
@@ -533,7 +571,7 @@ export function useExtensionActions({
         );
       }
     },
-    [activeProjectIdRef, notify, setStore],
+    [notify, setStore, storeRef, syncModuleConflictsAndRegenerate],
   );
 
   const handleRemoveGlobalPack = useCallback(
@@ -541,33 +579,89 @@ export function useExtensionActions({
       const ok = extensionRegistry.removePack(packId);
       if (!ok) return;
       setExtRevision((r) => r + 1);
+      const curProj = getActiveProject(storeRef.current);
+      const curHasLocked = Boolean(
+        curProj.localExtensions?.some((lp) => lp.id === packId),
+      );
+      const nextCaps = curHasLocked
+        ? curProj.enabledCapabilities
+        : curProj.enabledCapabilities.filter(
+            (id) => id !== packId && !id.startsWith(`${packId}.`),
+          );
       setStore((prev) => ({
         ...prev,
-        projects: prev.projects.map((p) => ({
-          ...p,
-          enabledCapabilities: p.enabledCapabilities.filter(
-            (id) => id !== packId && !id.startsWith(`${packId}.`),
-          ),
-        })),
+        projects: prev.projects.map((p) =>
+          p.localExtensions?.some((lp) => lp.id === packId)
+            ? p
+            : {
+                ...p,
+                enabledCapabilities: p.enabledCapabilities.filter(
+                  (id) => id !== packId && !id.startsWith(`${packId}.`),
+                ),
+              },
+        ),
       }));
+      setActiveProjectCapabilities(nextCaps);
+      syncModuleConflictsAndRegenerate(
+        curProj,
+        nextCaps,
+        curProj.localExtensions,
+      );
       notify('已从全局库移除该扩展包');
     },
-    [notify, setStore],
+    [notify, setStore, storeRef, syncModuleConflictsAndRegenerate],
   );
 
   const handleResetDefaultCatalog = useCallback(() => {
     extensionRegistry.resetToDefaults();
     targetProfileRegistry.resetToDefaults();
+    const validGlobalPackIds = new Set(
+      extensionRegistry.listAll().map((p) => p.id),
+    );
+    const validGlobalProfileIds = new Set(
+      targetProfileRegistry.listAll().map((p) => p.id),
+    );
+    const fallbackProfileId = targetProfileRegistry.getDefaultProfileId();
+
+    let nextActiveCaps: string[] = [];
+    setStore((prev) => ({
+      ...prev,
+      projects: prev.projects.map((p) => {
+        const localPackIds = new Set((p.localExtensions ?? []).map((lp) => lp.id));
+        const prunedCaps = p.enabledCapabilities.filter((c) => {
+          const baseId = c.includes('.') ? c.slice(0, c.indexOf('.')) : c;
+          return validGlobalPackIds.has(baseId) || localPackIds.has(baseId);
+        });
+        const hasValidBoard =
+          validGlobalProfileIds.has(p.targetProfileId) ||
+          p.localTargetProfile?.id === p.targetProfileId;
+        const nextBoardId = hasValidBoard ? p.targetProfileId : fallbackProfileId;
+        if (p.id === prev.activeProjectId) {
+          nextActiveCaps = prunedCaps;
+        }
+        return {
+          ...p,
+          targetProfileId: nextBoardId,
+          enabledCapabilities: prunedCaps,
+        };
+      }),
+    }));
+
     setExtRevision((r) => r + 1);
     setProfileRevision((r) => r + 1);
     const curProj = getActiveProject(storeRef.current);
+    const effectiveCaps =
+      nextActiveCaps.length > 0 || curProj.enabledCapabilities.length === 0
+        ? nextActiveCaps
+        : curProj.enabledCapabilities;
+    setActiveProjectCapabilities(effectiveCaps);
     syncModuleConflictsAndRegenerate(
       curProj,
-      curProj.enabledCapabilities,
+      effectiveCaps,
       curProj.localExtensions,
     );
     notify('已恢复出厂默认扩展包与目标板型列表');
-  }, [notify, storeRef, syncModuleConflictsAndRegenerate]);
+  }, [notify, setStore, storeRef, syncModuleConflictsAndRegenerate]);
 
   return {
     extRevision,

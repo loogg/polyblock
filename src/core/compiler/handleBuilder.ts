@@ -103,6 +103,14 @@ export function compileScriptHeadless(
 export function compileHandleArtifacts(
   opts: CompileHandleArtifactsOptions,
 ): HandleCompiledArtifacts {
+  return extensionRegistry.withLocalPacks(opts.project.localExtensions, () =>
+    compileHandleArtifactsInner(opts),
+  );
+}
+
+function compileHandleArtifactsInner(
+  opts: CompileHandleArtifactsOptions,
+): HandleCompiledArtifacts {
   const {
     project,
     handle,
@@ -177,9 +185,9 @@ export function compileHandleArtifacts(
         handleScripts: handleMetas,
         currentScriptId: scr.id,
         sharedVariables: sharedVars,
-        sharedVarInitials: effectiveHandle.variableInitialValues ?? {},
         scriptVarInitials: scr.variableInitialValues ?? {},
         sharedFunctions: effectiveHandle.sharedFunctions ?? [],
+        moduleConflicts: [],
       });
     }
 

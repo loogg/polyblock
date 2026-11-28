@@ -3,8 +3,6 @@ import * as Blockly from 'blockly';
 import { loadMicroPython } from '@micropython/micropython-webassembly-pyscript';
 import { LuaFactory } from 'wasmoon';
 import { beforeEach, describe, expect, it } from 'vitest';
-import '../backends/luaBackend';
-import '../backends/pythonBackend';
 import { analyzeWorkspaceDiagnostics } from '../backends/sourceMap';
 import { registerPolyBlocks } from '../blocks/definitions';
 import {
@@ -752,7 +750,7 @@ exports.reset = () => {
     expect(luaRes.diagnostics).toHaveLength(0);
 
     const pyRes = backendRegistry.get('python').generate(ws);
-    expect(pyRes.code).toContain('未提供 code.python.template');
+    expect(pyRes.code).toContain('print(None)');
     expect(
       pyRes.diagnostics.some(
         (d) =>

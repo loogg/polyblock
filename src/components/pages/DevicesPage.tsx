@@ -4,6 +4,7 @@ import {
   PLANNED_RUNNER_SLOTS,
   runnerManager,
 } from '../../core/runners/manager';
+import { useLanguagePluginsRevision } from '../../hooks/useLanguagePlugins';
 
 const DEFAULT_RUNNER_GRADIENT = 'linear-gradient(135deg, #475569, #334155)';
 
@@ -13,7 +14,8 @@ interface DevicesPageProps {
 }
 
 export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
-  const builtinRunners = runnerManager.listBuiltin();
+  useLanguagePluginsRevision();
+  const registeredRunners = runnerManager.listRegistered();
 
   return (
     <div className="subpage-wrap">
@@ -22,7 +24,7 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
           <div>
             <h1 className="subpage-title">执行目标与设备下载（可插拔 Runner 管理）</h1>
             <p className="subpage-sub">
-              PolyBlock 采用统一 <code>ScriptRunner</code> 契约：已内置纯前端 WASM 沙箱；后续接入网络设备、本机桥接或串口烧录只需注册新 Runner，画布与日志控制台零改动复用。
+              PolyBlock 采用统一 <code>LanguagePlugin</code> + <code>ScriptRunner</code> 插件契约：各语言插件自带纯前端浏览器沙箱（WASM / Web Worker）；后续接入网络设备、本机桥接或串口烧录只需注册新 Runner，画布与日志控制台零改动复用。
             </p>
           </div>
           <button type="button" className="btn-outline" onClick={onReturnToBlocks}>
@@ -31,9 +33,9 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
           </button>
         </div>
 
-        <h2 className="section-heading">当前可用执行器（内置 · 零后端）</h2>
+        <h2 className="section-heading">已注册语言运行器（零后端 · 浏览器沙箱）</h2>
         <div className="card-grid">
-          {builtinRunners.map((runner) => {
+          {registeredRunners.map((runner) => {
             const primaryLang = runner.supportedLanguages[0];
             const iconBackground =
               (primaryLang
@@ -47,12 +49,17 @@ export function DevicesPage({ onReturnToBlocks, onNotify }: DevicesPageProps) {
                       className="card-icon"
                       style={{ background: iconBackground }}
                     >
-                      {runner.engineBadge ?? 'WASM'}
+                      {runner.engineBadge ?? '沙箱'}
                     </div>
                     <div>
                       <div style={{ fontWeight: 700 }}>{runner.name}</div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                        Web Worker 沙箱 · 兼容 GitHub Pages
+                        {runner.transportLabel ??
+                          (runner.kind === 'browser-wasm'
+                            ? '浏览器 WASM Worker · 离线可运行'
+                            : runner.kind === 'browser-worker'
+                              ? '原生 Web Worker · 零 WASM 体积'
+                              : '已注册外部执行目标')}
                       </div>
                     </div>
                   </div>

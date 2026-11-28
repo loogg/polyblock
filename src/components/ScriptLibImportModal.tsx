@@ -20,6 +20,8 @@ import {
   type UploadedScriptLibFile,
 } from '../core/extensions/scriptLibScanner';
 import type { PolyExtensionPack } from '../core/extensions/types';
+import { validateExtensionPack } from '../core/extensions/validator';
+import { useLanguagePluginsRevision } from '../hooks/useLanguagePlugins';
 import { useModalFocusTrap } from '../hooks/useModalFocusTrap';
 import type { ScriptLanguageId } from '../types/project';
 
@@ -49,6 +51,7 @@ export function ScriptLibImportModal({
   const [color, setColor] = useState('#10b981');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  useLanguagePluginsRevision();
   const supportedExtAccept = getSupportedScriptAcceptAttr();
   const supportedExtSlashLabel = formatSupportedExtensionsLabel();
 
@@ -69,45 +72,51 @@ export function ScriptLibImportModal({
 
     setErrorMsg(null);
     const scannedList: UploadedScriptLibFile[] = [];
-    for (const file of picked) {
-      const text = await file.text();
-      scannedList.push(scanScriptLibraryFile(file.name, text, defaultLanguage));
+    try {
+      for (const file of picked) {
+        const text = await file.text();
+        scannedList.push(scanScriptLibraryFile(file.name, text, defaultLanguage));
+      }
+    } catch (err) {
+      setErrorMsg(
+        `读取脚本文件失败：${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
     }
 
-    setFiles((prevFiles) => {
-      const nextMap = new Map<string, UploadedScriptLibFile>();
-      for (const f of prevFiles) nextMap.set(f.fileName, f);
-      for (const f of scannedList) nextMap.set(f.fileName, f);
-      const mergedFiles = Array.from(nextMap.values());
+    const hadFiles = files.length > 0;
+    const nextMap = new Map<string, UploadedScriptLibFile>();
+    for (const f of files) nextMap.set(f.fileName, f);
+    for (const f of scannedList) nextMap.set(f.fileName, f);
+    const mergedFiles = Array.from(nextMap.values());
 
-      // Auto-fill pack metadata on first upload
-      if (prevFiles.length === 0 && mergedFiles.length > 0) {
-        const primary =
-          mergedFiles.find((f) => f.scannedFunctions.length > 0) ?? mergedFiles[0];
-        const cleanId = primary.moduleName
-          .toLowerCase()
-          .replace(/[^a-z0-9_-]+/g, '-');
-        setPackId((cur) => cur || `${cleanId}-lib`);
-        setPackName((cur) => cur || `${primary.moduleName} 算法库`);
-        setIconLabel((cur) => cur || primary.moduleName.slice(0, 4).toUpperCase());
-      }
+    setFiles(mergedFiles);
 
-      // Rebuild scanned functions preserving user edits for unchanged IDs
-      setFunctions((prevFns) => {
-        const prevById = new Map(prevFns.map((fn) => [fn.id, fn]));
-        const nextFns: ScannedLibFunction[] = [];
-        const seen = new Set<string>();
-        for (const f of mergedFiles) {
-          for (const fn of f.scannedFunctions) {
-            if (seen.has(fn.id)) continue;
-            seen.add(fn.id);
-            nextFns.push(prevById.get(fn.id) ?? fn);
-          }
+    // Auto-fill pack metadata on first upload
+    if (!hadFiles && mergedFiles.length > 0) {
+      const primary =
+        mergedFiles.find((f) => f.scannedFunctions.length > 0) ?? mergedFiles[0];
+      const cleanId = primary.moduleName
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-');
+      setPackId((cur) => cur || `${cleanId}-lib`);
+      setPackName((cur) => cur || `${primary.moduleName} 算法库`);
+      setIconLabel((cur) => cur || primary.moduleName.slice(0, 4).toUpperCase());
+    }
+
+    // Rebuild scanned functions preserving user edits for unchanged IDs
+    setFunctions((prevFns) => {
+      const prevById = new Map(prevFns.map((fn) => [fn.id, fn]));
+      const nextFns: ScannedLibFunction[] = [];
+      const seen = new Set<string>();
+      for (const f of mergedFiles) {
+        for (const fn of f.scannedFunctions) {
+          if (seen.has(fn.id)) continue;
+          seen.add(fn.id);
+          nextFns.push(prevById.get(fn.id) ?? fn);
         }
-        return nextFns;
-      });
-
-      return mergedFiles;
+      }
+      return nextFns;
     });
   };
 
@@ -119,34 +128,56 @@ export function ScriptLibImportModal({
     );
   };
 
+  const rebuildFunctionsFromFiles = (
+    nextFiles: UploadedScriptLibFile[],
+    prevFns: ScannedLibFunction[],
+    renameHint?: { oldMod: string; newMod: string },
+  ): ScannedLibFunction[] => {
+    const prevById = new Map(prevFns.map((fn) => [fn.id, fn]));
+    const nextFns: ScannedLibFunction[] = [];
+    const seen = new Set<string>();
+    for (const f of nextFiles) {
+      for (const fn of f.scannedFunctions) {
+        if (seen.has(fn.id)) continue;
+        seen.add(fn.id);
+        const direct = prevById.get(fn.id);
+        if (direct) {
+          nextFns.push(direct);
+          continue;
+        }
+        const renamedOld =
+          renameHint && f.moduleName === renameHint.newMod
+            ? prevById.get(`${renameHint.oldMod}.${fn.funcName}`)
+            : undefined;
+        if (renamedOld) {
+          nextFns.push({
+            ...renamedOld,
+            id: fn.id,
+            moduleName: fn.moduleName,
+            label:
+              renamedOld.label === `${renameHint!.oldMod}.${fn.funcName}`
+                ? `${fn.moduleName}.${fn.funcName}`
+                : renamedOld.label,
+          });
+        } else {
+          nextFns.push(fn);
+        }
+      }
+    }
+    return nextFns;
+  };
+
   const handleUpdateFileModuleName = (fileName: string, nextModName: string) => {
     const clean = nextModName.trim();
     const targetFile = files.find((f) => f.fileName === fileName);
     if (!targetFile) return;
     const oldMod = targetFile.moduleName;
-    setFiles((prev) =>
-      prev.map((f) =>
-        f.fileName === fileName
-          ? {
-              ...f,
-              moduleName: clean,
-              scannedFunctions: f.scannedFunctions.map((fn) => ({
-                ...fn,
-                id: `${clean}.${fn.funcName}`,
-                moduleName: clean,
-                label:
-                  fn.label === `${oldMod}.${fn.funcName}`
-                    ? `${clean}.${fn.funcName}`
-                    : fn.label,
-              })),
-            }
-          : f,
-      ),
-    );
-    setFunctions((prev) =>
-      prev.map((fn) =>
-        fn.moduleName === oldMod
-          ? {
+    const nextFiles = files.map((f) =>
+      f.fileName === fileName
+        ? {
+            ...f,
+            moduleName: clean,
+            scannedFunctions: f.scannedFunctions.map((fn) => ({
               ...fn,
               id: `${clean}.${fn.funcName}`,
               moduleName: clean,
@@ -154,25 +185,29 @@ export function ScriptLibImportModal({
                 fn.label === `${oldMod}.${fn.funcName}`
                   ? `${clean}.${fn.funcName}`
                   : fn.label,
-            }
-          : fn,
-      ),
+            })),
+          }
+        : f,
+    );
+    setFiles(nextFiles);
+    setFunctions((prev) =>
+      rebuildFunctionsFromFiles(nextFiles, prev, { oldMod, newMod: clean }),
     );
   };
 
   const handleRemoveFile = (fileName: string) => {
-    setFiles((prev) => {
-      const nextFiles = prev.filter((f) => f.fileName !== fileName);
-      const remainingMods = new Set(nextFiles.map((f) => f.moduleName));
-      setFunctions((prevFns) =>
-        prevFns.filter((fn) => remainingMods.has(fn.moduleName)),
-      );
-      return nextFiles;
-    });
+    const nextFiles = files.filter((f) => f.fileName !== fileName);
+    setFiles(nextFiles);
+    setFunctions((prevFns) => rebuildFunctionsFromFiles(nextFiles, prevFns));
   };
 
   const scanEnabledModules = useMemo(
     () => new Set(files.filter((f) => f.scanForBlocks).map((f) => f.moduleName)),
+    [files],
+  );
+
+  const distinctModuleCount = useMemo(
+    () => new Set(files.map((f) => f.moduleName.trim()).filter(Boolean)).size,
     [files],
   );
 
@@ -190,11 +225,15 @@ export function ScriptLibImportModal({
         setErrorMsg(`请先选择至少 1 个脚本源码文件（${supportedExtSlashLabel}）`);
         return;
       }
+      if (files.some((f) => !f.moduleName.trim())) {
+        setErrorMsg('存在未填写模块名（moduleName）的源码文件，请补全后再导入');
+        return;
+      }
       if (!packId.trim() || !/^[a-zA-Z0-9_-]{2,48}$/.test(packId.trim())) {
         setErrorMsg('扩展包 ID 需为 2~48 位字母、数字、横线或下划线');
         return;
       }
-      const pack = buildExtensionPackFromScriptLibs({
+      const rawPack = buildExtensionPackFromScriptLibs({
         packId: packId.trim(),
         packName: packName.trim() || packId.trim(),
         iconLabel: iconLabel.trim() || packId.trim().slice(0, 4),
@@ -203,7 +242,8 @@ export function ScriptLibImportModal({
         files,
         functions: visibleFunctions,
       });
-      onConfirmPack(pack);
+      const validatedPack = validateExtensionPack(rawPack);
+      onConfirmPack(validatedPack);
       onClose();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -212,7 +252,7 @@ export function ScriptLibImportModal({
 
   return (
     <div
-      className="modal-backdrop"
+      className="modal-backdrop script-lib-backdrop"
       role="dialog"
       aria-modal="true"
       aria-label="导入原生脚本库生成扩展包"
@@ -229,7 +269,7 @@ export function ScriptLibImportModal({
             </span>
             <span className="count-badge">
               {targetScope === 'project'
-                ? `项目内嵌 · ${projectName}`
+                ? `项目私有 · ${projectName}`
                 : '全局扩展库 · 跨项目复用'}
             </span>
           </div>
@@ -319,7 +359,17 @@ export function ScriptLibImportModal({
                     value={toolboxOrder}
                     min={0}
                     max={9999}
-                    onChange={(e) => setToolboxOrder(Number(e.target.value) || 100)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (raw === '') {
+                        setToolboxOrder(0);
+                        return;
+                      }
+                      const parsed = Number(raw);
+                      if (Number.isFinite(parsed)) {
+                        setToolboxOrder(Math.max(0, Math.min(9999, Math.trunc(parsed))));
+                      }
+                    }}
                   />
                 </label>
                 <label className="script-lib-field" style={{ maxWidth: 64 }}>
@@ -549,7 +599,7 @@ export function ScriptLibImportModal({
         <div className="script-lib-footer">
           <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
             {files.length > 0
-              ? `将生成标准 .polyext.json（含 ${files.length} 个源码模块，${selectedCount} 个积木）`
+              ? `将生成标准 .polyext.json（含 ${distinctModuleCount} 个源码模块，${selectedCount} 个积木）`
               : '提示：生成后随时可导出 .polyext.json 微调或提升到全局扩展库'}
           </span>
           <div style={{ display: 'flex', gap: 8 }}>

@@ -16,6 +16,7 @@ import type {
   PolyExtensionPack,
   ResolvedPackSection,
 } from '../extensions/types';
+import type { ScriptRunner } from '../runners/types';
 
 export type { CompileContext };
 
@@ -182,6 +183,8 @@ export interface GeneratedCodeResult {
   moduleDebugCode?: string;
   sourceMap: Record<string, SourceLineRange>;
   lineToBlock: Record<number, string>;
+  /** Language-neutral list of 1-based line numbers in `code` that correspond to breakpointable executable statements. */
+  breakpointableLines?: number[];
   diagnostics: DiagnosticItem[];
   blockCount: number;
   variableNames: string[];
@@ -192,11 +195,22 @@ export interface GeneratedCodeResult {
 }
 
 /**
- * Complete plugin contract for any target script backend (Lua, Python, future JS/Arduino/DSL...).
- * Implementing and registering this adapter in `backendRegistry` lets PolyBlock compile workspaces,
+ * Self-contained language plugin descriptor bundling dialect metadata, compiler backend factory,
+ * and an optional sandbox runner factory (omitted for export-only / compiled target languages).
+ */
+export interface LanguagePlugin<TId extends string = string> {
+  readonly id: TId;
+  readonly dialect: LanguageDialect<TId>;
+  createBackend: () => ScriptBackendAdapter;
+  createRunner?: () => ScriptRunner;
+}
+
+/**
+ * Complete plugin contract for any target script backend plugin.
+ * Implementing and registering a `LanguagePlugin` in `backendRegistry` lets PolyBlock compile workspaces,
  * derive dialect & file-extension metadata, highlight syntax, scan native libraries, register
- * `.polyext.json` blocks/hats, format entry dispatch routers, and build Style A1 read-only
- * `shared` modules with ZERO edits to extension registry, sharedModule, or UI code.
+ * `.polyext.json` blocks/hats, format entry dispatch routers, mount optional sandbox runners, and build
+ * Style A1 read-only `shared` modules with ZERO edits to extension registry, runner manager, or UI code.
  */
 export interface ScriptBackendAdapter {
   readonly id: ScriptLanguageId;

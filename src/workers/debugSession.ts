@@ -243,17 +243,4 @@ export class WorkerDebugSession {
       this.onClockPause?.(false, credit);
     }
   }
-
-  async onSleep(ms: unknown): Promise<void> {
-    const numeric = Number(ms);
-    const delay = Number.isFinite(numeric)
-      ? Math.max(0, Math.min(600_000, numeric))
-      : 0;
-    this.post({ type: 'WAITING', runId: this.runId, active: true });
-    try {
-      await new Promise<void>((resolve) => setTimeout(resolve, delay));
-    } finally {
-      this.post({ type: 'WAITING', runId: this.runId, active: false });
-    }
-  }
 }

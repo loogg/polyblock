@@ -184,7 +184,7 @@ interface BlocklyWorkbenchProps {
   enabledCapabilities: string[];
   extraCategories: BlockCategorySpec[];
   channelPoolConfigs: Record<string, ChannelPoolConfig>;
-  onWorkspaceChange: (workspace: Blockly.WorkspaceSvg) => void;
+  onWorkspaceChange: (workspace: Blockly.WorkspaceSvg, isInitial?: boolean) => void;
   onHandleVariableEvent?: (mutation: HandleVariableMutation) => void;
   onRequestCreateVariable?: (initialScope: VariableScopeKind) => void;
   onRequestCreateFunction?: (initialScope: VariableScopeKind) => void;
@@ -605,35 +605,12 @@ export const BlocklyWorkbench = forwardRef<
 
     ws.registerButtonCallback('CREATE_SHARED_VARIABLE', () => {
       if (readOnlyLockedRef.current) return;
-      if (onRequestCreateVarRef.current) {
-        onRequestCreateVarRef.current('shared');
-      } else {
-        Blockly.Variables.createVariableButtonHandler(ws, () => {
-          refreshFlyout('variables', '');
-        });
-      }
+      onRequestCreateVarRef.current?.('shared');
     });
 
     ws.registerButtonCallback('CREATE_FILE_VARIABLE', () => {
       if (readOnlyLockedRef.current) return;
-      if (onRequestCreateVarRef.current) {
-        onRequestCreateVarRef.current('file');
-      } else {
-        Blockly.Variables.createVariableButtonHandler(ws, () => {
-          refreshFlyout('variables', '');
-        });
-      }
-    });
-
-    ws.registerButtonCallback('CREATE_VARIABLE', () => {
-      if (readOnlyLockedRef.current) return;
-      if (onRequestCreateVarRef.current) {
-        onRequestCreateVarRef.current('file');
-      } else {
-        Blockly.Variables.createVariableButtonHandler(ws, () => {
-          refreshFlyout('variables', '');
-        });
-      }
+      onRequestCreateVarRef.current?.('file');
     });
 
     ws.registerButtonCallback('CREATE_SHARED_FUNCTION', () => {
@@ -666,7 +643,7 @@ export const BlocklyWorkbench = forwardRef<
     lastScaleRef.current = ws.getScale();
     setZoomPct(Math.round(ws.getScale() * 100));
     requestAnimationFrame(() => syncFlyoutWidth(ws));
-    onChangeRef.current(ws);
+    onChangeRef.current(ws, true);
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     let zoomRafId: number | null = null;
@@ -703,12 +680,9 @@ export const BlocklyWorkbench = forwardRef<
             scope: 'file',
           });
         }
-        setActiveCat((curr) => {
-          if (curr === 'variables') {
-            setTimeout(() => refreshFlyout('variables', ''), 0);
-          }
-          return curr;
-        });
+        if (activeCatRef.current === 'variables') {
+          setTimeout(() => refreshFlyout('variables', ''), 0);
+        }
       } else if (event.type === Blockly.Events.VAR_RENAME) {
         const ve = event as Blockly.Events.VarRename;
         if (ve.oldName && ve.newName) {
@@ -718,23 +692,17 @@ export const BlocklyWorkbench = forwardRef<
             newName: ve.newName,
           });
         }
-        setActiveCat((curr) => {
-          if (curr === 'variables') {
-            setTimeout(() => refreshFlyout('variables', ''), 0);
-          }
-          return curr;
-        });
+        if (activeCatRef.current === 'variables') {
+          setTimeout(() => refreshFlyout('variables', ''), 0);
+        }
       } else if (event.type === Blockly.Events.VAR_DELETE) {
         const ve = event as Blockly.Events.VarDelete;
         if (ve.varName) {
           onHandleVarRef.current?.({ kind: 'delete', name: ve.varName });
         }
-        setActiveCat((curr) => {
-          if (curr === 'variables') {
-            setTimeout(() => refreshFlyout('variables', ''), 0);
-          }
-          return curr;
-        });
+        if (activeCatRef.current === 'variables') {
+          setTimeout(() => refreshFlyout('variables', ''), 0);
+        }
       } else if (event.type === Blockly.Events.BLOCK_CHANGE) {
         const ce = event as Blockly.Events.BlockChange;
         const blk = ce.blockId ? ws.getBlockById(ce.blockId) : null;
@@ -840,8 +808,8 @@ export const BlocklyWorkbench = forwardRef<
         }
       }
     }
-    refreshFlyout(activeCat, searchQuery);
-  }, [channelPoolConfigs, activeCat, searchQuery, refreshFlyout]);
+    refreshFlyout(activeCatRef.current, searchQueryRef.current);
+  }, [channelPoolConfigs, refreshFlyout]);
 
   // Sync category, search query, enabled capabilities, or extension categories to flyout
   useEffect(() => {
@@ -1037,6 +1005,8 @@ export const BlocklyWorkbench = forwardRef<
     if (
       k === 'delete' ||
       k === 'backspace' ||
+      k === 'contextmenu' ||
+      (e.shiftKey && k === 'f10') ||
       (isMod && (k === 'z' || k === 'y' || k === 'x' || k === 'v' || k === 'd'))
     ) {
       e.preventDefault();
@@ -1050,6 +1020,18 @@ export const BlocklyWorkbench = forwardRef<
     if (!readOnlyLocked) return;
     const targetEl = e.target instanceof Element ? e.target : null;
     // Allow right-clicking blocks (to toggle breakpoints), but suppress empty-canvas mutating menu
+    if (!targetEl?.closest('.blocklyDraggable')) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  const handleMountPointerDownCapture = (
+    e: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    if (!readOnlyLocked || e.button !== 2) return;
+    const targetEl = e.target instanceof Element ? e.target : null;
+    // Blockly v12 opens workspace context menus on right-click pointerdown before contextmenu fires
     if (!targetEl?.closest('.blocklyDraggable')) {
       e.preventDefault();
       e.stopPropagation();
@@ -1171,6 +1153,7 @@ export const BlocklyWorkbench = forwardRef<
         <div
           className="blockly-mount"
           ref={mountRef}
+          onPointerDownCapture={handleMountPointerDownCapture}
           onContextMenuCapture={handleMountContextMenuCapture}
         />
 

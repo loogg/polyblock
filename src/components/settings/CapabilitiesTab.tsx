@@ -8,7 +8,7 @@ import {
   CORE_TOOLBOX_ORDERS,
   DEFAULT_EXTENSION_TOOLBOX_ORDER,
 } from '../../core/blocks/catalog';
-import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../../core/extensions/builtinPacks';
+import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../../core/extensions/defaultPacks';
 import {
   scanScriptLibraryFile,
   type UploadedScriptLibFile,
@@ -21,6 +21,7 @@ import { ExtensionPackRow } from './ExtensionPackRow';
 interface CapabilitiesTabProps {
   project: ProjectModel;
   allExtensionPacks: PolyExtensionPack[];
+  editingLocked?: boolean;
   onToggleCapabilityForProject: (projectId: string, capId: string) => void;
   onImportLocalExtensionJson: (projectId: string, raw: unknown) => void;
   onOpenScriptLibImportModal: (projectId: string) => void;
@@ -40,6 +41,7 @@ interface CapabilitiesTabProps {
 export function CapabilitiesTab({
   project,
   allExtensionPacks,
+  editingLocked = false,
   onToggleCapabilityForProject,
   onImportLocalExtensionJson,
   onOpenScriptLibImportModal,
@@ -83,7 +85,7 @@ export function CapabilitiesTab({
         onImportLocalExtensionJson(project.id, parsed);
       } catch (err) {
         onNotify(
-          `导入项目内嵌外设包失败：${err instanceof Error ? err.message : String(err)}`,
+          `导入项目扩展包失败：${err instanceof Error ? err.message : String(err)}`,
         );
       }
     };
@@ -97,13 +99,20 @@ export function CapabilitiesTab({
     const picked = Array.from(e.target.files ?? []);
     e.target.value = '';
     if (picked.length === 0 || !attachTargetPackId) return;
-    const scanned: UploadedScriptLibFile[] = [];
-    for (const file of picked) {
-      const text = await file.text();
-      scanned.push(scanScriptLibraryFile(file.name, text, project.language));
+    try {
+      const scanned: UploadedScriptLibFile[] = [];
+      for (const file of picked) {
+        const text = await file.text();
+        scanned.push(scanScriptLibraryFile(file.name, text, project.language));
+      }
+      onAttachLibsToLocalPack(project.id, attachTargetPackId, scanned);
+    } catch (err) {
+      onNotify(
+        `读取或解析脚本库文件失败：${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setAttachTargetPackId(null);
     }
-    onAttachLibsToLocalPack(project.id, attachTargetPackId, scanned);
-    setAttachTargetPackId(null);
   };
 
   return (
@@ -131,13 +140,15 @@ export function CapabilitiesTab({
           }}
         >
           <label className="settings-label">
-            本项目内嵌扩展包（{localPacks.length} · 随工程文件导出，不污染全局库）
+            本项目私有 / 锁定扩展包（{localPacks.length} · 不污染全局库，导出 .polyblock.zip 时随行）
           </label>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <button
               type="button"
               className="btn-primary"
               style={{ fontSize: 11.5, padding: '4px 9px', flexShrink: 0 }}
+              disabled={editingLocked}
+              title={editingLocked ? '请先停止当前运行再导入脚本库' : undefined}
               onClick={() => onOpenScriptLibImportModal(project.id)}
             >
               <FileCode2 size={11} />
@@ -147,6 +158,8 @@ export function CapabilitiesTab({
               type="button"
               className="btn-outline"
               style={{ fontSize: 11.5, padding: '4px 9px', flexShrink: 0 }}
+              disabled={editingLocked}
+              title={editingLocked ? '请先停止当前运行再导入扩展包' : undefined}
               onClick={() => localExtFileRef.current?.click()}
             >
               <Upload size={11} />
@@ -186,8 +199,8 @@ export function CapabilitiesTab({
           </div>
         </div>
         <p className="settings-hint">
-          支持直接导入 <code>{supportedExtLabel}</code> 脚本库自动扫描生成积木，或导入手写{' '}
-          <code>.polyext.json</code>。仅保存在本项目内，按「句柄 &gt; 项目 &gt; 全局」作用域无条件覆盖全局包（含预装包）。
+          支持直接导入 <code>{supportedExtLabel}</code> 脚本库自动扫描生成积木，或导入{' '}
+          <code>.polyext.json</code>。仅保存在本项目作用域内，按「句柄 &gt; 项目 &gt; 全局」优先覆盖同名全局包（导出 <code>.polyblock.zip</code> 时随工程独立打包）。
         </p>
         {localPacks.length === 0 ? (
           <div
@@ -199,7 +212,7 @@ export function CapabilitiesTab({
               color: 'var(--text-muted)',
             }}
           >
-            当前项目暂无内嵌扩展包。点击右上角「导入到本项目」即可按项目隔离挂载，不会出现在左侧全局「扩展」页。
+            当前项目暂无私有/锁定扩展包。点击上方「导入脚本库」或「导入 .polyext.json」即可仅在本项目作用域挂载，不会污染左侧全局「扩展」页。
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -209,8 +222,9 @@ export function CapabilitiesTab({
                 pack={pack}
                 variant="local"
                 enabledCapabilities={project.enabledCapabilities}
+                editingLocked={editingLocked}
                 overridesGlobal={globalPackIds.has(pack.id)}
-                onViewSource={() => onViewPack(pack, '项目内嵌包')}
+                onViewSource={() => onViewPack(pack, '项目私有包')}
                 onToggleCapability={(capId) =>
                   onToggleCapabilityForProject(project.id, capId)
                 }
@@ -223,7 +237,7 @@ export function CapabilitiesTab({
                   downloadPackJson(
                     `${pack.id}.polyext.json`,
                     pack,
-                    `已导出项目内嵌包 ${pack.id}.polyext.json`,
+                    `已导出项目扩展包 ${pack.id}.polyext.json`,
                   )
                 }
                 onRemoveLocal={() => onRemoveLocalExtension(project.id, pack.id)}
@@ -277,6 +291,7 @@ export function CapabilitiesTab({
                 pack={pack}
                 variant="global"
                 enabledCapabilities={project.enabledCapabilities}
+                editingLocked={editingLocked}
                 overriddenByLocal={localPackIds.has(pack.id)}
                 onViewSource={() => onViewPack(pack, '全局扩展包')}
                 onToggleCapability={(capId) =>

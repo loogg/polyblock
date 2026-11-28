@@ -73,18 +73,6 @@ interface BlocklyDialogModalProps {
   onClose: () => void;
 }
 
-const INIT_KIND_BUTTONS: Array<{
-  kind: VariableInitialValue['kind'];
-  label: string;
-}> = [
-  { kind: 'null', label: '空值' },
-  { kind: 'number', label: '数字' },
-  { kind: 'boolean', label: '布尔' },
-  { kind: 'string', label: '文本' },
-  { kind: 'list', label: '列表 []' },
-  { kind: 'dict', label: '字典 {}' },
-];
-
 export function BlocklyDialogModal({
   request,
   language = backendRegistry.getDefaultId(),
@@ -101,6 +89,17 @@ export function BlocklyDialogModal({
 }: BlocklyDialogModalProps) {
   const dialect = getLanguageDialect(language);
   const sharedFileName = `shared.${dialect.extension}`;
+  const initKindButtons: Array<{
+    kind: VariableInitialValue['kind'];
+    label: string;
+  }> = [
+    { kind: 'null', label: `空值 (${dialect.nullLiteral})` },
+    { kind: 'number', label: '数字' },
+    { kind: 'boolean', label: '布尔' },
+    { kind: 'string', label: '文本' },
+    { kind: 'list', label: `列表 ${dialect.listLiteral}` },
+    { kind: 'dict', label: `字典 ${dialect.dictLiteral}` },
+  ];
   const [draft, setDraft] = useState(
     request.kind === 'prompt' ? request.defaultValue : '',
   );
@@ -135,16 +134,20 @@ export function BlocklyDialogModal({
       setFnHasReturn(false);
     }
     setTouched(false);
+    let rafId: number | null = null;
     if (
       request.kind === 'create-variable' ||
       request.kind === 'create-function' ||
       request.kind === 'prompt'
     ) {
-      requestAnimationFrame(() => {
+      rafId = requestAnimationFrame(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
       });
     }
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, [request]);
 
   const isCreateVar = request.kind === 'create-variable';
@@ -289,24 +292,28 @@ export function BlocklyDialogModal({
     onClose();
   };
 
+  const cancelRef = useRef(cancel);
+  const confirmRef = useRef(confirm);
+  cancelRef.current = cancel;
+  confirmRef.current = confirm;
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        cancel();
+        cancelRef.current();
       } else if (
         e.key === 'Enter' &&
-        request.kind !== 'prompt' &&
-        request.kind !== 'create-variable' &&
-        request.kind !== 'create-function'
+        request.kind === 'alert' &&
+        !(document.activeElement instanceof HTMLButtonElement)
       ) {
         e.preventDefault();
-        confirm();
+        confirmRef.current();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  });
+  }, [request.kind]);
 
   const modalTitle = isCreateFn
     ? effectiveScope === 'shared'
@@ -545,7 +552,7 @@ export function BlocklyDialogModal({
                     role="radiogroup"
                     aria-label="选择变量初始值类型"
                   >
-                    {INIT_KIND_BUTTONS.map((btn) => (
+                    {initKindButtons.map((btn) => (
                       <button
                         key={btn.kind}
                         type="button"

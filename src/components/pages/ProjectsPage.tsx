@@ -2,6 +2,7 @@ import {
   Copy,
   Download,
   FilePlus2,
+  FolderArchive,
   FolderOpen,
   Pencil,
   Settings2,
@@ -10,14 +11,18 @@ import {
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { getLanguageDialect } from '../../core/backends/registry';
-import { targetProfileRegistry } from '../../core/capabilities/registry';
+import {
+  parseImportedProjectArchive,
+  parseImportedPureProjectFile,
+  type ImportedProjectResult,
+} from '../../core/export/projectArchive';
+import { isZipBuffer } from '../../core/export/zipReader';
 import { extensionRegistry } from '../../core/extensions/registry';
 import {
   countProjectScripts,
   DEMO_PROJECTS,
   formatHandleChannelPoolsSummary,
-  getAbsorbedBundledExtensions,
-  parseImportedProject,
+  resolveProjectTargetProfile,
 } from '../../core/projects/store';
 import type { ProjectModel } from '../../types/project';
 
@@ -32,7 +37,8 @@ interface ProjectsPageProps {
   onDuplicateProject: (projectId: string) => void;
   onDeleteProject: (projectId: string) => void;
   onSaveProjectFile: (projectId: string) => void;
-  onImportProject: (project: ProjectModel, absorbedPackNames?: string[]) => void;
+  onSaveProjectArchive: (projectId: string) => void;
+  onImportProject: (result: ImportedProjectResult) => void;
   onOpenProjectSettings: (projectId: string) => void;
   onReturnToBlocks: () => void;
   onNotify: (msg: string) => void;
@@ -49,6 +55,7 @@ export function ProjectsPage({
   onDuplicateProject,
   onDeleteProject,
   onSaveProjectFile,
+  onSaveProjectArchive,
   onImportProject,
   onOpenProjectSettings,
   onReturnToBlocks,
@@ -58,33 +65,42 @@ export function ProjectsPage({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState<string>('');
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const raw = JSON.parse(String(reader.result)) as unknown;
-        const absorbed = getAbsorbedBundledExtensions(raw);
-        const imported = parseImportedProject(
-          raw,
-          file.name.replace(/\.polyblock\.json$|\.json$/i, ''),
-          projects.map((p) => p.name),
-        );
-        onImportProject(
-          imported,
-          absorbed.map((p) => p.name),
-        );
-      } catch (err) {
-        onNotify(
-          `导入失败：无效的 .polyblock.json 文件 (${
-            err instanceof Error ? err.message : String(err)
-          })`,
-        );
-      }
-    };
-    reader.readAsText(file, 'utf-8');
     e.target.value = '';
+    if (!file) return;
+    try {
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      const existingNames = projects.map((p) => p.name);
+      const fallbackName = file.name.replace(
+        /\.polyblock\.(json|zip)$|\.(json|zip)$/i,
+        '',
+      );
+      if (isZipBuffer(bytes) || /\.zip$/i.test(file.name)) {
+        const result = await parseImportedProjectArchive(
+          bytes,
+          fallbackName,
+          existingNames,
+        );
+        onImportProject(result);
+      } else {
+        const text = new TextDecoder('utf-8').decode(bytes);
+        const raw = JSON.parse(text) as unknown;
+        const result = parseImportedPureProjectFile(
+          raw,
+          fallbackName,
+          existingNames,
+        );
+        onImportProject(result);
+      }
+    } catch (err) {
+      onNotify(
+        `导入失败：无效的工程文件 (${
+          err instanceof Error ? err.message : String(err)
+        })`,
+      );
+    }
   };
 
   const commitRename = () => {
@@ -120,24 +136,34 @@ export function ProjectsPage({
               type="button"
               className="btn-outline"
               disabled={editingLocked}
-              title={editingLocked ? '请先停止当前运行再导入项目' : undefined}
+              title={editingLocked ? '请先停止当前运行再导入项目' : '支持纯 .polyblock.json 或含依赖包的 .polyblock.zip'}
               onClick={() => fileInputRef.current?.click()}
             >
               <Upload size={14} />
-              <span>导入工程 JSON</span>
+              <span>导入工程 (.json / .zip)</span>
             </button>
             <button
               type="button"
               className="btn-outline"
+              title="导出含全部依赖扩展包与板型的自包含工程压缩包（开箱即用）"
+              onClick={() => onSaveProjectArchive(activeProjectId)}
+            >
+              <FolderArchive size={14} />
+              <span>导出工程包 (.zip)</span>
+            </button>
+            <button
+              type="button"
+              className="btn-outline"
+              title="仅导出纯净 project.polyblock.json（仅引用 ID，轻量无内嵌包）"
               onClick={() => onSaveProjectFile(activeProjectId)}
             >
               <Download size={14} />
-              <span>导出当前项目</span>
+              <span>导出纯配置 (.json)</span>
             </button>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".json,.polyblock.json"
+              accept=".json,.polyblock.json,.zip,.polyblock.zip"
               style={{ display: 'none' }}
               onChange={handleFileChange}
             />
@@ -150,7 +176,7 @@ export function ProjectsPage({
             const isActive = proj.id === activeProjectId;
             const isEditing = editingId === proj.id;
             const totalScripts = countProjectScripts(proj);
-            const profile = targetProfileRegistry.get(proj.targetProfileId);
+            const profile = resolveProjectTargetProfile(proj);
             const projPools = extensionRegistry
               .getChannelPools(proj.enabledCapabilities, proj.localExtensions)
               .map((entry) => entry.pool);
@@ -200,21 +226,21 @@ export function ProjectsPage({
                   {proj.handles.length} 句柄 · {totalScripts} 脚本 ·{' '}
                   {proj.enabledCapabilities.length} 能力
                   {(proj.localExtensions?.length ?? 0) > 0
-                    ? ` · ${proj.localExtensions!.length} 内嵌包`
+                    ? ` · ${proj.localExtensions!.length} 项目包`
                     : ''}
                 </div>
 
-                <div className="paused-var-chips">
+                <div className="meta-chip-list">
                   {proj.handles.map((h) => {
                     const poolSummary = formatHandleChannelPoolsSummary(h, projPools);
                     return (
-                      <span key={h.id} className="var-chip">
+                      <span key={h.id} className="meta-chip">
                         <span
                           className="lang-dot"
                           style={{ background: h.color, width: 6, height: 6 }}
                         />
                         <span>{h.name}</span>
-                        <span style={{ opacity: 0.65 }}>
+                        <span style={{ opacity: 0.7 }}>
                           ({h.scripts.length}
                           {poolSummary ? ` · ${poolSummary}` : ''})
                         </span>
@@ -264,8 +290,18 @@ export function ProjectsPage({
                       type="button"
                       className="btn-ghost"
                       style={{ padding: '4px 6px' }}
-                      title="导出整项目 .polyblock.json"
-                      aria-label={`导出项目 ${proj.name}`}
+                      title="导出完整工程包 (.polyblock.zip · 含全部依赖包与板型)"
+                      aria-label={`导出完整工程包 ${proj.name}`}
+                      onClick={() => onSaveProjectArchive(proj.id)}
+                    >
+                      <FolderArchive size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ padding: '4px 6px' }}
+                      title="导出纯工程文件 (.polyblock.json · 仅引用 ID)"
+                      aria-label={`导出纯工程文件 ${proj.name}`}
                       onClick={() => onSaveProjectFile(proj.id)}
                     >
                       <Download size={13} />
@@ -316,7 +352,7 @@ export function ProjectsPage({
         </div>
 
         <h2 className="section-heading">
-          内置演示项目（{DEMO_PROJECTS.length} 个成品工程 · 可导出/复刻）
+          出厂演示项目（{DEMO_PROJECTS.length} 个标准目录工程 · 可导出/复刻）
         </h2>
         <div className="card-grid">
           {DEMO_PROJECTS.map(({ id: demoId, project: demo }) => {
@@ -329,7 +365,7 @@ export function ProjectsPage({
             const factBadges: string[] = [
               capCount === 0 ? '纯脚本内核' : `${capCount} 项能力`,
               ...(demo.handles.length > 1 ? [`${demo.handles.length} 句柄并发`] : []),
-              ...(localCount > 0 ? [`含 ${localCount} 内嵌外设包`] : []),
+              ...(localCount > 0 ? [`含 ${localCount} 项目扩展包`] : []),
             ];
             return (
               <div key={demoId} className="ui-card">
@@ -352,7 +388,7 @@ export function ProjectsPage({
                 </div>
                 <div className="card-footer">
                   <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                    {targetProfileRegistry.get(demo.targetProfileId).name} · 句柄：
+                    {resolveProjectTargetProfile(demo).name} · 句柄：
                     {demo.handles.map((h) => h.name).join(' / ')}
                   </span>
                   <button

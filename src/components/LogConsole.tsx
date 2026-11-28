@@ -41,11 +41,13 @@ export function LogConsole({
     [logs, filter],
   );
 
+  const lastVisibleLogId = visibleLogs[visibleLogs.length - 1]?.id ?? null;
+
   useEffect(() => {
     if (bodyRef.current) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
     }
-  }, [visibleLogs.length]);
+  }, [visibleLogs.length, lastVisibleLogId]);
 
   return (
     <section className="console-pane" aria-label="打印日志控制台">
@@ -104,7 +106,7 @@ export function LogConsole({
       <div className="console-body" ref={bodyRef}>
         {visibleLogs.length === 0 ? (
           <div className="console-empty">
-            点击顶部「▶ 运行」即可在纯前端 WASM 沙箱中执行脚本并查看实时打印日志
+            点击顶部「▶ 运行」即可在纯前端浏览器沙箱中执行脚本并查看实时打印日志
           </div>
         ) : (
           visibleLogs.map((entry) => (
