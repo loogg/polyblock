@@ -21,11 +21,12 @@ export const PACKS_MANIFEST: AssetManifest = packsManifest as AssetManifest;
 export const DISCOVERED_PACK_IDS: string[] = allDiscoveredPacks.map((p) => p.id);
 
 /**
- * Built-in extension packs auto-discovered from `src/packs/*.polyext.json`,
+ * Default seed extension packs auto-discovered from `src/packs/*.polyext.json`,
  * validated through the exact same `validateExtensionPack` pipeline as user-imported packs,
  * and deterministically ordered/filtered via `src/packs/manifest.json`.
+ * Treated as equal global packs with zero privileged built-in status.
  */
-export const BUILTIN_EXTENSION_PACKS: PolyExtensionPack[] = applyAssetManifest(
+export const DEFAULT_EXTENSION_PACKS: PolyExtensionPack[] = applyAssetManifest(
   allDiscoveredPacks,
   (p) => p.id,
   PACKS_MANIFEST,
@@ -34,17 +35,3 @@ export const BUILTIN_EXTENSION_PACKS: PolyExtensionPack[] = applyAssetManifest(
 /** Clean downloadable starter template for authoring custom `.polyext.json` packs. */
 export const SAMPLE_CUSTOM_EXTENSION_TEMPLATE: PolyExtensionPack =
   validateExtensionPack(sampleExtensionRaw);
-
-function requireBuiltinPack(id: string): PolyExtensionPack {
-  const found = BUILTIN_EXTENSION_PACKS.find((p) => p.id === id);
-  if (!found) {
-    throw new Error(`Required built-in extension pack "${id}" missing from src/packs/`);
-  }
-  return found;
-}
-
-export const RT_PACK: PolyExtensionPack = requireBuiltinPack('rt');
-export const VIRTUAL_BOARD_PACK: PolyExtensionPack =
-  requireBuiltinPack('virtual-board');
-export const CLOCK_TIMER_PACK: PolyExtensionPack =
-  requireBuiltinPack('clock-timer');

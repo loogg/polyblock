@@ -19,7 +19,6 @@ import {
   moduleNameToRelativeFile,
 } from '../export/bundleExporter';
 import { computeCrc32 } from '../export/zipWriter';
-import { RT_PACK } from '../extensions/builtinPacks';
 import {
   extractImportedModuleNames,
   inspectPackImportSourceMatch,
@@ -226,10 +225,11 @@ describe('3-tier pure-scope ModuleResolver, Conflict Detection, Scanner & Target
     expect(resWithHandle.overrides).toHaveLength(1);
   });
 
-  it('standardizes RT_PACK.sandboxMock identically to all other packs (zero worker/resolver special cases) and runs cleanly in Lua 5.4 & MicroPython', async () => {
-    expect(RT_PACK.sandboxMock?.moduleName).toBe('rt');
-    expect(RT_PACK.sandboxMock?.sources.lua).toContain('__poly_rt_tick');
-    expect(RT_PACK.sandboxMock?.sources.python).toContain('_poly.rt_tick');
+  it('standardizes rt.sandboxMock identically to all other packs (zero worker/resolver special cases) and runs cleanly in Lua 5.4 & MicroPython', async () => {
+    const rtPack = extensionRegistry.get('rt')!;
+    expect(rtPack.sandboxMock?.moduleName).toBe('rt');
+    expect(rtPack.sandboxMock?.sources.lua).toContain('__poly_rt_tick');
+    expect(rtPack.sandboxMock?.sources.python).toContain('_poly.rt_tick');
 
     // When `rt` is NOT enabled, resolver does NOT mount `rt` at all
     const withoutRt = resolveProjectModules({ enabledCapabilities: [] });

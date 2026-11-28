@@ -167,7 +167,7 @@ export function GeneralProfileTab({
           value={project.targetProfileId}
           options={allTargetProfiles.map((prof) => ({
             value: prof.id,
-            label: `${prof.name}${targetProfileRegistry.isBuiltin(prof.id) ? '' : ' [自定义]'}`,
+            label: prof.name,
             badge: `${prof.capabilities.length} 能力`,
           }))}
           onChange={(profileId) => onApplyTargetProfile(project.id, profileId)}
@@ -197,9 +197,7 @@ export function GeneralProfileTab({
                 className="lang-dot"
                 style={{ background: b.accentColor }}
               />
-              <span>
-                {b.name} {b.version}
-              </span>
+              <span>{b.dialect.displayName}</span>
             </button>
           ))}
         </div>

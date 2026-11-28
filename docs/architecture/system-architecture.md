@@ -21,10 +21,10 @@
                                         v
 +------------------------------------------------------------------------------+
 |       Layer 1~3 · 声明式板型与单轨扩展体系 (src/{packs,boards,demos,templates})|
-|  - 全成品 JSON 资产 + manifest.json 顺序清单（随构建内置，便携 JSON 无 builtin 字段）|
+|  - 全成品 JSON 默认种子 + manifest.json 顺序清单（零 builtin 字段与特权判定）  |
 |  - TargetProfile (.polyboard.json): 目标语言 / 最大句柄数 / 默认能力裁剪       |
 |  - PolyExtensionPack (.polyext.json): 单轨 sections[] + 多语言 code/sources   |
-|    · 预装平级包: rt (lifecycle/timers/tick) / virtual-board / clock-timer     |
+|    · 全局包与板型 100% 平权（同 ID 升级/附加库/移除/恢复默认），零内置特判      |
 |    · 3 层纯作用域解析: 句柄脚本 > 项目内嵌包 > 全局扩展包 (libs vs sandboxMock)|
 |    · 声明式能力: hat (singleton/dispatch) / handleConfigs / runtimeMonitor   |
 |                 / simWidgets (packId::key 命名空间隔离 + emitEvent)           |
@@ -71,7 +71,7 @@
 详见完整协议文档：[docs/extension-pack-spec.md](../extension-pack-spec.md) 与 [schemas/polyext.schema.json](../../schemas/polyext.schema.json)。
 
 - **Layer 0 边界**：10 个核心分类（`event #10`、`print #20`、`control #30`、`variables #40`、`math #50`、`logic #60`、`text #70`、`lists #80`、`dicts #85`、`functions #90`）涵盖所有零外部依赖语言原语；容器操作统一遵循纯值槽原则（`input_value`）。
-- **单轨 `sections[]`**：预装 `rt`（含 `rt.lifecycle`、`rt.timers`、`rt.tick` 3 个可细粒度裁剪组件）、`virtual-board`、`clock-timer` 与用户导入包完全遵循同一协议，无核心特判。
+- **单轨 `sections[]` 与全包彻底平权**：`src/packs/` 下的默认种子包（`rt` 含 `rt.lifecycle` / `rt.timers` / `rt.tick`、`virtual-board`、`clock-timer`）与用户导入包完全遵循同一协议并享有同等管理权（无 `isBuiltin` 权限隔离，支持差分持久化与「恢复默认」）。
 - **3 层作用域解析与交付解耦（`moduleResolver.ts`）**：
   1. 唯一优先级：`当前句柄脚本` > `项目内嵌包` > `全局扩展包`；同层级重复声明同一 `moduleName` 触发静态 Error 阻断运行与导出。
   2. 交付属性解耦：`libs[]`（真实纯脚本库，支持 `role: 'entry' | 'helper'`）在沙箱与真机 `.zip` 导出中共用；`sandboxMock` 仅在浏览器沙箱挂载，导出真机 `.zip` 时严格剥离。

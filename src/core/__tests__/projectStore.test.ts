@@ -10,11 +10,6 @@ import {
   validateSharedVariableName,
 } from '../projects/handleVariables';
 import {
-  CAP_RT,
-  CAP_RT_LIFECYCLE,
-  CAP_RT_TICK,
-  CAP_RT_TIMERS,
-  CAP_VIRTUAL_BOARD,
   hasCapability,
   targetProfileRegistry,
 } from '../capabilities/registry';
@@ -63,9 +58,9 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     // Virtual board basic template has virtual-board, NO timers!
     const vb = instantiateProjectFromTemplate('virtual_board_demo');
     expect(vb.targetProfileId).toBe('virtual-board-basic');
-    expect(vb.enabledCapabilities).toContain(CAP_VIRTUAL_BOARD);
-    expect(vb.enabledCapabilities).not.toContain(CAP_RT_TIMERS);
-    expect(vb.enabledCapabilities).not.toContain(CAP_RT_LIFECYCLE);
+    expect(vb.enabledCapabilities).toContain('virtual-board');
+    expect(vb.enabledCapabilities).not.toContain('rt.timers');
+    expect(vb.enabledCapabilities).not.toContain('rt.lifecycle');
 
     const p2 = instantiateProjectFromTemplate('starter_suite', [p1.name]);
     expect(p2.name).toBe('入门演示项目 (2)');
@@ -87,16 +82,16 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
     expect(mh.targetProfileId).toBe('virtual-board-rt');
     expect(mh.enabledCapabilities).toEqual(
       expect.arrayContaining([
-        CAP_RT,
-        CAP_VIRTUAL_BOARD,
+        'rt',
+        'virtual-board',
         'clock-timer',
         'robot-drive',
         'pwm-servo',
       ]),
     );
-    expect(hasCapability(mh.enabledCapabilities, CAP_RT_LIFECYCLE)).toBe(true);
-    expect(hasCapability(mh.enabledCapabilities, CAP_RT_TIMERS)).toBe(true);
-    expect(hasCapability(mh.enabledCapabilities, CAP_RT_TICK)).toBe(true);
+    expect(hasCapability(mh.enabledCapabilities, 'rt.lifecycle')).toBe(true);
+    expect(hasCapability(mh.enabledCapabilities, 'rt.timers')).toBe(true);
+    expect(hasCapability(mh.enabledCapabilities, 'rt.tick')).toBe(true);
     expect(mh.localExtensions?.map((p) => p.id)).toEqual(['robot-drive', 'pwm-servo']);
     expect(mh.handles).toHaveLength(3);
     expect(mh.handles.map((h) => h.name)).toEqual([
@@ -104,12 +99,12 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
       'sensor_guard',
       'telemetry_hub',
     ]);
-    expect(getHandleChannelPoolConfig(mh.handles[0], CAP_RT_TIMERS).aliases['0']).toBe('云台扫描');
+    expect(getHandleChannelPoolConfig(mh.handles[0], 'rt.timers').aliases['0']).toBe('云台扫描');
     expect(getHandleChannelPoolConfig(mh.handles[0], 'pwm-servo', 4).aliases['0']).toBe(
       '云台偏航',
     );
-    expect(getHandleChannelPoolConfig(mh.handles[1], CAP_RT_TIMERS).aliases['0']).toBe('温度巡检');
-    expect(getHandleChannelPoolConfig(mh.handles[2], CAP_RT_TIMERS).aliases['0']).toBe('遥测上报');
+    expect(getHandleChannelPoolConfig(mh.handles[1], 'rt.timers').aliases['0']).toBe('温度巡检');
+    expect(getHandleChannelPoolConfig(mh.handles[2], 'rt.timers').aliases['0']).toBe('遥测上报');
 
     // Applying a target profile updates capabilities cleanly without clobbering handles
     const switched = applyTargetProfileToProject(
@@ -117,15 +112,15 @@ describe('v3 Three-Tier Project -> Handle -> Script Store & Target Profiles', ()
       targetProfileRegistry.get('embedded-rt'),
     );
     expect(switched.targetProfileId).toBe('embedded-rt');
-    expect(switched.enabledCapabilities).toEqual([CAP_RT]);
+    expect(switched.enabledCapabilities).toEqual(['rt']);
     expect(switched.handles).toHaveLength(3);
 
-    const updatedHandle = setHandleChannelPoolConfig(switched.handles[0], CAP_RT_TIMERS, {
+    const updatedHandle = setHandleChannelPoolConfig(switched.handles[0], 'rt.timers', {
       count: 16,
       aliases: { '2': '电机看门狗' },
     });
-    expect(getHandleChannelPoolConfig(updatedHandle, CAP_RT_TIMERS).count).toBe(16);
-    expect(getHandleChannelPoolConfig(updatedHandle, CAP_RT_TIMERS).aliases['2']).toBe('电机看门狗');
+    expect(getHandleChannelPoolConfig(updatedHandle, 'rt.timers').count).toBe(16);
+    expect(getHandleChannelPoolConfig(updatedHandle, 'rt.timers').aliases['2']).toBe('电机看门狗');
   });
 
   it('performs handle CRUD (add, rename, duplicate, safe delete) and script CRUD within a handle', () => {

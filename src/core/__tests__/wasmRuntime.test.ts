@@ -7,11 +7,7 @@ import { buildHandleScriptsMeta } from '../backends/eventMode';
 import { buildHandleSharedModule } from '../backends/sharedModule';
 import { backendRegistry } from '../backends/registry';
 import { registerPolyBlocks } from '../blocks/definitions';
-import { CAP_RT_TIMERS } from '../capabilities/registry';
-import {
-  SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
-  VIRTUAL_BOARD_PACK,
-} from '../extensions/builtinPacks';
+import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../extensions/builtinPacks';
 import { extensionRegistry } from '../extensions/registry';
 import {
   getAllHandleChannelPoolConfigs,
@@ -27,8 +23,19 @@ import {
 import { WorkerDebugSession } from '../../workers/debugSession';
 import { runJsInSandbox } from '../../workers/jsSandboxCore';
 import { WorkerRuntimeScheduler } from '../../workers/runtimeScheduler';
-import { RT_PACK } from '../extensions/builtinPacks';
 import type { ExtensionModuleSource } from '../extensions/types';
+
+const RT_TIMERS_CAP = 'rt.timers';
+
+function getRtPack() {
+  extensionRegistry.ensureInitialized();
+  return extensionRegistry.get('rt')!;
+}
+
+function getVirtualBoardPack() {
+  extensionRegistry.ensureInitialized();
+  return extensionRegistry.get('virtual-board')!;
+}
 
 interface HarnessOptions {
   stepDelayMs?: number;
@@ -84,11 +91,13 @@ async function runJsDebugInSandbox(
   );
 
   const mockModules: ExtensionModuleSource[] = [];
-  if (RT_PACK.sandboxMock) {
-    mockModules.push({ ...RT_PACK.sandboxMock, packId: RT_PACK.id });
+  const rtPack = getRtPack();
+  const vbPack = getVirtualBoardPack();
+  if (rtPack.sandboxMock) {
+    mockModules.push({ ...rtPack.sandboxMock, packId: rtPack.id });
   }
-  if (VIRTUAL_BOARD_PACK.sandboxMock) {
-    mockModules.push({ ...VIRTUAL_BOARD_PACK.sandboxMock, packId: VIRTUAL_BOARD_PACK.id });
+  if (vbPack.sandboxMock) {
+    mockModules.push({ ...vbPack.sandboxMock, packId: vbPack.id });
   }
   for (const mod of opts.preloadModules ?? []) {
     if (mod.jsSource) {
@@ -328,9 +337,7 @@ async function getSharedTestMicroPython() {
           return activePySession ? activePySession.onSleep(ms) : Promise.resolve();
         },
         final_snap: (vars: string) => activePySession?.setFinalVars(vars),
-        emit_device: () => {},
         sim_set: () => {},
-        get_input: (k: unknown) => (k === 'temp' ? 28 : false),
         sim_get: (k: unknown) => (k === 'temp' ? 28 : false),
         now_ms: () => performance.now(),
         logic_now_ms: () => activePyScheduler?.now() ?? performance.now(),
@@ -361,9 +368,9 @@ async function getSharedTestMicroPython() {
         co_yield_slice: () => activePyScheduler?.onStartCoYieldSlice(),
         co_done: () => activePyScheduler?.onStartCoDone(),
         wait_start_turn: () =>
-          activePyScheduler?.waitPythonStartTurn() ?? Promise.resolve(false),
+          activePyScheduler?.waitAsyncStartTurn() ?? Promise.resolve(false),
         resume_start_slice: () =>
-          activePyScheduler?.resumePythonStartSlice() ?? Promise.resolve(),
+          activePyScheduler?.resumeAsyncStartSlice() ?? Promise.resolve(),
         cb_enter: (n: unknown) =>
           activePyScheduler?.beginCallback(String(n ?? 'cb')),
         cb_exit: () => activePyScheduler?.endCallback(),
@@ -516,7 +523,7 @@ describe('Real WASM Runtime Integration (Lua 5.4 & MicroPython + Coroutine Schem
       lua.global.set('print', (...args: unknown[]) => {
         luaLogs.push(args.map(String).join(' '));
       });
-      const src = JSON.stringify(VIRTUAL_BOARD_PACK.sandboxMock!.sources.lua!);
+      const src = JSON.stringify(getVirtualBoardPack().sandboxMock!.sources.lua!);
       await lua.doString(`
         package.preload["board"] = function()
           local chunk, err = load(${src}, "@board")
@@ -550,16 +557,14 @@ describe('Real WASM Runtime Integration (Lua 5.4 & MicroPython + Coroutine Schem
       pyEvents.push({ kind: String(kind), value });
     const getPy = (key: string) => (key === 'temp' ? mockTemp : false);
     mp.registerJsModule('_poly', {
-      emit_device: emitPy,
       sim_set: emitPy,
-      get_input: getPy,
       sim_get: getPy,
       now_ms: () => performance.now(),
     });
     mp.runPython(`
 import sys
 _ns = {}
-exec(${JSON.stringify(VIRTUAL_BOARD_PACK.sandboxMock!.sources.python!)}, _ns)
+exec(${JSON.stringify(getVirtualBoardPack().sandboxMock!.sources.python!)}, _ns)
 class _M: pass
 _m = _M()
 for _k, _v in _ns.items():
@@ -591,8 +596,8 @@ sys.modules["board"] = _m
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles.find((h) => h.name === 'oneshot_vm')!;
     setActiveChannelPoolConfig(
-      CAP_RT_TIMERS,
-      getHandleChannelPoolConfig(hdl, CAP_RT_TIMERS),
+      RT_TIMERS_CAP,
+      getHandleChannelPoolConfig(hdl, RT_TIMERS_CAP),
     );
     const oneshotScript = hdl.scripts[0];
     const ws = new Blockly.Workspace();
@@ -601,7 +606,7 @@ sys.modules["board"] = _m
     const luaDebug = backendRegistry.get('lua').generate(ws).debugCode;
     const pyDebug = backendRegistry.get('python').generate(ws).debugCode;
     ws.dispose();
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, { count: 8, aliases: {} });
 
     const { logs: luaLogs } = await runLuaDebugInWasmoon(luaDebug);
     expect(luaLogs.some((l) => l.includes('T0 运行中 = true'))).toBe(true);
@@ -992,7 +997,7 @@ sys.modules["board"] = _m
   });
 
   it('dispatches custom declarative kind:"hat" callbacks via enqueueEvent in BOTH Wasmoon Lua 5.4 and MicroPython WASM', async () => {
-    const imported = extensionRegistry.importCustomPack(SAMPLE_CUSTOM_EXTENSION_TEMPLATE);
+    const imported = extensionRegistry.importPack(SAMPLE_CUSTOM_EXTENSION_TEMPLATE);
     const ws = new Blockly.Workspace();
     Blockly.serialization.workspaces.load(
       {
@@ -1052,7 +1057,7 @@ sys.modules["board"] = _m
     const luaDebug = backendRegistry.get('lua').generate(ws).debugCode;
     const pyDebug = backendRegistry.get('python').generate(ws).debugCode;
     ws.dispose();
-    extensionRegistry.removeCustomPack(imported.id);
+    extensionRegistry.removePack(imported.id);
 
     const dispatchEvents = (sched: WorkerRuntimeScheduler) => {
       setTimeout(() => {
@@ -1081,8 +1086,8 @@ sys.modules["board"] = _m
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles[0];
     setActiveChannelPoolConfig(
-      CAP_RT_TIMERS,
-      getHandleChannelPoolConfig(hdl, CAP_RT_TIMERS),
+      RT_TIMERS_CAP,
+      getHandleChannelPoolConfig(hdl, RT_TIMERS_CAP),
     );
     setActiveHandleSharedVariables(hdl.sharedVariables ?? []);
     const metas = buildHandleScriptsMeta(hdl);
@@ -1114,12 +1119,12 @@ sys.modules["board"] = _m
     mainWs.dispose();
     setActiveHandleScripts([], null);
     setActiveHandleSharedVariables(null);
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, { count: 8, aliases: {} });
 
     // 1. Real Wasmoon Lua 5.4: main.lua & timers.lua (moduleDebugCode!) share `shared.lua` AND central router dispatches on_timer_0/1!
     const { logs } = await runLuaDebugInWasmoon(mainDebugLua, {
       preloadModules: [
-        { name: 'board', luaSource: VIRTUAL_BOARD_PACK.sandboxMock!.sources.lua },
+        { name: 'board', luaSource: getVirtualBoardPack().sandboxMock!.sources.lua },
         { name: sharedLuaMod.moduleName, luaSource: sharedLuaMod.debugSource },
         { name: 'timers', luaSource: timersModDebugLua },
       ],
@@ -1138,7 +1143,7 @@ sys.modules["board"] = _m
     // 2. Real MicroPython WASM: main.py & timers.py (moduleDebugCode!) share `shared.py` state AND main.py central router dispatches timers.py!
     const { logs: pyLogs } = await runPyDebugInMicroPython(mainDebugPy, {
       preloadModules: [
-        { name: 'board', pythonSource: VIRTUAL_BOARD_PACK.sandboxMock!.sources.python },
+        { name: 'board', pythonSource: getVirtualBoardPack().sandboxMock!.sources.python },
         { name: sharedPyMod.moduleName, pythonSource: sharedPyMod.debugSource, lazyVfs: true },
         { name: 'timers', pythonSource: timersModDebugPy, lazyVfs: true },
       ],
@@ -1258,7 +1263,7 @@ sys.modules["board"] = _m
         { id: 'ss_timers', name: 'timers', workspace: syncTimersWs, breakpoints: [], updatedAt: '' },
       ],
     };
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 4, aliases: {} });
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, { count: 4, aliases: {} });
     setActiveHandleSharedVariables(['ticks']);
     const syncMetas = buildHandleScriptsMeta(syncHdl);
     const syncSharedLua = buildHandleSharedModule(syncHdl, 'lua')!;
@@ -1281,7 +1286,7 @@ sys.modules["board"] = _m
     smWs.dispose();
     setActiveHandleScripts([], null);
     setActiveHandleSharedVariables(null);
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, { count: 8, aliases: {} });
 
     const { logs: syncLuaLogs } = await runLuaDebugInWasmoon(syncMainLuaDebug, {
       preloadModules: [
@@ -1445,7 +1450,7 @@ sys.modules["board"] = _m
         { id: 's_timers', name: 'timers', workspace: timersWsJson, breakpoints: [], updatedAt: '' },
       ],
     };
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 4, aliases: {} });
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, { count: 4, aliases: {} });
     const metas = buildHandleScriptsMeta(fakeHdl);
     setActiveHandleScripts(metas, 's_timers');
     const tWs = new Blockly.Workspace();
@@ -1461,7 +1466,7 @@ sys.modules["board"] = _m
     const mPyDebug = backendRegistry.get('python').generate(mWs).debugCode;
     mWs.dispose();
     setActiveHandleScripts([], null);
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, { count: 8, aliases: {} });
 
     const { logs: cLuaLogs } = await runLuaDebugInWasmoon(mLuaDebug, {
       preloadModules: [{ name: 'timers', luaSource: tLua }],
@@ -1806,7 +1811,7 @@ sys.modules["board"] = _m
         { id: 'ic_timers', name: 'timers', workspace: infTimersWsJson, breakpoints: [], updatedAt: '' },
       ],
     };
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 4, aliases: {} });
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, { count: 4, aliases: {} });
     const infMetas = buildHandleScriptsMeta(infHdl);
     setActiveHandleScripts(infMetas, 'ic_timers');
     const itWs = new Blockly.Workspace();
@@ -1820,7 +1825,7 @@ sys.modules["board"] = _m
     const infMainPyDebug = backendRegistry.get('python').generate(imWs).debugCode;
     imWs.dispose();
     setActiveHandleScripts([], null);
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, { count: 8, aliases: {} });
 
     await expect(
       runPyDebugInMicroPython(infMainPyDebug, {

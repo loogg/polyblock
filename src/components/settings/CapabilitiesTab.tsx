@@ -9,7 +9,6 @@ import {
   DEFAULT_EXTENSION_TOOLBOX_ORDER,
 } from '../../core/blocks/catalog';
 import { SAMPLE_CUSTOM_EXTENSION_TEMPLATE } from '../../core/extensions/builtinPacks';
-import { extensionRegistry } from '../../core/extensions/registry';
 import {
   scanScriptLibraryFile,
   type UploadedScriptLibFile,
@@ -60,12 +59,6 @@ export function CapabilitiesTab({
 
   const localPacks = project.localExtensions ?? [];
   const localPackIds = new Set(localPacks.map((p) => p.id));
-  const builtinPacks = allExtensionPacks.filter((p) =>
-    extensionRegistry.isBuiltin(p.id),
-  );
-  const customGlobalPacks = allExtensionPacks.filter(
-    (p) => !extensionRegistry.isBuiltin(p.id),
-  );
   const globalPackIds = new Set(allExtensionPacks.map((p) => p.id));
 
   const supportedExtAccept = getSupportedScriptAcceptAttr();
@@ -241,27 +234,6 @@ export function CapabilitiesTab({
       </div>
 
       <div className="settings-field-group" style={{ marginTop: 4 }}>
-        <label className="settings-label">
-          内置扩展包（{builtinPacks.length} · 统一声明式协议，支持整包或按组件裁剪）
-        </label>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {builtinPacks.map((pack) => (
-            <ExtensionPackRow
-              key={pack.id}
-              pack={pack}
-              variant="builtin"
-              enabledCapabilities={project.enabledCapabilities}
-              overriddenByLocal={localPackIds.has(pack.id)}
-              onViewSource={() => onViewPack(pack, '预装全局包')}
-              onToggleCapability={(capId) =>
-                onToggleCapabilityForProject(project.id, capId)
-              }
-            />
-          ))}
-        </div>
-      </div>
-
-      <div className="settings-field-group" style={{ marginTop: 4 }}>
         <div
           style={{
             display: 'flex',
@@ -271,7 +243,7 @@ export function CapabilitiesTab({
           }}
         >
           <label className="settings-label">
-            自定义全局扩展包（{customGlobalPacks.length} · 跨项目共享，导出项目自动附带快照）
+            全局扩展库（{allExtensionPacks.length} · 跨项目共享，支持整包或按组件裁剪）
           </label>
           <button
             type="button"
@@ -285,7 +257,7 @@ export function CapabilitiesTab({
             管理全局扩展库 →
           </button>
         </div>
-        {customGlobalPacks.length === 0 ? (
+        {allExtensionPacks.length === 0 ? (
           <div
             className="settings-ext-row"
             style={{
@@ -295,18 +267,18 @@ export function CapabilitiesTab({
               color: 'var(--text-muted)',
             }}
           >
-            全局库暂无自定义扩展包。可在左侧「扩展」页导入团队复用的 .polyext.json。
+            全局扩展库暂无扩展包。可在左侧「扩展」页导入 .polyext.json 或恢复出厂默认包。
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {customGlobalPacks.map((pack) => (
+            {allExtensionPacks.map((pack) => (
               <ExtensionPackRow
                 key={pack.id}
                 pack={pack}
                 variant="global"
                 enabledCapabilities={project.enabledCapabilities}
                 overriddenByLocal={localPackIds.has(pack.id)}
-                onViewSource={() => onViewPack(pack, '自定义全局包')}
+                onViewSource={() => onViewPack(pack, '全局扩展包')}
                 onToggleCapability={(capId) =>
                   onToggleCapabilityForProject(project.id, capId)
                 }

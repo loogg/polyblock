@@ -13,8 +13,9 @@ import {
   setActiveHandleSharedVariables,
   setActiveProjectCapabilities,
 } from '../blocks/workspaceContextBridge';
-import { CAP_RT_TIMERS } from '../capabilities/registry';
 import { extensionRegistry } from '../extensions/registry';
+
+const RT_TIMERS_CAP = 'rt.timers';
 import {
   getHandleChannelPoolConfig,
   instantiateProjectFromTemplate,
@@ -37,8 +38,8 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     const proj = instantiateProjectFromTemplate('event_timer_demo');
     const hdl = proj.handles[0];
     setActiveChannelPoolConfig(
-      CAP_RT_TIMERS,
-      getHandleChannelPoolConfig(hdl, CAP_RT_TIMERS),
+      RT_TIMERS_CAP,
+      getHandleChannelPoolConfig(hdl, RT_TIMERS_CAP),
     );
     setActiveHandleSharedVariables(hdl.sharedVariables ?? []);
     const scriptMetas = buildHandleScriptsMeta(hdl);
@@ -160,11 +161,11 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     timersWs.dispose();
     setActiveHandleScripts([], null);
     setActiveHandleSharedVariables(null);
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, { count: 8, aliases: {} });
   });
 
   it('flags duplicate timer hats and out-of-range timer channel IDs in static diagnostics', () => {
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 4, aliases: {} });
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, { count: 4, aliases: {} });
     const ws = loadWs({
       blocks: {
         languageVersion: 0,
@@ -195,7 +196,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
 
     ws.dispose();
     setActiveProjectCapabilities(null);
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, { count: 8, aliases: {} });
   });
 
   it('schedules repeat timers, elapsed values, button edges, and isolates multiple schedulers', async () => {
@@ -1315,7 +1316,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
   });
 
   it('keeps explicit CompileContext passes 100% pure and restores live workspaceContextBridge state unconditionally', () => {
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, {
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, {
       count: 8,
       aliases: { '0': '主画布心跳' },
     });
@@ -1373,7 +1374,7 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
 
     const isolatedCtx = {
       channelPoolConfigs: {
-        [CAP_RT_TIMERS]: { count: 4, aliases: { '0': '隔离通道' } },
+        [RT_TIMERS_CAP]: { count: 4, aliases: { '0': '隔离通道' } },
       },
       sharedVariables: ['isolated_flag'],
       handleScripts: [
@@ -1397,12 +1398,12 @@ describe('Phase 5 & 6: Event-Driven ABI, Local Scoped Vars, Scope Tree & Multi-C
     expect(pyRes.code).toContain('T0: 隔离通道');
 
     // Previous live bridge state MUST remain completely intact!
-    expect(getActiveChannelPoolConfig(CAP_RT_TIMERS).count).toBe(8);
-    expect(getActiveChannelPoolConfig(CAP_RT_TIMERS).aliases['0']).toBe('主画布心跳');
+    expect(getActiveChannelPoolConfig(RT_TIMERS_CAP).count).toBe(8);
+    expect(getActiveChannelPoolConfig(RT_TIMERS_CAP).aliases['0']).toBe('主画布心跳');
     expect(getActiveHandleSharedVariables()).toEqual(['canvas_shared']);
 
     ws.dispose();
     setActiveHandleSharedVariables(null);
-    setActiveChannelPoolConfig(CAP_RT_TIMERS, { count: 8, aliases: {} });
+    setActiveChannelPoolConfig(RT_TIMERS_CAP, { count: 8, aliases: {} });
   });
 });

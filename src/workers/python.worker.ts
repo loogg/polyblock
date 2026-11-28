@@ -62,13 +62,10 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
     final_snap: (varsJson: string) => {
       host.getActiveSession()?.setFinalVars(varsJson);
     },
-    emit_device: (kind: string, value: unknown) =>
-      host.emitScopedState(undefined, kind, value),
     sim_set: (kind: string, value: unknown) =>
       host.emitScopedState(undefined, kind, value),
     sim_set_scoped: (packId: string, kind: string, value: unknown) =>
       host.emitScopedState(String(packId), kind, value),
-    get_input: (key: string) => host.getScopedState(undefined, key),
     sim_get: (key: string) => host.getScopedState(undefined, key),
     sim_get_scoped: (packId: string, key: string) =>
       host.getScopedState(String(packId), key),
@@ -140,11 +137,11 @@ async function ensureMicroPython(wasmUrl: string): Promise<MicroPythonInstance> 
     co_done: () => host.getActiveScheduler()?.onStartCoDone(),
     wait_start_turn: () => {
       const sched = host.getActiveScheduler();
-      return sched ? sched.waitPythonStartTurn() : Promise.resolve(false);
+      return sched ? sched.waitAsyncStartTurn() : Promise.resolve(false);
     },
     resume_start_slice: () => {
       const sched = host.getActiveScheduler();
-      return sched ? sched.resumePythonStartSlice() : Promise.resolve();
+      return sched ? sched.resumeAsyncStartSlice() : Promise.resolve();
     },
     cb_enter: (name: unknown) =>
       host.getActiveScheduler()?.beginCallback(String(name ?? 'callback')),
@@ -289,11 +286,7 @@ class _PolyScopedProxy:
     self._pid = pid
   def sim_set(self, k, v):
     return _poly_base.sim_set_scoped(self._pid, k, v)
-  def emit_device(self, k, v):
-    return _poly_base.sim_set_scoped(self._pid, k, v)
   def sim_get(self, k):
-    return _poly_base.sim_get_scoped(self._pid, k)
-  def get_input(self, k):
     return _poly_base.sim_get_scoped(self._pid, k)
   def emit_event(self, ename, *eargs):
     return _poly_base.emit_event(ename, json.dumps(list(eargs)))

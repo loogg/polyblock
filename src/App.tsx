@@ -658,9 +658,10 @@ export function App() {
                 setScriptLibModal({ targetScope: 'global' })
               }
               onAttachLibsToGlobalPack={extActions.handleAttachLibsToGlobalPack}
-              onRemoveCustomPack={extActions.handleRemoveCustomPack}
+              onRemoveGlobalPack={extActions.handleRemoveGlobalPack}
               onImportBoardProfileJson={extActions.handleImportBoardProfileJson}
-              onRemoveCustomProfile={extActions.handleRemoveCustomProfile}
+              onRemoveProfile={extActions.handleRemoveProfile}
+              onResetDefaultCatalog={extActions.handleResetDefaultCatalog}
               onReturnToBlocks={() => navigateTo('blocks')}
               onNotify={notify}
             />

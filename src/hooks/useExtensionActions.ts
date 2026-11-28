@@ -335,9 +335,9 @@ export function useExtensionActions({
   const handlePromoteLocalExtensionToGlobal = useCallback(
     (pack: PolyExtensionPack) => {
       try {
-        extensionRegistry.importCustomPack(pack);
+        extensionRegistry.importPack(pack);
         setExtRevision((r) => r + 1);
-        notify(`已将「${pack.name}」复制保存到全局扩展库，其他项目现可直接启用`);
+        notify(`已将「${pack.name}」保存到全局扩展库，其他项目现可直接启用`);
       } catch (err) {
         notify(
           `保存到全局库失败：${err instanceof Error ? err.message : String(err)}`,
@@ -406,7 +406,7 @@ export function useExtensionActions({
   const handleAttachLibsToGlobalPack = useCallback(
     (packId: string, files: UploadedScriptLibFile[]) => {
       const target = extensionRegistry.get(packId);
-      if (!target || extensionRegistry.isBuiltin(packId)) return;
+      if (!target) return;
       try {
         const mergedLibs = mergeAttachedLibFiles(
           target.libs,
@@ -417,7 +417,7 @@ export function useExtensionActions({
             role: f.scanForBlocks ? 'entry' : 'helper',
           })),
         );
-        const updated = extensionRegistry.importCustomPack({
+        const updated = extensionRegistry.importPack({
           ...target,
           libs: mergedLibs,
         });
@@ -474,9 +474,9 @@ export function useExtensionActions({
   const handleImportBoardProfileJson = useCallback(
     (raw: unknown): TargetProfile | null => {
       try {
-        const imported = targetProfileRegistry.importCustomProfile(raw);
+        const imported = targetProfileRegistry.importProfile(raw);
         setProfileRevision((r) => r + 1);
-        notify(`已导入自定义板型规格「${imported.name}」`);
+        notify(`已导入目标板型规格「${imported.name}」`);
         return imported;
       } catch (err) {
         notify(
@@ -488,20 +488,24 @@ export function useExtensionActions({
     [notify],
   );
 
-  const handleRemoveCustomProfile = useCallback(
+  const handleRemoveProfile = useCallback(
     (profileId: string) => {
-      const ok = targetProfileRegistry.removeCustomProfile(profileId);
-      if (!ok) return;
+      const ok = targetProfileRegistry.removeProfile(profileId);
+      if (!ok) {
+        notify('至少需保留 1 个目标板型规格');
+        return;
+      }
+      const fallbackProfileId = targetProfileRegistry.getDefaultProfileId();
       setProfileRevision((r) => r + 1);
       setStore((prev) => ({
         ...prev,
         projects: prev.projects.map((p) =>
           p.targetProfileId === profileId
-            ? { ...p, targetProfileId: 'generic-script' }
+            ? { ...p, targetProfileId: fallbackProfileId }
             : p,
         ),
       }));
-      notify('已删除自定义板型规格');
+      notify('已移除目标板型规格');
     },
     [notify, setStore],
   );
@@ -509,7 +513,7 @@ export function useExtensionActions({
   const handleImportExtensionJson = useCallback(
     (raw: unknown) => {
       try {
-        const imported = extensionRegistry.importCustomPack(raw);
+        const imported = extensionRegistry.importPack(raw);
         setExtRevision((r) => r + 1);
         setStore((prev) =>
           updateProjectById(prev, activeProjectIdRef.current, (p) => ({
@@ -521,7 +525,7 @@ export function useExtensionActions({
           })),
         );
         notify(
-          `已导入并启用自定义扩展包「${imported.name}」（${getAllPackBlocks(imported).length} 个积木）`,
+          `已导入并启用全局扩展包「${imported.name}」（${getAllPackBlocks(imported).length} 个积木）`,
         );
       } catch (err) {
         notify(
@@ -532,22 +536,38 @@ export function useExtensionActions({
     [activeProjectIdRef, notify, setStore],
   );
 
-  const handleRemoveCustomPack = useCallback(
+  const handleRemoveGlobalPack = useCallback(
     (packId: string) => {
-      const ok = extensionRegistry.removeCustomPack(packId);
+      const ok = extensionRegistry.removePack(packId);
       if (!ok) return;
       setExtRevision((r) => r + 1);
       setStore((prev) => ({
         ...prev,
         projects: prev.projects.map((p) => ({
           ...p,
-          enabledCapabilities: p.enabledCapabilities.filter((id) => id !== packId),
+          enabledCapabilities: p.enabledCapabilities.filter(
+            (id) => id !== packId && !id.startsWith(`${packId}.`),
+          ),
         })),
       }));
-      notify('已删除自定义扩展包');
+      notify('已从全局库移除该扩展包');
     },
     [notify, setStore],
   );
+
+  const handleResetDefaultCatalog = useCallback(() => {
+    extensionRegistry.resetToDefaults();
+    targetProfileRegistry.resetToDefaults();
+    setExtRevision((r) => r + 1);
+    setProfileRevision((r) => r + 1);
+    const curProj = getActiveProject(storeRef.current);
+    syncModuleConflictsAndRegenerate(
+      curProj,
+      curProj.enabledCapabilities,
+      curProj.localExtensions,
+    );
+    notify('已恢复出厂默认扩展包与目标板型列表');
+  }, [notify, storeRef, syncModuleConflictsAndRegenerate]);
 
   return {
     extRevision,
@@ -569,8 +589,9 @@ export function useExtensionActions({
     handleAttachLibsToGlobalPack,
     handleApplyTargetProfile,
     handleImportBoardProfileJson,
-    handleRemoveCustomProfile,
+    handleRemoveProfile,
     handleImportExtensionJson,
-    handleRemoveCustomPack,
+    handleRemoveGlobalPack,
+    handleResetDefaultCatalog,
   };
 }

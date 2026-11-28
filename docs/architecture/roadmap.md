@@ -23,7 +23,7 @@
 | 模块 | 当前规模 | 建议拆瘦边界 |
 | --- | ---: | --- |
 | [src/hooks/useProjectStore.ts](../../src/hooks/useProjectStore.ts) | ~1,291 行 | 拆为「持久化与工程/模板切换」「句柄与脚本 CRUD」「变量/函数作用域变更与导出动作」3 个子 Hook |
-| [src/core/extensions/registry.ts](../../src/core/extensions/registry.ts) | ~1,211 行 | 拆为「扩展包注册与存储（含 `isBuiltin`）」「Blockly 积木/帽块动态注册器」「工具箱与能力查询视图」 |
+| [src/core/extensions/registry.ts](../../src/core/extensions/registry.ts) | ~1,250 行 | 拆为「扩展包注册与差分持久化」「Blockly 积木/帽块动态注册器」「工具箱与能力查询视图」 |
 | [src/components/BlocklyWorkbench.tsx](../../src/components/BlocklyWorkbench.tsx) | ~1,090 行 | 拆出「右键菜单与自定义动作注册」「Flyout 工具箱同步与搜索」「只读/运行锁定控制器」 |
 
 ---

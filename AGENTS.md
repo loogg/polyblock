@@ -3,12 +3,18 @@
 > **演进优先（防僵化总则）**：本文件只记录当前已验证的核心架构不变量，用于在新增语言后端（如 C / JS 等）或扩展功能时避免重踩旧坑。项目处于开发期，**默认零旧版/旧文件兼容**；若未来有更简洁正确的架构路线，直接彻底重构并同步更新本文件，严禁为兼容旧实现保留死代码或冗余兜底。
 
 ## 1. 声明式架构与核心边界
-- **元数据/包配置驱动（零硬编码扫描）**：扩展包的能力开关、帽块生命周期/保活（`hat.mode` / `hat.keepsAlive`）、模拟控件事件（`simWidgets[].emitEvent`）、句柄通道池（`handleConfigs`）、运行时监控（`sections[].runtimeMonitor`）统一由 `.polyext.json` / `.polyboard.json` 声明字段驱动。**严禁**在 IDE、编译器、Worker、调度器或 UI 中按具体包 ID / 积木名 / 事件名写硬编码扫描、专有事件通道或专用配置字段；若发现需要给某内置包开特例，优先补协议字段。
-- **全资产成品 JSON 化与宿主内置判定**：所有内置扩展包（`src/packs/*.polyext.json`）、板型预设（`src/boards/*.polyboard.json`）、演示工程（`src/demos/*.polyblock.json`）及示例模板（`src/templates/`）统一使用与用户导出 100% 同构的成品 JSON + `manifest.json` 顺序清单加载；便携 JSON 协议及 Schema 严禁包含 `builtin` 字段，内置身份由注册表宿主集合（`isBuiltin(id)`）独占判定，彻底杜绝导入伪造。
+- **元数据/包配置驱动（零硬编码扫描）**：扩展包的能力开关、帽块生命周期/保活（`hat.mode` / `hat.keepsAlive`）、模拟控件事件（`simWidgets[].emitEvent`）、句柄通道池（`handleConfigs`）、运行时监控（`sections[].runtimeMonitor`）统一由 `.polyext.json` / `.polyboard.json` 声明字段驱动。**严禁**在 IDE、编译器、Worker、调度器或 UI 中按具体包 ID / 积木名 / 事件名写硬编码扫描、专有事件通道或专用配置字段；若发现需要给某个默认包开特例，优先补协议字段。
+- **全资产成品 JSON 化与全包/板型彻底平权（零 `isBuiltin` 特权）**：
+  - `src/packs/*.polyext.json`、`src/boards/*.polyboard.json`、`src/demos/*.polyblock.json` 及 `src/templates/` 统一使用与用户导出 100% 同构的成品 JSON + `manifest.json` 顺序清单加载，仅作为**出厂默认种子清单**（`DEFAULT_EXTENSION_PACKS` / `DEFAULT_TARGET_PROFILES`）。
+  - **彻底禁止 `isBuiltin` 特权与硬编码包/板型 ID 常量**：便携 JSON 协议严禁出现 `builtin` 字段，运行时与 UI 亦严禁区分“内置包 vs 自定义包”或保留 `RT_PACK` / `VIRTUAL_BOARD_PACK` / `CAP_RT*` / `'generic-script'` 等硬编码 ID 常量。全局库中任意扩展包与板型均享有完全同等操作权（查看、附加源码库、同 ID 覆盖升级、导出、移除；板型仅限制至少保留 1 个），通过差分持久化 + **「恢复默认」** 还原出厂清单；工程导出仅按纯内容比对（`isSameAsDefault`）决定是否写入 `bundledExtensions` 快照。
 - **Layer 0 核心**：所有零外部模块依赖的纯语言原语（`on_start`、`require`/`import`、控制/运算/逻辑/文本含 `str_replace`、列表、字典 5 块、变量、函数）必须留在核心，不放进扩展包。
 - **扩展包（`.polyext.json`）**：仅承载带真实外部模块接口（`imports` + `libs` 或 `sandboxMock`）的运行时/外设/库能力（如 `rt`、`virtual-board`、`clock-timer`）；多语言声明按语言 ID 映射（`Record<ScriptLanguageId, ...>`），不写死二元语言字段。
 - **多语言后端单一入口**：每个目标语言后端（`src/core/backends/*Backend.ts`）独占声明自身完整 `LanguageDialect`（含语法字面量、关键字、`builtinFuncs`、`libBinding`、`extractErrorLine` 及可选 `exportToolchain`），统一经 `src/core/backends/registry.ts` 的 `BUILTIN_BACKEND_ENTRIES` 单一入口自动派生 `ScriptLanguageId` 与全部核心/UI 辅助函数；**严禁**在 `backends/types.ts`、`highlight.ts`、`scriptLibScanner.ts`、`moduleResolver.ts`、`logParser.ts` 等语言无关核心模块中维护硬编码的语言表。
-- **纯值槽原则**：列表、字典等容器操作积木统一用 `input_value` 接收容器表达式，作用域自然随拖入的变量走；**禁止**用 `field_variable` 扫描推断作用域，**禁止**通过 Blockly `provideFunction_` 向导出代码注入隐藏辅助函数。
+- **架构纯净度与防回流红线**：
+  - **零遗留协议别名与死导出**：重构后立即清理旧桥接别名（如 `emit_device`/`get_input`）和零引用的导出函数，不留“以防万一”的兼容层。
+  - **语言无关模块零单一语言命名**：共享调度器（`runtimeScheduler.ts`）、核心块提示语（`definitions.ts` / `handleVariables.ts`）与 UI 控件须使用语言无关术语（如 `waitAsyncStartTurn`，而非 `waitPythonStartTurn`），不假设仅存在 2 种语言。
+  - **纯值槽原则**：列表、字典等容器操作积木统一用 `input_value` 接收容器表达式，作用域自然随拖入的变量走；**禁止**用 `field_variable` 扫描推断作用域，**禁止**通过 Blockly `provideFunction_` 向导出代码注入隐藏辅助函数。
+  - **自动化架构门禁**：上述红线统一写入 `src/core/__tests__/extensions.test.ts` 的源码静态门禁测试，随 `npm test` 每次运行自动拦断回流。
 
 ## 2. 句柄、并发与作用域模型（新增语言后端必守）
 - **1 句柄 = 1 线程 / 单轨协程循环**：

@@ -59,7 +59,7 @@ export function describeInitialValue(init?: VariableInitialValue | null): string
     case 'dict':
       return '空字典 {}';
     default:
-      return '空值 nil / None';
+      return '空值 nil / None / null';
   }
 }
 

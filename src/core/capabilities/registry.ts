@@ -7,14 +7,12 @@ import {
 } from '../assets/manifestLoader';
 import { normalizeLanguageId } from '../backends/registry';
 
-/** Built-in capability ID constants (referenced by tests & board specs; UI uses declarative metadata). */
-export const CAP_RT = 'rt';
-export const CAP_RT_LIFECYCLE = 'rt.lifecycle';
-export const CAP_RT_TIMERS = 'rt.timers';
-export const CAP_RT_TICK = 'rt.tick';
-export const CAP_VIRTUAL_BOARD = 'virtual-board';
+export const STORAGE_GLOBAL_PROFILES_KEY = 'polyblock.profiles.global.v2';
 
-export const STORAGE_CUSTOM_PROFILES_KEY = 'polyblock.profiles.custom.v1';
+interface PersistedProfilesPatch {
+  profiles?: unknown[];
+  removedIds?: unknown[];
+}
 
 export function validateTargetProfile(raw: unknown): TargetProfile {
   if (!raw || typeof raw !== 'object') {
@@ -56,7 +54,7 @@ export function validateTargetProfile(raw: unknown): TargetProfile {
     id: obj.id,
     name: obj.name.trim(),
     description:
-      typeof obj.description === 'string' ? obj.description : '用户自定义目标板型规格',
+      typeof obj.description === 'string' ? obj.description : '目标板型规格',
     defaultLanguage: normalizeLanguageId(obj.defaultLanguage),
     maxHandles: Number.isFinite(maxHandlesNum)
       ? Math.max(1, Math.min(16, Math.trunc(maxHandlesNum)))
@@ -78,10 +76,15 @@ const allDiscoveredBoards: TargetProfile[] = Object.values(rawBoardModules).map(
 export const BOARDS_MANIFEST: AssetManifest = boardsManifest as AssetManifest;
 export const DISCOVERED_BOARD_IDS: string[] = allDiscoveredBoards.map((b) => b.id);
 
-export const BUILTIN_TARGET_PROFILES: TargetProfile[] = applyAssetManifest(
+/** Default seed target profiles loaded from `src/boards/*.polyboard.json` via `manifest.json`. */
+export const DEFAULT_TARGET_PROFILES: TargetProfile[] = applyAssetManifest(
   allDiscoveredBoards,
   (b) => b.id,
   BOARDS_MANIFEST,
+);
+
+const DEFAULT_PROFILE_JSON_BY_ID = new Map<string, string>(
+  DEFAULT_TARGET_PROFILES.map((p) => [p.id, JSON.stringify(p)]),
 );
 
 export const SAMPLE_CUSTOM_BOARD_TEMPLATE: TargetProfile =
@@ -89,29 +92,37 @@ export const SAMPLE_CUSTOM_BOARD_TEMPLATE: TargetProfile =
 
 class TargetProfileRegistry {
   private readonly profiles = new Map<string, TargetProfile>();
-  private readonly builtinIds = new Set<string>();
+  private readonly removedDefaultIds = new Set<string>();
   private initialized = false;
 
   ensureInitialized(): void {
     if (this.initialized) return;
     this.initialized = true;
-    for (const p of BUILTIN_TARGET_PROFILES) {
-      this.builtinIds.add(p.id);
+    for (const p of DEFAULT_TARGET_PROFILES) {
       this.profiles.set(p.id, p);
     }
     try {
-      const raw = localStorage.getItem(STORAGE_CUSTOM_PROFILES_KEY);
+      const raw = localStorage.getItem(STORAGE_GLOBAL_PROFILES_KEY);
       if (raw) {
-        const list = JSON.parse(raw) as unknown[];
-        if (Array.isArray(list)) {
-          for (const item of list) {
-            try {
-              const valid = validateTargetProfile(item);
-              if (!this.builtinIds.has(valid.id)) {
-                this.profiles.set(valid.id, valid);
+        const parsed = JSON.parse(raw) as PersistedProfilesPatch;
+        if (parsed && typeof parsed === 'object') {
+          if (Array.isArray(parsed.removedIds)) {
+            for (const rid of parsed.removedIds) {
+              if (typeof rid === 'string' && DEFAULT_PROFILE_JSON_BY_ID.has(rid)) {
+                this.removedDefaultIds.add(rid);
+                this.profiles.delete(rid);
               }
-            } catch {
-              // ignore corrupted item
+            }
+          }
+          if (Array.isArray(parsed.profiles)) {
+            for (const item of parsed.profiles) {
+              try {
+                const valid = validateTargetProfile(item);
+                this.removedDefaultIds.delete(valid.id);
+                this.profiles.set(valid.id, valid);
+              } catch {
+                // ignore corrupted item
+              }
             }
           }
         }
@@ -119,12 +130,17 @@ class TargetProfileRegistry {
     } catch {
       // ignore storage errors
     }
+    if (this.profiles.size === 0 && DEFAULT_TARGET_PROFILES.length > 0) {
+      this.removedDefaultIds.delete(DEFAULT_TARGET_PROFILES[0].id);
+      this.profiles.set(DEFAULT_TARGET_PROFILES[0].id, DEFAULT_TARGET_PROFILES[0]);
+    }
   }
 
-  /** Returns true ONLY for profiles bundled from `src/boards/` at build time (never spoofable via JSON). */
-  isBuiltin(id: string): boolean {
+  /** Returns the primary default profile ID (first available profile, zero hardcoded board IDs). */
+  getDefaultProfileId(): string {
     this.ensureInitialized();
-    return this.builtinIds.has(id);
+    const first = this.profiles.values().next().value as TargetProfile | undefined;
+    return first?.id ?? DEFAULT_TARGET_PROFILES[0].id;
   }
 
   listAll(): TargetProfile[] {
@@ -134,34 +150,75 @@ class TargetProfileRegistry {
 
   get(id: string): TargetProfile {
     this.ensureInitialized();
-    return this.profiles.get(id) ?? BUILTIN_TARGET_PROFILES[0];
+    const found = this.profiles.get(id);
+    if (found) return found;
+    const first = this.profiles.values().next().value as TargetProfile | undefined;
+    return first ?? DEFAULT_TARGET_PROFILES[0];
   }
 
-  importCustomProfile(raw: unknown): TargetProfile {
+  /** Imports a new board profile or updates an existing profile with the same ID (full equality). */
+  importProfile(raw: unknown): TargetProfile {
     this.ensureInitialized();
     const valid = validateTargetProfile(raw);
-    if (this.builtinIds.has(valid.id)) {
-      throw new Error(`板型 ID "${valid.id}" 与内置板型冲突，请更换自定义 ID`);
-    }
+    this.removedDefaultIds.delete(valid.id);
     this.profiles.set(valid.id, valid);
-    this.persistCustomProfiles();
+    this.persistPatch();
     return valid;
   }
 
-  removeCustomProfile(id: string): boolean {
+  /** Removes any profile from the global catalog (requires keeping at least 1 active profile). */
+  removeProfile(id: string): boolean {
     this.ensureInitialized();
-    if (!this.profiles.has(id) || this.builtinIds.has(id)) return false;
+    if (!this.profiles.has(id) || this.profiles.size <= 1) return false;
     this.profiles.delete(id);
-    this.persistCustomProfiles();
+    if (DEFAULT_PROFILE_JSON_BY_ID.has(id)) {
+      this.removedDefaultIds.add(id);
+    }
+    this.persistPatch();
     return true;
   }
 
-  private persistCustomProfiles(): void {
+  /** Restores the global board catalog to factory defaults from `src/boards/`. */
+  resetToDefaults(): void {
+    this.ensureInitialized();
+    this.profiles.clear();
+    this.removedDefaultIds.clear();
+    for (const p of DEFAULT_TARGET_PROFILES) {
+      this.profiles.set(p.id, p);
+    }
     try {
-      const custom = Array.from(this.profiles.values()).filter(
-        (p) => !this.builtinIds.has(p.id),
+      localStorage.removeItem(STORAGE_GLOBAL_PROFILES_KEY);
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  /** Returns true if any board profile differs from the default catalog (added, modified, or removed). */
+  hasCatalogChanges(): boolean {
+    this.ensureInitialized();
+    if (this.removedDefaultIds.size > 0) return true;
+    for (const p of this.profiles.values()) {
+      if (DEFAULT_PROFILE_JSON_BY_ID.get(p.id) !== JSON.stringify(p)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private persistPatch(): void {
+    try {
+      const changedProfiles = Array.from(this.profiles.values()).filter(
+        (p) => DEFAULT_PROFILE_JSON_BY_ID.get(p.id) !== JSON.stringify(p),
       );
-      localStorage.setItem(STORAGE_CUSTOM_PROFILES_KEY, JSON.stringify(custom));
+      const removedIds = Array.from(this.removedDefaultIds);
+      if (changedProfiles.length === 0 && removedIds.length === 0) {
+        localStorage.removeItem(STORAGE_GLOBAL_PROFILES_KEY);
+      } else {
+        localStorage.setItem(
+          STORAGE_GLOBAL_PROFILES_KEY,
+          JSON.stringify({ profiles: changedProfiles, removedIds }),
+        );
+      }
     } catch {
       // ignore quota errors
     }

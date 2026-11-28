@@ -108,13 +108,10 @@ export async function runJsInSandbox(
     final_snap: (varsJson: string) => {
       session.setFinalVars(varsJson);
     },
-    emit_device: (kind: string, value: unknown) =>
-      emitScopedState(packId, kind, value),
     sim_set: (kind: string, value: unknown) =>
       emitScopedState(packId, kind, value),
     sim_set_scoped: (explicitPackId: string, kind: string, value: unknown) =>
       emitScopedState(String(explicitPackId), kind, value),
-    get_input: (key: string) => getScopedState(packId, key),
     sim_get: (key: string) => getScopedState(packId, key),
     sim_get_scoped: (explicitPackId: string, key: string) =>
       getScopedState(String(explicitPackId), key),
@@ -151,8 +148,8 @@ export async function runJsInSandbox(
     co_sleep: (ms: unknown) => scheduler.onStartCoSleep(ms),
     co_yield_slice: () => scheduler.onStartCoYieldSlice(),
     co_done: () => scheduler.onStartCoDone(),
-    wait_start_turn: () => scheduler.waitPythonStartTurn(),
-    resume_start_slice: () => scheduler.resumePythonStartSlice(),
+    wait_start_turn: () => scheduler.waitAsyncStartTurn(),
+    resume_start_slice: () => scheduler.resumeAsyncStartSlice(),
     cb_enter: (name: unknown) =>
       scheduler.beginCallback(String(name ?? 'callback')),
     cb_exit: () => scheduler.endCallback(),

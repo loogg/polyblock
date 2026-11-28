@@ -22,7 +22,7 @@ import {
 } from '../../core/extensions/registry';
 import type { PolyExtensionPack } from '../../core/extensions/types';
 
-export type ExtensionPackRowVariant = 'local' | 'builtin' | 'global';
+export type ExtensionPackRowVariant = 'local' | 'global';
 
 interface ExtensionPackRowProps {
   pack: PolyExtensionPack;
@@ -129,24 +129,11 @@ export function ExtensionPackRow({
             )}
 
             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              {variant === 'builtin' ? (
-                <>
-                  {getAllPackBlocks(pack).length} 个积木 · {placementLabel} · ID:{' '}
-                  {pack.id}
-                  {overriddenByLocal ? ' · 已被本项目内嵌包覆盖' : ''}
-                </>
-              ) : variant === 'local' ? (
-                <>
-                  v{pack.packVersion} · {getAllPackBlocks(pack).length} 个积木 ·{' '}
-                  {placementLabel} · ID: {pack.id}
-                </>
-              ) : (
-                <>
-                  v{pack.packVersion} · {getAllPackBlocks(pack).length} 个积木 ·{' '}
-                  {placementLabel}
-                  {overriddenByLocal ? ' · 已被本项目内嵌包覆盖' : ''}
-                </>
-              )}
+              v{pack.packVersion} · {getAllPackBlocks(pack).length} 个积木 ·{' '}
+              {placementLabel} · ID: {pack.id}
+              {variant === 'global' && overriddenByLocal
+                ? ' · 已被本项目内嵌包覆盖'
+                : ''}
             </div>
 
             {hasBadgeRow && (

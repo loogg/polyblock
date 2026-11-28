@@ -23,23 +23,17 @@ import {
 } from '../assets/manifestLoader';
 import {
   BOARDS_MANIFEST,
-  CAP_RT,
-  CAP_RT_LIFECYCLE,
-  CAP_RT_TICK,
-  CAP_RT_TIMERS,
-  CAP_VIRTUAL_BOARD,
+  DEFAULT_TARGET_PROFILES,
   DISCOVERED_BOARD_IDS,
   SAMPLE_CUSTOM_BOARD_TEMPLATE,
   targetProfileRegistry,
   validateTargetProfile,
 } from '../capabilities/registry';
 import {
-  BUILTIN_EXTENSION_PACKS,
+  DEFAULT_EXTENSION_PACKS,
   DISCOVERED_PACK_IDS,
   PACKS_MANIFEST,
-  RT_PACK,
   SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
-  VIRTUAL_BOARD_PACK,
 } from '../extensions/builtinPacks';
 import {
   DEMOS_MANIFEST,
@@ -73,6 +67,14 @@ import {
 } from '../projects/store';
 
 describe('Declarative Extension Pack & Capability-Driven Target Profile System', () => {
+  const RT_PACK_ID = 'rt';
+  const RT_LIFECYCLE_ID = 'rt.lifecycle';
+  const RT_TIMERS_ID = 'rt.timers';
+  const RT_TICK_ID = 'rt.tick';
+  const VB_PACK_ID = 'virtual-board';
+  const getRtPack = () => extensionRegistry.get(RT_PACK_ID)!;
+  const getVbPack = () => extensionRegistry.get(VB_PACK_ID)!;
+
   beforeAll(() => {
     registerPolyBlocks();
     extensionRegistry.ensureInitialized();
@@ -91,7 +93,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       'poly_comment',
     ]);
 
-    const rtCats = getOrderedToolboxCategories([CAP_RT]);
+    const rtCats = getOrderedToolboxCategories([RT_PACK_ID]);
     const timersCat = rtCats.find((c) => c.id === 'ext_rt_timers');
     expect(timersCat).toBeDefined();
     // Auto-derived flyout button directly from `handleConfigs[kind='channel-pool']`
@@ -109,30 +111,58 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(rtEventBlocks).toContain('poly_on_stop');
     expect(rtEventBlocks).not.toContain('poly_on_button');
 
-    const vbCats = extensionRegistry.toCategorySpecs([CAP_VIRTUAL_BOARD]);
+    const vbCats = extensionRegistry.toCategorySpecs([VB_PACK_ID]);
     expect(vbCats[0].blocks.some((b) => b.type === 'poly_on_button')).toBe(true);
   });
 
-  it('validates, imports, and removes custom .polyboard.json target profiles', () => {
+  it('treats all .polyboard.json target profiles with equal rights (import, override default, remove except last, and reset)', () => {
     expect(() => validateTargetProfile({})).toThrow();
-    expect(() =>
-      targetProfileRegistry.importCustomProfile({
+    try {
+      // Equal rights: importing a profile with an existing default ID cleanly upgrades/overrides it
+      const overridden = targetProfileRegistry.importProfile({
         ...SAMPLE_CUSTOM_BOARD_TEMPLATE,
         id: 'generic-script',
-      }),
-    ).toThrow(/冲突/);
+        name: '自定义纯脚本环境',
+      });
+      expect(overridden.name).toBe('自定义纯脚本环境');
+      expect(targetProfileRegistry.get('generic-script').name).toBe('自定义纯脚本环境');
+      expect(targetProfileRegistry.hasCatalogChanges()).toBe(true);
 
-    const imported = targetProfileRegistry.importCustomProfile(
-      SAMPLE_CUSTOM_BOARD_TEMPLATE,
-    );
-    expect(imported.id).toBe('my-industrial-controller');
-    expect('builtin' in imported).toBe(false);
-    expect(targetProfileRegistry.isBuiltin(imported.id)).toBe(false);
-    expect(targetProfileRegistry.get(imported.id).defaultChannelCounts?.[CAP_RT_TIMERS]).toBe(16);
-    expect(targetProfileRegistry.removeCustomProfile(imported.id)).toBe(true);
+      // Equal rights: removing a default profile succeeds as long as >= 1 board remains
+      expect(targetProfileRegistry.removeProfile('generic-script')).toBe(true);
+      expect(
+        targetProfileRegistry.listAll().some((p) => p.id === 'generic-script'),
+      ).toBe(false);
+
+      // Removing profiles stops ONLY at the last remaining board (never by ID privilege)
+      for (const p of targetProfileRegistry.listAll().slice(1)) {
+        expect(targetProfileRegistry.removeProfile(p.id)).toBe(true);
+      }
+      expect(targetProfileRegistry.listAll()).toHaveLength(1);
+      const lastId = targetProfileRegistry.listAll()[0].id;
+      expect(targetProfileRegistry.removeProfile(lastId)).toBe(false);
+      expect(targetProfileRegistry.getDefaultProfileId()).toBe(lastId);
+
+      // Reset restores all factory default boards cleanly
+      targetProfileRegistry.resetToDefaults();
+      expect(targetProfileRegistry.hasCatalogChanges()).toBe(false);
+      expect(targetProfileRegistry.listAll()).toHaveLength(DEFAULT_TARGET_PROFILES.length);
+      expect(targetProfileRegistry.getDefaultProfileId()).toBe('generic-script');
+
+      // Standard custom board import & remove
+      const imported = targetProfileRegistry.importProfile(
+        SAMPLE_CUSTOM_BOARD_TEMPLATE,
+      );
+      expect(imported.id).toBe('my-industrial-controller');
+      expect('builtin' in imported).toBe(false);
+      expect(targetProfileRegistry.get(imported.id).defaultChannelCounts?.[RT_TIMERS_ID]).toBe(16);
+      expect(targetProfileRegistry.removeProfile(imported.id)).toBe(true);
+    } finally {
+      targetProfileRegistry.resetToDefaults();
+    }
   });
 
-  it('registers all 3 pure-module built-in packs (with multi-section rt), derives badges, and sorts toolbox categories by numeric toolboxOrder', () => {
+  it('registers all 3 default pure-module packs (with multi-section rt), derives badges, and sorts toolbox categories by numeric toolboxOrder', () => {
     const all = extensionRegistry.listAll();
     expect(all.map((p) => p.id)).toEqual(
       expect.arrayContaining([
@@ -141,23 +171,23 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
         'clock-timer',
       ]),
     );
-    expect(extensionRegistry.listBySource('builtin')).toHaveLength(3);
-    expect(resolvePackSections(RT_PACK).map((s) => s.capId)).toEqual([
-      CAP_RT_LIFECYCLE,
-      CAP_RT_TIMERS,
-      CAP_RT_TICK,
+    expect(DEFAULT_EXTENSION_PACKS).toHaveLength(3);
+    expect(resolvePackSections(getRtPack()).map((s) => s.capId)).toEqual([
+      RT_LIFECYCLE_ID,
+      RT_TIMERS_ID,
+      RT_TICK_ID,
     ]);
     expect(CORE_TOOLBOX_ORDERS.map((c) => c.order)).toEqual([
       10, 20, 30, 40, 50, 60, 70, 80, 85, 90,
     ]);
 
-    const rtBadges = derivePackBadges(RT_PACK).map((b) => b.label);
+    const rtBadges = derivePackBadges(getRtPack()).map((b) => b.label);
     expect(rtBadges).toContain('3 组件');
     expect(rtBadges).toContain('沙箱模拟');
     expect(rtBadges).toContain('事件回调');
     expect(rtBadges).toContain('通道池 T0~31');
 
-    const vbBadges = derivePackBadges(VIRTUAL_BOARD_PACK).map((b) => b.label);
+    const vbBadges = derivePackBadges(getVbPack()).map((b) => b.label);
     expect(vbBadges).toContain('外设模拟 · 6控件');
     expect(vbBadges).toContain('事件回调');
 
@@ -191,9 +221,9 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     );
     extensionRegistry.setActiveProjectLocalPacks([midPack]);
     const ordered = getOrderedToolboxCategories([
-      CAP_RT,
+      RT_PACK_ID,
       'mid-order-pack',
-      CAP_VIRTUAL_BOARD,
+      VB_PACK_ID,
     ]);
     const orderedIds = ordered.map((c) => c.id);
     expect(orderedIds.indexOf('event')).toBeLessThan(
@@ -261,73 +291,99 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     ws.dispose();
   });
 
-  it('imports custom .polyext.json pack, generates Lua & Python with pack-level default imports, and removes cleanly', () => {
+  it('treats all .polyext.json packs with equal rights (override default, auto-bundle modified default, remove, reset, and generate code)', () => {
     expect(() => validateExtensionPack({})).toThrow();
-    expect(() =>
-      extensionRegistry.importCustomPack({
-        ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
-        id: 'virtual-board',
-      }),
-    ).toThrow(/不允许覆盖预装包/);
+    try {
+      // Equal rights: importing a pack with an existing default ID (`virtual-board`) upgrades/overrides it cleanly
+      const originalVb = getVbPack();
+      expect(extensionRegistry.isSameAsDefault(originalVb)).toBe(true);
+      const upgradedVb = extensionRegistry.importPack({
+        ...originalVb,
+        packVersion: '2.5.0',
+        description: '用户定制升级版虚拟硬件板',
+      });
+      expect(upgradedVb.packVersion).toBe('2.5.0');
+      expect(extensionRegistry.isSameAsDefault(upgradedVb)).toBe(false);
+      expect(extensionRegistry.hasCatalogChanges()).toBe(true);
 
-    const imported = extensionRegistry.importCustomPack(
-      SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
-    );
-    expect(imported.id).toBe('my-robot-api');
-    expect('builtin' in imported).toBe(false);
-    expect(extensionRegistry.isBuiltin(imported.id)).toBe(false);
+      // Exporting a project that uses a modified default pack MUST snapshot it into bundledExtensions
+      const vbProj = instantiateProjectFromTemplate('virtual_board_demo');
+      const exportedModified = buildExportableProjectJson(
+        vbProj,
+        extensionRegistry.listAll(),
+      );
+      expect(exportedModified.bundledExtensions?.map((p) => `${p.id}@${p.packVersion}`)).toContain(
+        'virtual-board@2.5.0',
+      );
 
-    const ws = new Blockly.Workspace();
-    Blockly.serialization.workspaces.load(
-      {
-        blocks: {
-          languageVersion: 0,
-          blocks: [
-            {
-              type: 'poly_on_start',
-              id: 'r_start',
-              inputs: {
-                BODY: {
-                  block: {
-                    type: 'ext_robot_move',
-                    id: 'r_move',
-                    fields: { DIR: 'forward' },
-                    inputs: {
-                      SPEED: {
-                        block: {
-                          type: 'math_number',
-                          id: 'r_spd',
-                          fields: { NUM: 75 },
+      // Equal rights: removing a default pack succeeds and resetToDefaults() restores it cleanly
+      expect(extensionRegistry.removePack('virtual-board')).toBe(true);
+      expect(extensionRegistry.get('virtual-board')).toBeUndefined();
+      extensionRegistry.resetToDefaults();
+      expect(extensionRegistry.get('virtual-board')?.packVersion).toBe(originalVb.packVersion);
+      expect(extensionRegistry.hasCatalogChanges()).toBe(false);
+
+      // Standard custom pack import, codegen & remove
+      const imported = extensionRegistry.importPack(
+        SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
+      );
+      expect(imported.id).toBe('my-robot-api');
+      expect('builtin' in imported).toBe(false);
+
+      const ws = new Blockly.Workspace();
+      Blockly.serialization.workspaces.load(
+        {
+          blocks: {
+            languageVersion: 0,
+            blocks: [
+              {
+                type: 'poly_on_start',
+                id: 'r_start',
+                inputs: {
+                  BODY: {
+                    block: {
+                      type: 'ext_robot_move',
+                      id: 'r_move',
+                      fields: { DIR: 'forward' },
+                      inputs: {
+                        SPEED: {
+                          block: {
+                            type: 'math_number',
+                            id: 'r_spd',
+                            fields: { NUM: 75 },
+                          },
                         },
                       },
                     },
                   },
                 },
               },
-            },
-          ],
+            ],
+          },
         },
-      },
-      ws,
-    );
+        ws,
+      );
 
-    const luaRes = backendRegistry.get('lua').generate(ws);
-    expect(luaRes.code).toContain('local robot = require("robot")');
-    expect(luaRes.code).toContain('robot.move("forward", 75)');
+      const luaRes = backendRegistry.get('lua').generate(ws);
+      expect(luaRes.code).toContain('local robot = require("robot")');
+      expect(luaRes.code).toContain('robot.move("forward", 75)');
 
-    const pyRes = backendRegistry.get('python').generate(ws);
-    expect(pyRes.code).toContain('import robot');
-    expect(pyRes.code).toContain('robot.move("forward", 75)');
+      const pyRes = backendRegistry.get('python').generate(ws);
+      expect(pyRes.code).toContain('import robot');
+      expect(pyRes.code).toContain('robot.move("forward", 75)');
 
-    ws.dispose();
+      ws.dispose();
 
-    expect(extensionRegistry.removeCustomPack('my-robot-api')).toBe(true);
-    expect(extensionRegistry.get('my-robot-api')).toBeUndefined();
+      expect(extensionRegistry.removePack('my-robot-api')).toBe(true);
+      expect(extensionRegistry.get('my-robot-api')).toBeUndefined();
+    } finally {
+      extensionRegistry.resetToDefaults();
+    }
   });
 
   it('isolates project-local packs from global library, overrides same-ID global packs, and auto-bundles on export', () => {
     const baseSec = SAMPLE_CUSTOM_EXTENSION_TEMPLATE.sections[0];
-    const globalV2 = extensionRegistry.importCustomPack({
+    const globalV2 = extensionRegistry.importPack({
       ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
       packVersion: '2.0.0',
       imports: {
@@ -494,7 +550,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     const importedLocal = parseImportedProject(exportedLocal, 'fallback', []);
     expect(importedLocal.localExtensions?.map((p) => p.packVersion)).toEqual(['1.0.0']);
 
-    extensionRegistry.removeCustomPack(globalV2.id);
+    extensionRegistry.removePack(globalV2.id);
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
 
@@ -509,7 +565,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     const validatedSample = validateExtensionPack(SAMPLE_CUSTOM_EXTENSION_TEMPLATE);
     expect(validatedSample.simWidgets).toHaveLength(5);
 
-    const packs = [VIRTUAL_BOARD_PACK, validatedSample];
+    const packs = [getVbPack(), validatedSample];
     let state = buildDefaultSimState(packs);
     expect(state['virtual-board::led']).toBe(false);
     expect(state['virtual-board::temp']).toBe(28);
@@ -620,14 +676,14 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(readPackWidgetValue(dualState, 'motor-a', motorA.simWidgets![1])).toBe(24);
     expect(readPackWidgetValue(dualState, 'motor-b', motorB.simWidgets![1])).toBe(24);
 
-    const boardLampBlock = getAllPackBlocks(VIRTUAL_BOARD_PACK).find(
+    const boardLampBlock = getAllPackBlocks(getVbPack()).find(
       (b) => b.type === 'ext_board_rgb',
     )!;
     const colorOptions = (boardLampBlock.args0![0].options as Array<[string, string]>).map(
       ([, val]) => val,
     );
     expect(colorOptions).toEqual(['#ef4444', '#10b981', '#3b82f6', '#1e293b']);
-    expect(VIRTUAL_BOARD_PACK.simWidgets!.find((w) => w.key === 'rgb')?.kind).toBe(
+    expect(getVbPack().simWidgets!.find((w) => w.key === 'rgb')?.kind).toBe(
       'tricolor',
     );
     expect(resolveTricolorState('#ef4444')).toMatchObject({ color: 'red', active: true });
@@ -638,7 +694,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
   });
 
   it('supports declarative kind:"hat" callbacks in custom .polyext.json packs with codegen, scope tree, duplicate diagnostics, and emitEvent arg resolution', () => {
-    const imported = extensionRegistry.importCustomPack(SAMPLE_CUSTOM_EXTENSION_TEMPLATE);
+    const imported = extensionRegistry.importPack(SAMPLE_CUSTOM_EXTENSION_TEMPLATE);
     const estopWidget = imported.simWidgets!.find((w) => w.key === 'estop')!;
     expect(resolveWidgetEventArgs(imported.id, estopWidget, true, {})).toEqual([true]);
 
@@ -731,7 +787,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     expect(pyRes.debugCode).toContain("_ev.startswith('event:')");
 
     ws.dispose();
-    extensionRegistry.removeCustomPack(imported.id);
+    extensionRegistry.removePack(imported.id);
   });
 
   it('flags static error diagnostics when workspace uses blocks from a disabled or removed extension pack', () => {
@@ -884,11 +940,11 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     });
 
     setActiveChannelPoolConfigs({
-      [CAP_RT_TIMERS]: { count: 8, aliases: { '0': '心跳灯' } },
+      [RT_TIMERS_ID]: { count: 8, aliases: { '0': '心跳灯' } },
       'pwm-driver': { count: 4, aliases: { '0': '左轮油门' } },
     });
 
-    const timerOpts = buildChannelDropdownOptions(CAP_RT_TIMERS, 'T', '0', 8, 32, false);
+    const timerOpts = buildChannelDropdownOptions(RT_TIMERS_ID, 'T', '0', 8, 32, false);
     const pwmOpts = buildChannelDropdownOptions('pwm-driver', 'PWM', '0', 4, 8, false);
     expect(timerOpts).toHaveLength(8);
     expect(timerOpts[0]).toEqual(['T0 · 心跳灯', '0']);
@@ -927,7 +983,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       ws,
     );
 
-    setActiveProjectCapabilities([CAP_RT_TIMERS, 'pwm-driver']);
+    setActiveProjectCapabilities([RT_TIMERS_ID, 'pwm-driver']);
     const luaRes = backendRegistry.get('lua').generate(ws);
     expect(luaRes.code).toContain('pwm.duty(0, 60) -- PWM0: 左轮油门');
     expect(luaRes.code).not.toContain('心跳灯');
@@ -949,23 +1005,23 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
 
     ws.dispose();
     setActiveProjectCapabilities(null);
-    setActiveChannelPoolConfigs({ [CAP_RT_TIMERS]: { count: 8, aliases: {} } });
+    setActiveChannelPoolConfigs({ [RT_TIMERS_ID]: { count: 8, aliases: {} } });
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
 
   it('supports fine-grained Scheme 1 section pruning, generic core-category merging (control), block-driven simWidgetKeys filtering, libs[] vs sandboxMock separation, and generic content-based import deduplication', () => {
-    let caps = [CAP_RT];
-    expect(getPackEnableState(RT_PACK, caps)).toMatchObject({
+    let caps = [RT_PACK_ID];
+    expect(getPackEnableState(getRtPack(), caps)).toMatchObject({
       status: 'full',
       enabledCount: 3,
       totalCount: 3,
     });
 
-    const step1 = togglePackOrSectionCapability(CAP_RT_TIMERS, caps);
+    const step1 = togglePackOrSectionCapability(RT_TIMERS_ID, caps);
     expect(step1.action).toBe('disabled');
-    expect(step1.nextCapabilities).toEqual([CAP_RT_LIFECYCLE, CAP_RT_TICK]);
+    expect(step1.nextCapabilities).toEqual([RT_LIFECYCLE_ID, RT_TICK_ID]);
     caps = step1.nextCapabilities;
-    expect(getPackEnableState(RT_PACK, caps)).toMatchObject({
+    expect(getPackEnableState(getRtPack(), caps)).toMatchObject({
       status: 'partial',
       enabledCount: 2,
       totalCount: 3,
@@ -980,11 +1036,11 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
         ?.blocks.some((b) => b.type === 'poly_on_run'),
     ).toBe(true);
 
-    const step2 = togglePackOrSectionCapability(CAP_RT_TIMERS, caps);
+    const step2 = togglePackOrSectionCapability(RT_TIMERS_ID, caps);
     expect(step2.action).toBe('enabled');
-    expect(step2.nextCapabilities).toEqual([CAP_RT]);
+    expect(step2.nextCapabilities).toEqual([RT_PACK_ID]);
 
-    const step3 = togglePackOrSectionCapability(CAP_RT, step2.nextCapabilities);
+    const step3 = togglePackOrSectionCapability(RT_PACK_ID, step2.nextCapabilities);
     expect(step3.action).toBe('disabled');
     expect(step3.nextCapabilities).toEqual([]);
 
@@ -1322,7 +1378,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     setActiveHandleSharedVariables(null);
     setActiveHandleSharedFunctions(null);
     setActiveProjectCapabilities(null);
-    setActiveChannelPoolConfigs({ [CAP_RT_TIMERS]: { count: 8, aliases: {} } });
+    setActiveChannelPoolConfigs({ [RT_TIMERS_ID]: { count: 8, aliases: {} } });
     extensionRegistry.setActiveProjectLocalPacks([]);
   });
 
@@ -1333,25 +1389,25 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       timerPoolConfigKey: null,
     });
 
-    expect(extensionRegistry.getRuntimeMonitorSummary([CAP_RT])).toEqual({
+    expect(extensionRegistry.getRuntimeMonitorSummary([RT_PACK_ID])).toEqual({
       hasSchedulerMonitor: true,
       hasTimerMonitor: true,
-      timerPoolConfigKey: CAP_RT_TIMERS,
+      timerPoolConfigKey: RT_TIMERS_ID,
     });
 
-    expect(extensionRegistry.getRuntimeMonitorSummary([CAP_RT_LIFECYCLE])).toEqual({
+    expect(extensionRegistry.getRuntimeMonitorSummary([RT_LIFECYCLE_ID])).toEqual({
       hasSchedulerMonitor: true,
       hasTimerMonitor: false,
       timerPoolConfigKey: null,
     });
 
-    expect(extensionRegistry.getRuntimeMonitorSummary([CAP_RT_TIMERS])).toEqual({
+    expect(extensionRegistry.getRuntimeMonitorSummary([RT_TIMERS_ID])).toEqual({
       hasSchedulerMonitor: false,
       hasTimerMonitor: true,
-      timerPoolConfigKey: CAP_RT_TIMERS,
+      timerPoolConfigKey: RT_TIMERS_ID,
     });
 
-    expect(extensionRegistry.getRuntimeMonitorSummary([CAP_RT_TICK])).toEqual({
+    expect(extensionRegistry.getRuntimeMonitorSummary([RT_TICK_ID])).toEqual({
       hasSchedulerMonitor: false,
       hasTimerMonitor: false,
       timerPoolConfigKey: null,
@@ -1574,8 +1630,8 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       polyextSchema.definitions.SimWidgetSpec.properties.kind.enum,
     );
 
-    // 2. Verify all built-in packs + sample template conform to validator AND schema keys
-    for (const pack of [...BUILTIN_EXTENSION_PACKS, SAMPLE_CUSTOM_EXTENSION_TEMPLATE]) {
+    // 2. Verify all default packs + sample template conform to validator AND schema keys
+    for (const pack of [...DEFAULT_EXTENSION_PACKS, SAMPLE_CUSTOM_EXTENSION_TEMPLATE]) {
       const validated = validateExtensionPack(pack);
       for (const key of Object.keys(pack)) {
         expect(allowedPackKeys.has(key), `unexpected pack key "${key}" in ${pack.id}`).toBe(
@@ -1643,8 +1699,8 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     for (const filePath of uiFiles) {
       const src = fs.readFileSync(filePath, 'utf8');
       expect(src, `${filePath} must not hardcode CAP_RT_*`).not.toMatch(/\bCAP_RT_/);
-      expect(src, `${filePath} must not branch on literal 'lua'/'python'`).not.toMatch(
-        /(===|!==)\s*['"](lua|python)['"]/,
+      expect(src, `${filePath} must not branch on literal 'lua'/'python'/'js'`).not.toMatch(
+        /(===|!==)\s*['"](lua|python|js)['"]/,
       );
       expect(
         src,
@@ -1652,7 +1708,7 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       ).not.toContain('runnerManager.getForLanguage');
     }
 
-    // 5. Asset manifest integrity & zero `builtin` field spoofing across packs, boards, and demos
+    // 5. Asset manifest integrity & zero `builtin` field across packs, boards, and demos
     expect(findUnknownManifestIds(DISCOVERED_PACK_IDS, PACKS_MANIFEST)).toEqual([]);
     expect(findUnknownManifestIds(DISCOVERED_BOARD_IDS, BOARDS_MANIFEST)).toEqual([]);
     expect(findUnknownManifestIds(DISCOVERED_DEMO_IDS, DEMOS_MANIFEST)).toEqual([]);
@@ -1665,32 +1721,28 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
     );
     expect(orderedSample.map((x) => x.id)).toEqual(['beta', 'alpha', 'zeta']);
 
-    // Portable pack/board JSON never carries a `builtin` key, and spoofing `builtin: true` never grants builtin status
-    expect(extensionRegistry.isBuiltin('rt')).toBe(true);
-    expect(targetProfileRegistry.isBuiltin('generic-script')).toBe(true);
-    for (const p of BUILTIN_EXTENSION_PACKS) {
+    // Portable pack/board JSON never carries a `builtin` key, and any extraneous `builtin` field is stripped
+    for (const p of DEFAULT_EXTENSION_PACKS) {
       expect('builtin' in p).toBe(false);
     }
-    for (const b of targetProfileRegistry.listAll()) {
+    for (const b of DEFAULT_TARGET_PROFILES) {
       expect('builtin' in b).toBe(false);
     }
-    const spoofedPack = extensionRegistry.importCustomPack({
+    const spoofedPack = extensionRegistry.importPack({
       ...SAMPLE_CUSTOM_EXTENSION_TEMPLATE,
       id: 'spoof-builtin-pack',
       builtin: true,
     });
     expect('builtin' in spoofedPack).toBe(false);
-    expect(extensionRegistry.isBuiltin('spoof-builtin-pack')).toBe(false);
-    extensionRegistry.removeCustomPack('spoof-builtin-pack');
+    extensionRegistry.removePack('spoof-builtin-pack');
 
-    const spoofedBoard = targetProfileRegistry.importCustomProfile({
+    const spoofedBoard = targetProfileRegistry.importProfile({
       ...SAMPLE_CUSTOM_BOARD_TEMPLATE,
       id: 'spoof-builtin-board',
       builtin: true,
     });
     expect('builtin' in spoofedBoard).toBe(false);
-    expect(targetProfileRegistry.isBuiltin('spoof-builtin-board')).toBe(false);
-    targetProfileRegistry.removeCustomProfile('spoof-builtin-board');
+    targetProfileRegistry.removeProfile('spoof-builtin-board');
 
     // 6. Zero native <select> elements in UI components (unified PolySelect portal)
     for (const filePath of collectSourceFiles(path.join(repoRoot, 'src/components'))) {
@@ -1745,12 +1797,42 @@ describe('Declarative Extension Pack & Capability-Driven Target Profile System',
       const src = fs.readFileSync(path.join(repoRoot, relPath), 'utf8');
       expect(
         src,
-        `${relPath} must derive language dialects/scanners/extractors from backendRegistry instead of hardcoding lua/python`,
+        `${relPath} must derive language dialects/scanners/extractors from backendRegistry instead of hardcoding lua/python/js`,
       ).not.toMatch(/\b(LANGUAGE_DIALECTS|SUPPORTED_LANGUAGE_IDS|ERROR_LINE_EXTRACTORS|IMPORT_MODULE_NAME_EXTRACTORS|LIB_LANGUAGE_BINDINGS|LIB_FUNCTION_SCANNERS)\b/);
       expect(
         src,
-        `${relPath} must not contain hardcoded 'lua' or 'python' map keys`,
-      ).not.toMatch(/^\s*(?:lua|python)\s*:/m);
+        `${relPath} must not contain hardcoded 'lua', 'python', or 'js' map keys`,
+      ).not.toMatch(/^\s*(?:lua|python|js)\s*:/m);
     }
+
+    // 9. Architecture purity guardrail: zero isBuiltin privileges, zero hardcoded pack/board IDs,
+    //    zero legacy protocol aliases (emit_device/get_input), and zero single-language names in shared scheduler
+    const nonTestSrcFiles = collectSourceFiles(path.join(repoRoot, 'src')).filter(
+      (f) => !f.replace(/\\/g, '/').includes('/__tests__/'),
+    );
+    const runtimeCodeFiles = nonTestSrcFiles.filter(
+      (f) => !f.replace(/\\/g, '/').endsWith('/types/project.ts'),
+    );
+    for (const filePath of runtimeCodeFiles) {
+      const src = fs.readFileSync(filePath, 'utf8');
+      expect(
+        src,
+        `${filePath} must not introduce privileged isBuiltin / listBySource / hardcoded default pack or board ID constants`,
+      ).not.toMatch(
+        /\b(isBuiltin|listBySource|RT_PACK|VIRTUAL_BOARD_PACK|CLOCK_TIMER_PACK|CAP_RT|CAP_RT_LIFECYCLE|CAP_RT_TIMERS|CAP_RT_TICK|CAP_VIRTUAL_BOARD)\b|['"]generic-script['"]/,
+      );
+      expect(
+        src,
+        `${filePath} must not reintroduce legacy worker protocol aliases emit_device / get_input`,
+      ).not.toMatch(/\b(emit_device|get_input)\b/);
+    }
+    const schedulerSrc = fs.readFileSync(
+      path.join(repoRoot, 'src/workers/runtimeScheduler.ts'),
+      'utf8',
+    );
+    expect(
+      schedulerSrc,
+      'src/workers/runtimeScheduler.ts must use language-agnostic async turn naming (no Python-specific names)',
+    ).not.toMatch(/\b(waitPython|resumePython|pyTurn|pySlice|resolvePySlice)\b/);
   });
 });

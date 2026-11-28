@@ -83,15 +83,15 @@ export class WorkerRuntimeScheduler {
   private lastPeriodicKey: string | null = null;
   private stopRequested = false;
 
-  // --- Async wake & Python coroutine slice handshake ---
+  // --- Async wake & explicit-async coroutine slice handshake (Python / JS / future async backends) ---
   private wakeFn: (() => void) | null = null;
   private waitingPosted = false;
   private lastTelemetryAt = 0;
 
-  private pyTurnReady = false;
-  private pyTurnWaiter: (() => void) | null = null;
-  private pySliceDoneWaiter: (() => void) | null = null;
-  private pySliceActive = false;
+  private asyncTurnReady = false;
+  private asyncTurnWaiter: (() => void) | null = null;
+  private asyncSliceDoneWaiter: (() => void) | null = null;
+  private asyncSliceActive = false;
 
   constructor(config: RuntimeSchedulerConfig) {
     this.runId = config.runId;
@@ -267,26 +267,26 @@ export class WorkerRuntimeScheduler {
     const delay = Number.isFinite(n) ? Math.max(0, Math.min(600_000, n)) : 0;
     this.coState = 'sleeping';
     this.coWakeAt = this.now() + delay;
-    this.resolvePySliceDone();
+    this.resolveAsyncSliceDone();
     this.wake();
     this.emitTelemetry(false);
   }
 
   onStartCoYieldSlice(): void {
     this.coState = 'ready';
-    this.resolvePySliceDone();
+    this.resolveAsyncSliceDone();
     this.wake();
     this.emitTelemetry(false);
   }
 
   onStartCoDone(): void {
     this.coState = 'dead';
-    if (this.pyTurnWaiter) {
-      const fn = this.pyTurnWaiter;
-      this.pyTurnWaiter = null;
+    if (this.asyncTurnWaiter) {
+      const fn = this.asyncTurnWaiter;
+      this.asyncTurnWaiter = null;
       fn();
     }
-    this.resolvePySliceDone();
+    this.resolveAsyncSliceDone();
     this.wake();
     this.emitTelemetry(true);
   }
@@ -295,40 +295,41 @@ export class WorkerRuntimeScheduler {
     return this.coState;
   }
 
-  // --- Python asyncio single-slice mutual-exclusion handshake ---
-  private resolvePySliceDone(): void {
-    this.pySliceActive = false;
-    const fn = this.pySliceDoneWaiter;
-    this.pySliceDoneWaiter = null;
+  // --- Explicit-async coroutine single-slice mutual-exclusion handshake ---
+  private resolveAsyncSliceDone(): void {
+    this.asyncSliceActive = false;
+    const fn = this.asyncSliceDoneWaiter;
+    this.asyncSliceDoneWaiter = null;
     if (fn) fn();
   }
 
-  waitPythonStartTurn(): Promise<boolean> {
+  waitAsyncStartTurn(): Promise<boolean> {
     if (this.stopRequested || this.coState === 'dead') {
       return Promise.resolve(false);
     }
-    if (this.pyTurnReady) {
-      this.pyTurnReady = false;
+    if (this.asyncTurnReady) {
+      this.asyncTurnReady = false;
       return Promise.resolve(true);
     }
     return new Promise<boolean>((resolve) => {
-      this.pyTurnWaiter = () => resolve(!this.stopRequested && this.coState !== 'dead');
+      this.asyncTurnWaiter = () =>
+        resolve(!this.stopRequested && this.coState !== 'dead');
     });
   }
 
-  resumePythonStartSlice(): Promise<void> {
+  resumeAsyncStartSlice(): Promise<void> {
     if (this.stopRequested || this.coState === 'dead') {
       return Promise.resolve();
     }
-    this.pySliceActive = true;
+    this.asyncSliceActive = true;
     return new Promise<void>((resolve) => {
-      this.pySliceDoneWaiter = resolve;
-      if (this.pyTurnWaiter) {
-        const fn = this.pyTurnWaiter;
-        this.pyTurnWaiter = null;
+      this.asyncSliceDoneWaiter = resolve;
+      if (this.asyncTurnWaiter) {
+        const fn = this.asyncTurnWaiter;
+        this.asyncTurnWaiter = null;
         fn();
       } else {
-        this.pyTurnReady = true;
+        this.asyncTurnReady = true;
       }
     });
   }
@@ -470,13 +471,13 @@ export class WorkerRuntimeScheduler {
 
   requestGracefulStop(): void {
     this.stopRequested = true;
-    if (this.pyTurnWaiter) {
-      const fn = this.pyTurnWaiter;
-      this.pyTurnWaiter = null;
+    if (this.asyncTurnWaiter) {
+      const fn = this.asyncTurnWaiter;
+      this.asyncTurnWaiter = null;
       fn();
     }
-    if (this.pySliceActive) {
-      this.resolvePySliceDone();
+    if (this.asyncSliceActive) {
+      this.resolveAsyncSliceDone();
     }
     this.wake();
   }

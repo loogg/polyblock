@@ -1,96 +1,18 @@
 import type {
-  ChannelPoolConfig,
   LogLevel,
   ProjectModel,
   RuntimeHandle,
   RuntimeTelemetry,
-  ScriptLanguageId,
 } from '../../types/project';
 import { backendRegistry } from '../backends/registry';
-import { buildHandleScriptsMeta } from '../backends/eventMode';
-import { buildHandleSharedModule } from '../backends/sharedModule';
 import {
   compileHandleArtifacts,
   compileScriptHeadless,
 } from '../compiler/handleBuilder';
-import { collectHandleSharedVariableNames } from '../projects/handleVariables';
-import type { ExtensionModuleSource } from '../extensions/types';
 import { runnerManager } from './manager';
 import type { RunResult, RunnerStatus, ScriptRunner } from './types';
 
 export { compileScriptHeadless };
-
-/**
- * Compiles sibling scripts within the SAME handle into isolated per-handle preload modules
- * so `require("helper")` / `import helper` works strictly within that handle without leaking across handles.
- * When `useDebugCompanion` is true (default for sandbox), companion scripts use `moduleDebugCode` so
- * breakpoints, live highlighting, and Python callback watchdog protection work across companion files!
- */
-export function buildHandleScriptModules(
-  handle: RuntimeHandle,
-  excludeScriptId: string,
-  language: ScriptLanguageId,
-  channelPoolConfigs: Record<string, ChannelPoolConfig> = {},
-  liveScriptOverride?: { scriptId: string; workspace: Record<string, unknown> },
-  useDebugCompanion = true,
-): ExtensionModuleSource[] {
-  const modules: ExtensionModuleSource[] = [];
-  const candidates = handle.scripts.filter((s) => s.id !== excludeScriptId);
-  const poolCfgs = channelPoolConfigs;
-  const effectiveHandle: RuntimeHandle = liveScriptOverride
-    ? {
-        ...handle,
-        scripts: handle.scripts.map((s) =>
-          s.id === liveScriptOverride.scriptId
-            ? { ...s, workspace: liveScriptOverride.workspace }
-            : s,
-        ),
-      }
-    : handle;
-  const handleMetas = buildHandleScriptsMeta(effectiveHandle);
-  const sharedVars = collectHandleSharedVariableNames(effectiveHandle);
-
-  // Unified Style A1 read-only `shared.lua` / `shared.py` (for BOTH Lua and Python!)
-  const sharedMod = buildHandleSharedModule(
-    effectiveHandle,
-    language,
-    poolCfgs,
-  );
-  if (sharedMod) {
-    const sharedSrc = useDebugCompanion ? sharedMod.debugSource : sharedMod.source;
-    modules.push({
-      moduleName: sharedMod.moduleName,
-      sources: { [language]: sharedSrc },
-    });
-  }
-
-  for (const script of candidates) {
-    try {
-      const wsJson =
-        liveScriptOverride && liveScriptOverride.scriptId === script.id
-          ? liveScriptOverride.workspace
-          : script.workspace;
-      const compiled = compileScriptHeadless(wsJson, language, {
-        channelPoolConfigs: poolCfgs,
-        handleScripts: handleMetas,
-        currentScriptId: script.id,
-        sharedVariables: sharedVars,
-        sharedVarInitials: effectiveHandle.variableInitialValues,
-        scriptVarInitials: script.variableInitialValues,
-        sharedFunctions: effectiveHandle.sharedFunctions ?? [],
-      });
-      const src = useDebugCompanion ? compiled.moduleDebugCode : compiled.code;
-      modules.push({
-        moduleName: script.name,
-        sources: { [language]: src },
-      });
-    } catch {
-      // skip uncompilable auxiliary module gracefully
-    }
-  }
-
-  return modules;
-}
 
 export interface MultiHandleRunOptions {
   project: ProjectModel;

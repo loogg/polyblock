@@ -247,7 +247,7 @@ export function buildExportableProjectJson(
     const basePackId = dotIdx > 0 ? capId.slice(0, dotIdx) : capId;
     if (localIds.has(basePackId) || seenBundled.has(basePackId)) continue;
     const globalPack = globalPacks.find((p) => p.id === basePackId);
-    if (globalPack && !extensionRegistry.isBuiltin(globalPack.id)) {
+    if (globalPack && !extensionRegistry.isSameAsDefault(globalPack)) {
       seenBundled.add(basePackId);
       bundled.push(cloneJson(globalPack));
     }
@@ -320,7 +320,9 @@ export function instantiateProjectFromTemplate(
   customName?: string,
 ): ProjectModel {
   if (templateId === 'blank_project') {
-    const profile = targetProfileRegistry.get('generic-script');
+    const profile = targetProfileRegistry.get(
+      targetProfileRegistry.getDefaultProfileId(),
+    );
     return instantiateProjectFromProfile(
       profile,
       existingProjectNames,
@@ -552,7 +554,7 @@ function normalizeLoadedV3Project(raw: Record<string, unknown>): ProjectModel {
   const profileId =
     typeof raw.targetProfileId === 'string' && raw.targetProfileId.trim()
       ? raw.targetProfileId
-      : 'generic-script';
+      : targetProfileRegistry.getDefaultProfileId();
 
   const activeHandleId =
     typeof raw.activeHandleId === 'string' &&
@@ -607,7 +609,7 @@ export function parseImportedProject(
   const targetProfileId =
     typeof obj.targetProfileId === 'string' && obj.targetProfileId.trim()
       ? obj.targetProfileId
-      : 'generic-script';
+      : targetProfileRegistry.getDefaultProfileId();
 
   const localPacks = normalizeLocalExtensions(obj.localExtensions);
   const absorbedBundled = getAbsorbedBundledExtensions(obj);

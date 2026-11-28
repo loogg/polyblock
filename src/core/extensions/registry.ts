@@ -15,7 +15,7 @@ import {
   isCurrentHandleScriptEntry,
 } from '../blocks/workspaceContextBridge';
 import { hasCapability } from '../capabilities/matching';
-import { BUILTIN_EXTENSION_PACKS } from './builtinPacks';
+import { DEFAULT_EXTENSION_PACKS } from './builtinPacks';
 import {
   DEFAULT_PACK_TOOLBOX_ORDER,
   findSectionForBlockType,
@@ -45,8 +45,17 @@ export {
   validateExtensionPack,
 };
 
-export const STORAGE_CUSTOM_EXTENSIONS_KEY = 'polyblock.extensions.custom.v3';
+export const STORAGE_GLOBAL_EXTENSIONS_KEY = 'polyblock.extensions.global.v4';
 export const OPEN_HANDLE_CHANNEL_CONFIG_CALLBACK = 'OPEN_HANDLE_CHANNEL_CONFIG';
+
+interface PersistedPacksPatch {
+  packs?: unknown[];
+  removedIds?: unknown[];
+}
+
+const DEFAULT_PACK_JSON_BY_ID = new Map<string, string>(
+  DEFAULT_EXTENSION_PACKS.map((p) => [p.id, JSON.stringify(p)]),
+);
 
 /** Computes whether a pack is fully enabled, partially enabled (fine-grained sections), or disabled. */
 export function getPackEnableState(
@@ -599,10 +608,10 @@ function buildToolboxBlocksForSection(
 }
 
 class ExtensionRegistry {
-  /** Built-in + user-imported GLOBAL packs (persisted in localStorage, shared across projects). */
+  /** Global extension packs (initialized from `src/packs/` defaults + localStorage delta, 100% equal rights). */
   private readonly packs = new Map<string, PolyExtensionPack>();
-  /** IDs loaded from `src/packs/*.polyext.json` at build time (host-owned, never spoofable via JSON). */
-  private readonly builtinIds = new Set<string>();
+  /** Default seed pack IDs explicitly removed by the user (cleared on `resetToDefaults()`). */
+  private readonly removedDefaultIds = new Set<string>();
   /** Currently active project's embedded local packs (override same-ID global packs without polluting global). */
   private readonly activeLocalPacks = new Map<string, PolyExtensionPack>();
   /** Attached target script backends bound via `backendRegistry.register(...)` (inverts circular dependency). */
@@ -633,24 +642,32 @@ class ExtensionRegistry {
     if (this.initialized) return;
     this.initialized = true;
 
-    for (const pack of BUILTIN_EXTENSION_PACKS) {
-      this.builtinIds.add(pack.id);
+    for (const pack of DEFAULT_EXTENSION_PACKS) {
       this.register(pack, false);
     }
 
     try {
-      const raw = localStorage.getItem(STORAGE_CUSTOM_EXTENSIONS_KEY);
+      const raw = localStorage.getItem(STORAGE_GLOBAL_EXTENSIONS_KEY);
       if (raw) {
-        const list = JSON.parse(raw) as unknown[];
-        if (Array.isArray(list)) {
-          for (const item of list) {
-            try {
-              const valid = validateExtensionPack(item);
-              if (!this.builtinIds.has(valid.id)) {
-                this.register(valid, false);
+        const parsed = JSON.parse(raw) as PersistedPacksPatch;
+        if (parsed && typeof parsed === 'object') {
+          if (Array.isArray(parsed.removedIds)) {
+            for (const rid of parsed.removedIds) {
+              if (typeof rid === 'string' && DEFAULT_PACK_JSON_BY_ID.has(rid)) {
+                this.removedDefaultIds.add(rid);
+                this.packs.delete(rid);
               }
-            } catch {
-              // ignore corrupted custom entry
+            }
+          }
+          if (Array.isArray(parsed.packs)) {
+            for (const item of parsed.packs) {
+              try {
+                const valid = validateExtensionPack(item);
+                this.removedDefaultIds.delete(valid.id);
+                this.register(valid, false);
+              } catch {
+                // ignore corrupted entry
+              }
             }
           }
         }
@@ -660,19 +677,35 @@ class ExtensionRegistry {
     }
   }
 
-  /** Returns true ONLY for packs bundled from `src/packs/` at build time (never spoofable via JSON). */
-  isBuiltin(packId: string): boolean {
-    this.ensureInitialized();
-    return this.builtinIds.has(packId);
+  /**
+   * Returns true if `pack` is byte-identical to an unmodified default seed pack in `src/packs/`.
+   * Pure content equality (zero privileged built-in identity): used only to skip redundant
+   * `localStorage` copies and keep exported `.polyblock.json` concise while snapshotting any
+   * user-added or user-modified global pack deterministically.
+   */
+  isSameAsDefault(pack: PolyExtensionPack): boolean {
+    const defaultJson = DEFAULT_PACK_JSON_BY_ID.get(pack.id);
+    return defaultJson !== undefined && defaultJson === JSON.stringify(pack);
   }
 
-  register(pack: PolyExtensionPack, persistCustom = true): void {
+  /** Returns true if the global pack catalog has any additions, overrides, or removals relative to defaults. */
+  hasCatalogChanges(): boolean {
+    this.ensureInitialized();
+    if (this.removedDefaultIds.size > 0) return true;
+    for (const p of this.packs.values()) {
+      if (!this.isSameAsDefault(p)) return true;
+    }
+    return false;
+  }
+
+  register(pack: PolyExtensionPack, persist = true): void {
+    this.removedDefaultIds.delete(pack.id);
     this.packs.set(pack.id, pack);
     if (!this.activeLocalPacks.has(pack.id)) {
       registerPackIntoBlocklyAndGenerators(pack, this.attachedBackends.values());
     }
-    if (persistCustom && !this.builtinIds.has(pack.id)) {
-      this.persistCustomPacks();
+    if (persist) {
+      this.persistCatalogPatch();
     }
   }
 
@@ -711,52 +744,64 @@ class ExtensionRegistry {
     return validateExtensionPack(raw);
   }
 
-  importCustomPack(raw: unknown): PolyExtensionPack {
+  /** Imports a new global pack or updates an existing pack with the same ID (100% equal rights). */
+  importPack(raw: unknown): PolyExtensionPack {
     this.ensureInitialized();
     const valid = validateExtensionPack(raw);
-    if (this.builtinIds.has(valid.id)) {
-      throw new Error(
-        `全局库不允许覆盖预装包 "${valid.id}"；如需定制覆写，请在「项目配置 → 能力与外设」导入为项目内嵌包`,
-      );
-    }
     this.register(valid, true);
     return valid;
   }
 
-  removeCustomPack(packId: string): boolean {
+  /** Removes any pack from the global catalog (zero built-in lock). */
+  removePack(packId: string): boolean {
     this.ensureInitialized();
-    if (!this.packs.has(packId) || this.builtinIds.has(packId)) return false;
+    if (!this.packs.has(packId)) return false;
     this.packs.delete(packId);
-    this.persistCustomPacks();
+    if (DEFAULT_PACK_JSON_BY_ID.has(packId)) {
+      this.removedDefaultIds.add(packId);
+    }
+    this.persistCatalogPatch();
     return true;
   }
 
-  private persistCustomPacks(): void {
+  /** Restores the global pack catalog to factory defaults from `src/packs/`. */
+  resetToDefaults(): void {
+    this.ensureInitialized();
+    this.packs.clear();
+    this.removedDefaultIds.clear();
+    for (const pack of DEFAULT_EXTENSION_PACKS) {
+      this.register(pack, false);
+    }
     try {
-      const customOnly = Array.from(this.packs.values()).filter(
-        (p) => !this.builtinIds.has(p.id),
+      localStorage.removeItem(STORAGE_GLOBAL_EXTENSIONS_KEY);
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  private persistCatalogPatch(): void {
+    try {
+      const changedPacks = Array.from(this.packs.values()).filter(
+        (p) => !this.isSameAsDefault(p),
       );
-      localStorage.setItem(
-        STORAGE_CUSTOM_EXTENSIONS_KEY,
-        JSON.stringify(customOnly),
-      );
+      const removedIds = Array.from(this.removedDefaultIds);
+      if (changedPacks.length === 0 && removedIds.length === 0) {
+        localStorage.removeItem(STORAGE_GLOBAL_EXTENSIONS_KEY);
+      } else {
+        localStorage.setItem(
+          STORAGE_GLOBAL_EXTENSIONS_KEY,
+          JSON.stringify({ packs: changedPacks, removedIds }),
+        );
+      }
     } catch {
       // ignore quota errors
     }
   }
 
-  /** Lists ONLY built-in + global custom packs (never includes project-embedded packs). */
+  /** Lists all packs currently registered in the global catalog (never includes project-embedded packs). */
   listAll(): PolyExtensionPack[] {
     this.ensureInitialized();
     return Array.from(this.packs.values());
-  }
-
-  listBySource(source: 'builtin' | 'custom'): PolyExtensionPack[] {
-    return this.listAll().filter((p) =>
-      source === 'builtin'
-        ? this.builtinIds.has(p.id)
-        : !this.builtinIds.has(p.id),
-    );
   }
 
   get(packId: string): PolyExtensionPack | undefined {

@@ -139,7 +139,7 @@ export function registerPolyBlocks(): void {
       nextStatement: null,
       style: 'control_blocks',
       tooltip:
-        '非阻塞协程延时指定毫秒数（Lua 导出全局 sleep_ms(ms)）。仅可在主程序 / on_start 协程中使用，禁止在 on_run / on_timer 等事件回调内阻塞等待。',
+        '非阻塞协程延时指定毫秒数（导出为 sleep_ms(ms) 或 await sleep_ms(ms)）。仅可在主程序 / on_start 协程中使用，禁止在同步事件回调内阻塞等待。',
     },
     {
       type: 'poly_comment',
@@ -148,7 +148,7 @@ export function registerPolyBlocks(): void {
       previousStatement: null,
       nextStatement: null,
       style: 'control_blocks',
-      tooltip: '在生成的 Lua / Python 代码中保留对应注释行。',
+      tooltip: '在生成的目标脚本代码中保留对应注释行。',
     },
 
     // --- 局部变量 (Local Scoped Variable) ---
@@ -164,7 +164,7 @@ export function registerPolyBlocks(): void {
       nextStatement: null,
       style: 'variable_local_blocks',
       tooltip:
-        '声明或赋值仅在当前回调/函数体内有效的局部变量（Lua 生成 local，Python 保持函数局部，不污染句柄全局变量）。',
+        '声明或赋值仅在当前回调/函数体内有效的局部变量（在所属作用域顶部自动提升声明，不污染文件或句柄全局变量）。',
     },
     {
       type: 'poly_local_get',
@@ -284,7 +284,7 @@ export function registerPolyBlocks(): void {
       inputsInline: true,
       output: null,
       style: 'dict_blocks',
-      tooltip: '从指定字典读取键对应的值（不存在返回 nil / None，支持多层嵌套读取）。',
+      tooltip: '从指定字典读取键对应的值（不存在返回空值 nil / None / null，支持多层嵌套读取）。',
     },
     {
       type: 'poly_dict_has',

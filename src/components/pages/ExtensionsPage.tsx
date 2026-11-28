@@ -8,6 +8,7 @@ import {
   Eye,
   FileCode2,
   Paperclip,
+  RotateCcw,
   Square,
   Trash2,
   Upload,
@@ -64,9 +65,10 @@ interface ExtensionsPageProps {
     packId: string,
     files: UploadedScriptLibFile[],
   ) => void;
-  onRemoveCustomPack: (packId: string) => void;
+  onRemoveGlobalPack: (packId: string) => void;
   onImportBoardProfileJson: (raw: unknown) => void;
-  onRemoveCustomProfile: (profileId: string) => void;
+  onRemoveProfile: (profileId: string) => void;
+  onResetDefaultCatalog: () => void;
   onReturnToBlocks: () => void;
   onNotify: (msg: string) => void;
 }
@@ -98,9 +100,10 @@ export function ExtensionsPage({
   onImportExtensionJson,
   onOpenScriptLibImportModal,
   onAttachLibsToGlobalPack,
-  onRemoveCustomPack,
+  onRemoveGlobalPack,
   onImportBoardProfileJson,
-  onRemoveCustomProfile,
+  onRemoveProfile,
+  onResetDefaultCatalog,
   onReturnToBlocks,
   onNotify,
 }: ExtensionsPageProps) {
@@ -113,8 +116,9 @@ export function ExtensionsPage({
   const boardFileInputRef = useRef<HTMLInputElement | null>(null);
   const attachLibsInputRef = useRef<HTMLInputElement | null>(null);
   const [attachTargetPackId, setAttachTargetPackId] = useState<string | null>(null);
-  const builtinPacks = allPacks.filter((p) => extensionRegistry.isBuiltin(p.id));
-  const customPacks = allPacks.filter((p) => !extensionRegistry.isBuiltin(p.id));
+  const hasCatalogChanges =
+    extensionRegistry.hasCatalogChanges() ||
+    targetProfileRegistry.hasCatalogChanges();
   const backends = backendRegistry.list();
   const supportedExtAccept = getSupportedScriptAcceptAttr();
   const supportedExtLabel = formatSupportedExtensionsLabel();
@@ -168,14 +172,14 @@ export function ExtensionsPage({
     setAttachTargetPackId(null);
   };
 
-  const renderPackCard = (pack: PolyExtensionPack, isCustom: boolean) => {
+  const renderPackCard = (pack: PolyExtensionPack) => {
     const enableState = getPackEnableState(pack, enabledCapabilityIds);
     const isAnyEnabled = enableState.status !== 'none';
     const badges = derivePackBadges(pack);
     const sections = resolvePackSections(pack);
     const allBlocks = getAllPackBlocks(pack);
     const placementLabel = formatPackPlacementSummary(pack);
-    const importMatch = isCustom ? inspectPackImportSourceMatch(pack) : null;
+    const importMatch = inspectPackImportSourceMatch(pack);
     const toggleBtnClass =
       enableState.status === 'full'
         ? 'enabled'
@@ -217,8 +221,8 @@ export function ExtensionsPage({
               </div>
             </div>
           </div>
-          <span className={`status-pill ${isCustom ? 'accent' : 'idle'}`}>
-            {isCustom ? '自定义' : '内置'}
+          <span className={`status-pill ${isAnyEnabled ? 'ok' : 'idle'}`}>
+            {isAnyEnabled ? '已装配' : '全局包'}
           </span>
         </div>
 
@@ -326,62 +330,58 @@ export function ExtensionsPage({
               onClick={() =>
                 setViewingPack({
                   pack,
-                  scopeLabel: isCustom ? '自定义全局包' : '预装全局包',
+                  scopeLabel: '全局扩展包',
                 })
               }
             >
               <Eye size={13} />
             </button>
-            {isCustom && (
-              <>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  style={{ padding: '4px 6px' }}
-                  disabled={editingLocked}
-                  title={
-                    editingLocked
-                      ? '请先停止当前运行再修改库源码'
-                      : `附加或替换此包的真实库源码 (${supportedExtLabel} -> libs[])`
-                  }
-                  aria-label={`为 ${pack.name} 附加库源码`}
-                  onClick={() => {
-                    setAttachTargetPackId(pack.id);
-                    attachLibsInputRef.current?.click();
-                  }}
-                >
-                  <Paperclip size={13} />
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  style={{ padding: '4px 6px' }}
-                  title="导出此全局扩展包 (.polyext.json) 分享给他人"
-                  aria-label={`导出扩展包 ${pack.name}`}
-                  onClick={() => {
-                    downloadJsonFile(`${pack.id}.polyext.json`, pack);
-                    onNotify(`已导出全局扩展包 ${pack.id}.polyext.json`);
-                  }}
-                >
-                  <Download size={13} />
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  style={{ padding: '4px 6px', color: 'var(--danger)' }}
-                  disabled={editingLocked}
-                  title={
-                    editingLocked
-                      ? '请先停止当前运行再删除扩展包'
-                      : '删除自定义扩展包'
-                  }
-                  aria-label={`删除自定义扩展包 ${pack.name}`}
-                  onClick={() => onRemoveCustomPack(pack.id)}
-                >
-                  <Trash2 size={13} />
-                </button>
-              </>
-            )}
+            <button
+              type="button"
+              className="btn-ghost"
+              style={{ padding: '4px 6px' }}
+              disabled={editingLocked}
+              title={
+                editingLocked
+                  ? '请先停止当前运行再修改库源码'
+                  : `附加或替换此包的真实库源码 (${supportedExtLabel} -> libs[])`
+              }
+              aria-label={`为 ${pack.name} 附加库源码`}
+              onClick={() => {
+                setAttachTargetPackId(pack.id);
+                attachLibsInputRef.current?.click();
+              }}
+            >
+              <Paperclip size={13} />
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              style={{ padding: '4px 6px' }}
+              title="导出此全局扩展包 (.polyext.json) 分享或修改"
+              aria-label={`导出扩展包 ${pack.name}`}
+              onClick={() => {
+                downloadJsonFile(`${pack.id}.polyext.json`, pack);
+                onNotify(`已导出全局扩展包 ${pack.id}.polyext.json`);
+              }}
+            >
+              <Download size={13} />
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              style={{ padding: '4px 6px', color: 'var(--danger)' }}
+              disabled={editingLocked}
+              title={
+                editingLocked
+                  ? '请先停止当前运行再移除扩展包'
+                  : '从全局库移除此扩展包（可随时恢复出厂默认）'
+              }
+              aria-label={`移除全局扩展包 ${pack.name}`}
+              onClick={() => onRemoveGlobalPack(pack.id)}
+            >
+              <Trash2 size={13} />
+            </button>
             <button
               type="button"
               className={`ext-toggle-btn ${toggleBtnClass}`}
@@ -488,6 +488,20 @@ export function ExtensionsPage({
             <button
               type="button"
               className="btn-outline"
+              disabled={editingLocked}
+              title={
+                editingLocked
+                  ? '请先停止当前运行再恢复默认库'
+                  : '恢复出厂默认的扩展包与目标板型清单'
+              }
+              onClick={onResetDefaultCatalog}
+            >
+              <RotateCcw size={14} />
+              <span>{hasCatalogChanges ? '恢复默认 *' : '恢复默认'}</span>
+            </button>
+            <button
+              type="button"
+              className="btn-outline"
               onClick={onReturnToBlocks}
             >
               <ArrowLeft size={14} />
@@ -531,28 +545,15 @@ export function ExtensionsPage({
         </div>
 
         <h2 className="section-heading">
-          内置扩展包（随 IDE 提供 · 当前项目启用{' '}
+          全局扩展包（跨项目共享 · 当前项目启用{' '}
           {
-            builtinPacks.filter(
+            allPacks.filter(
               (p) => getPackEnableState(p, enabledCapabilityIds).status !== 'none',
             ).length
           }{' '}
-          / {builtinPacks.length}）
+          / {allPacks.length}）
         </h2>
-        <div className="card-grid">
-          {builtinPacks.map((pack) => renderPackCard(pack, false))}
-        </div>
-
-        <h2 className="section-heading">
-          自定义全局扩展包（跨项目复用 · 当前项目启用{' '}
-          {
-            customPacks.filter(
-              (p) => getPackEnableState(p, enabledCapabilityIds).status !== 'none',
-            ).length
-          }{' '}
-          / {customPacks.length}）
-        </h2>
-        {customPacks.length === 0 ? (
+        {allPacks.length === 0 ? (
           <div className="ui-card" style={{ borderStyle: 'dashed', opacity: 0.9 }}>
             <div
               style={{
@@ -561,19 +562,19 @@ export function ExtensionsPage({
                 lineHeight: 1.6,
               }}
             >
-              暂未导入自定义全局扩展包。点击右上角{' '}
-              <strong>「导入 .polyext.json」</strong>{' '}
-              可导入团队复用的硬件驱动、底层 C 接口或纯脚本算法库（点击「扩展包规范」可随时查看全部字段说明）；若仅归属单个项目，请在「项目配置 → 能力与外设」导入为项目内嵌包。
+              全局扩展库当前为空。可点击右上角{' '}
+              <strong>「导入 .polyext.json」</strong> / <strong>「导入脚本库」</strong>{' '}
+              添加扩展包，或点击 <strong>「恢复默认」</strong> 恢复出厂包清单。
             </div>
           </div>
         ) : (
           <div className="card-grid">
-            {customPacks.map((pack) => renderPackCard(pack, true))}
+            {allPacks.map((pack) => renderPackCard(pack))}
           </div>
         )}
 
         <h2 className="section-heading">
-          目标板型规格预设（.polyboard.json · 共 {allTargetProfiles.length} 种）
+          目标板型规格（.polyboard.json · 共 {allTargetProfiles.length} 种）
         </h2>
         <div className="card-grid">
           {allTargetProfiles.map((prof) => {
@@ -593,20 +594,8 @@ export function ExtensionsPage({
               >
                 <div className="card-top">
                   <div style={{ fontWeight: 700, fontSize: 13.5 }}>{prof.name}</div>
-                  <span
-                    className={`status-pill ${
-                      isActive
-                        ? 'ok'
-                        : targetProfileRegistry.isBuiltin(prof.id)
-                          ? 'idle'
-                          : 'accent'
-                    }`}
-                  >
-                    {isActive
-                      ? '当前板型'
-                      : targetProfileRegistry.isBuiltin(prof.id)
-                        ? '内置预设'
-                        : '自定义'}
+                  <span className={`status-pill ${isActive ? 'ok' : 'idle'}`}>
+                    {isActive ? '当前板型' : '板型规格'}
                   </span>
                 </div>
                 <p className="card-desc">{prof.description}</p>
@@ -631,38 +620,36 @@ export function ExtensionsPage({
                     ID: {prof.id}
                   </span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {!targetProfileRegistry.isBuiltin(prof.id) && (
-                      <>
-                        <button
-                          type="button"
-                          className="btn-ghost"
-                          style={{ padding: '4px 6px' }}
-                          title="导出此目标板型规格 (.polyboard.json)"
-                          aria-label={`导出板型规格 ${prof.name}`}
-                          onClick={() => {
-                            downloadJsonFile(`${prof.id}.polyboard.json`, prof);
-                            onNotify(`已导出板型规格 ${prof.id}.polyboard.json`);
-                          }}
-                        >
-                          <Download size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-ghost"
-                          style={{ padding: '4px 6px', color: 'var(--danger)' }}
-                          disabled={editingLocked}
-                          title={
-                            editingLocked
-                              ? '请先停止当前运行再删除板型'
-                              : '删除自定义板型'
-                          }
-                          aria-label={`删除自定义板型 ${prof.name}`}
-                          onClick={() => onRemoveCustomProfile(prof.id)}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </>
-                    )}
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ padding: '4px 6px' }}
+                      title="导出此目标板型规格 (.polyboard.json)"
+                      aria-label={`导出板型规格 ${prof.name}`}
+                      onClick={() => {
+                        downloadJsonFile(`${prof.id}.polyboard.json`, prof);
+                        onNotify(`已导出板型规格 ${prof.id}.polyboard.json`);
+                      }}
+                    >
+                      <Download size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ padding: '4px 6px', color: 'var(--danger)' }}
+                      disabled={editingLocked || allTargetProfiles.length <= 1}
+                      title={
+                        editingLocked
+                          ? '请先停止当前运行再移除板型'
+                          : allTargetProfiles.length <= 1
+                            ? '至少需保留 1 个目标板型'
+                            : '移除此目标板型（可随时恢复出厂默认）'
+                      }
+                      aria-label={`移除板型 ${prof.name}`}
+                      onClick={() => onRemoveProfile(prof.id)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
                     <button
                       type="button"
                       className={isActive ? 'btn-primary' : 'btn-outline'}
