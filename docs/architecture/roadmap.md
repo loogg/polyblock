@@ -1,32 +1,48 @@
-# PolyBlock 架构演进与待优化路线
+# PolyBlock 架构演进与产品路线
 
-> 本文档仅记录**面向未来的结构演进与待规划项**（不含日常红线与历史已完成记录；日常开发红线见 [`AGENTS.md`](../../AGENTS.md) 与 [`docs/guidelines/`](../guidelines/)）。
-
----
-
-## 1. 后端与运行时结构演进
-
-- **收敛多语言后端公共样板至 `BaseScriptBackend`**：将 Lua / Python / JS 后端在扩展帽块注册（`registerExtensionHat`）、`poly_local_*`、`variables_get/set` 与 `poly_call_shared_*` 上的公共遍历与作用域绑定骨架进一步上移至 `BaseScriptBackend`，降低新增目标语言的接入成本。
-- **消除 `workspaceContextBridge` 渲染期同步**：将代码生成依赖的句柄变量、通道池与伴随脚本元信息全面收口为纯输入参数 `CompileContext`，彻底消除渲染期全局可变桥接。
-- **未知动态语言 ID 保留与缺失插件提示**：打开外部动态语言插件创建的 `.polyblock.json` / `.polyblock.zip` 且当前会话尚未注册该插件时，保留原始 `project.language` 并在顶部展示「缺失语言插件」诊断横幅（而非回退至默认语言）。
-- **板型 `maxHandles` 软/硬约束与外部硬件 Runner**：在新建句柄流程接入 `TargetProfile.maxHandles` 上限校验/提示；面向外部真机通道（WebSocket / Local Bridge / Web Serial）完善 `RunnerManager` 单实例与多句柄工厂能力区分。
-- **前端 3 大 Hook 解耦**：`useProjectStore` / `useExecutionController` / `useExtensionActions` 的 `executionBridgeRef` 双向回调可升级为轻量 React Context 或类型化事件总线。
+> 本文档记录**已确认的产品推进优先级与面向未来的非阻塞结构演进**（不含日常开发红线；日常红线见 [`AGENTS.md`](../../AGENTS.md) 与 [`docs/guidelines/`](../guidelines/)）。
+>
+> **定位锚点**：PolyBlock 是面向私有硬件与嵌入式脚本引擎的**业务层安全编排、秒级离线模拟与纯净脚本下发底座**——底层驱动与滤波归属设备固件，复杂算法沉淀在原生脚本库，工程以 `.polyblock.zip` 严格锁定整包交付、永不丢环境。
 
 ---
 
-## 2. 三个偏大模块的垂直拆瘦
+## 1. 近期核心方向（直接服务业务闭环）
 
-| 模块 | 当前规模 | 建议拆瘦边界 |
-| --- | ---: | --- |
-| [`src/hooks/useProjectStore.ts`](../../src/hooks/useProjectStore.ts) | ~1,420 行 | 拆为「持久化与工程/模板切换」「句柄与脚本 CRUD」「变量/函数作用域变更与导出动作」3 个子 Hook |
-| [`src/core/extensions/registry.ts`](../../src/core/extensions/registry.ts) | ~1,430 行 | 拆为「扩展包注册与差分持久化」「Blockly 积木/帽块动态注册器」「工具箱与可读预览格式化器」 |
-| [`src/components/BlocklyWorkbench.tsx`](../../src/components/BlocklyWorkbench.tsx) | ~1,100 行 | 拆出「右键菜单与自定义动作注册」「Flyout 工具箱同步与搜索」「只读/运行锁定控制器」 |
+### 1.1 快速新建与编辑积木包工作流
+- **目标**：大幅降低为新设备 API 或业务算法库制作 `.polyext.json` 扩展包的门槛，兼顾人工可视化配置与 AI 辅助生成。
+- **规划内容**：
+  - 提供**快速新建/编辑扩展包向导**（可视化配置包元信息、组件、积木参数、多语言模板、通道池与模拟控件，免手写转义 JSON）；
+  - 配套目录级脚本/配置一键打包工具，与现有 `schemas/polyext.schema.json` 及示例模板形成闭环，方便人工与 AI 高准确率产出扩展包；
+  - 增强项目私有脚本库（`libs[]`）的源码更新与一键重新扫描体验，把复杂算法稳定沉淀在库层、保持积木层简洁。
+
+### 1.2 设备日志专用扩展包模式（同真机 API）
+- **目标**：将业务日志升级为与真实设备日志模块 1:1 对齐的标准扩展包（如 `logger.polyext.json`，提供 `logger.info` / `logger.warn` / `logger.error` 等真实设备接口），Layer 0 保持纯语言无依赖的 `print`。
+- **双端协同**：
+  - **浏览器模拟**：通过日志包的 `sandboxMock` 输出标准分级日志到工作台 `LogConsole`，零改动复用分级着色与过滤；
+  - **真实设备**：部署导出自动剥离 `sandboxMock`，脚本直接调用固件原生日志接口；不同硬件平台可各自提供贴合自身 API 的日志扩展包。
+
+### 1.3 真实设备脚本下载通道 + 只读日志回显
+- **边界明确**：**只做脚本下发与可选只读日志回显，不做联机真机单步断点调试**（逻辑调试与断点在浏览器仿真阶段完成，底层驱动与抗干扰由板子固件保障）。
+- **规划内容**：
+  - 基于现有 `ScriptRunner` / `RunnerManager` 抽象，按需接入真实下载通道（Web Serial / 本机桥接 Agent / HTTP·WS 接口），一键将纯净导出脚本与 `libs` 下发至设备；
+  - 支持将设备吐出的日志流只读回显至底部 `LogConsole`，并复用 `SourceMap` 与 `extractErrorLine` 实现设备运行报错行号反向定位积木。
 
 ---
 
-## 3. 编译型 / 静态类型语言（如 C / Rust / TypeScript）的协议前瞻
+## 2. AI 协同编排前瞻
 
-- **执行模型兼容**：Layer 0.5 单句柄单轨协程循环（`on_start` 主协程 + 顶层零闭包 `singleton`/`dispatch` 事件回调）与嵌入式 C 宿主模型一致，无需修改三层工程拓扑与 `.polyext.json` 单轨协议。
-- **多产物文件输出（`.h` + `.c`）**：当前每个 `ProjectScript` 与 `shared` 模块默认映射单文件 `<name>.<ext>`；面向 C/C++ 等需要头文件配对的语言时，可在 `LanguageDialect.exportToolchain` 扩展多输出单元能力（如 `shared.h` + `shared.c`）。
-- **变量显式初值驱动类型推导**：3 级变量模型已支持显式初值 `VariableInitialValue`（`null | number | boolean | string | list | dict`）；面向静态类型语言时可直接由初值推导声明类型，或按需补充可选静态类型标注。
-- **容器原语适配**：列表、字典 5 块原语统一遵循纯值槽原则（`input_value`）且零隐藏辅助函数，C 后端可直接映射至目标固件提供的轻量容器头文件/宏库（如 `poly_list_*` / `poly_dict_*`）。
+- **受控白名单积木生成**：结合当前项目启用的 `.polyext.json` 积木定义与 Schema，支持由自然语言让 AI 生成严格受限于当前板型能力白名单的积木工作区 JSON，再经 PolyBlock 静态诊断与本地沙箱仿真跑通、人工可视化微调后下发设备（兼具 AI 提效与积木护栏防呆）。
+
+---
+
+## 3. 按需推进的架构提纯与扩展前瞻（非阻塞）
+
+以下事项仅在引入新目标语言或模块继续增长时按需推进，不阻塞核心业务闭环：
+
+- **收敛多语言后端公共样板至 `BaseScriptBackend`**：将 Lua / Python / JS 后端在扩展帽块注册（`registerExtensionHat`）、`poly_local_*`、`variables_get/set` 与 `poly_call_shared_*` 上的重复骨架进一步上移至基类。
+- **消除 `workspaceContextBridge` 渲染期同步**：将代码生成依赖的句柄变量、通道池与伴随脚本元信息全面收口为纯输入参数 `CompileContext`。
+- **未知动态语言 ID 保留与板型上限提示**：打开未安装动态语言插件创建的工程时保留原 `project.language` 并展示缺失插件横幅；在新建句柄流程按需接入 `TargetProfile.maxHandles` 提示；完善 `RunnerManager` 单实例外部 Runner 与多句柄工厂的能力区分。
+- **前端 3 大 Hook 解耦与超千行模块拆瘦**：
+  - `useProjectStore` / `useExecutionController` / `useExtensionActions` 的双向回调可升级为轻量 Context 或事件总线；
+  - 按需垂直拆分 [`useProjectStore.ts`](../../src/hooks/useProjectStore.ts)（~1,420 行）、[`extensions/registry.ts`](../../src/core/extensions/registry.ts)（~1,430 行）与 [`BlocklyWorkbench.tsx`](../../src/components/BlocklyWorkbench.tsx)（~1,100 行）。
+- **编译型 / 静态类型语言（如 C / Rust / TypeScript）前瞻**：Layer 0.5 单句柄单轨协程模型与显式变量初值天然兼容静态类型与嵌入式 C 宿主；后续可在 `LanguageDialect.exportToolchain` 扩展多产物输出（如 `.h` + `.c`），列表/字典纯值槽原语可直接映射目标固件轻量容器库。

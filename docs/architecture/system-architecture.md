@@ -2,6 +2,8 @@
 
 > 本文档描述 PolyBlock **当前生效**的系统架构；完整文档导航见 [`docs/README.md`](../README.md)，最高层红线见 [`AGENTS.md`](../../AGENTS.md)，详细开发规范见 [`docs/guidelines/`](../guidelines/)，各目标语言作用域细节见 [`docs/languages/README.md`](../languages/README.md)，未来演进规划见 [`roadmap.md`](./roadmap.md)。
 
+> **系统定位**：PolyBlock 是一套**纯前端离线、面向私有硬件与嵌入式脚本引擎的业务层安全编排与模拟预演底座**——设备固件管底层驱动与滤波，原生脚本库（`libs[]`）承接复杂算法，PolyBlock 通过 JSON 声明式快速接入任意非标设备并提供浏览器模拟、多隔离句柄单轨协程编排、工业级纯净多语言代码导出与 `.polyblock.zip` 严格版本锁定交付。
+
 ## 0. 文档体系导航
 
 | 文档路径 | 职责边界 | 何时查阅 |
